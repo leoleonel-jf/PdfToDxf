@@ -7,8 +7,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pdftodxf.calibration import PT_TO_MM
 from pdftodxf.geometry import Polyline, Segment, TextItem
-from pdftodxf.optimize import (ExportOptions, apply_filters, estimate_bytes,
-                               join_segments)
+from pdftodxf.optimize import (EntityAttrs, ExportOptions, apply_filters,
+                               classify, estimate_bytes, join_segments)
 
 
 def seg(x1, y1, x2, y2, layer="0", color=None, is_fill=False):
@@ -101,6 +101,57 @@ def test_estimate_monotonic():
     print("OK: estimativa monotônica")
 
 
+def test_classify_layers():
+    ents = [seg(0, 0, 1, 0, layer="A"), seg(0, 0, 1, 0, layer="B"),
+            seg(0, 0, 1, 0, layer="A")]
+    a = classify(ents)
+    assert a.layers == ["A", "B"], a.layers
+    assert a.layer_id == [0, 1, 0], a.layer_id
+    print("OK: classify indexa layers")
+
+
+def test_classify_length_mm():
+    ents = [seg(0, 0, 1 / PT_TO_MM, 0), TextItem(text="x", position=(0, 0))]
+    a = classify(ents)
+    assert abs(a.length_mm[0] - 1.0) < 1e-9, a.length_mm
+    assert a.length_mm[1] == 0.0
+    print("OK: classify mede comprimento em mm")
+
+
+def test_classify_dup_group():
+    ents = [seg(0, 0, 1, 1),                    # 0
+            seg(0, 0, 1, 1),                    # 1 duplicado exato
+            seg(1, 1, 0, 0),                    # 2 duplicado invertido
+            seg(0, 0, 2, 2),                    # 3 diferente
+            seg(0, 0, 1, 1, layer="X"),         # 4 outro layer
+            seg(0, 0, 1, 1, color=(1, 0, 0))]   # 5 outra cor
+    a = classify(ents)
+    assert a.dup_group[0] == a.dup_group[1] == a.dup_group[2]
+    assert len({a.dup_group[0], a.dup_group[3], a.dup_group[4],
+                a.dup_group[5]}) == 4
+    assert a.n_groups == 4, a.n_groups
+    print("OK: classify agrupa duplicatas")
+
+
+def test_classify_nao_segmento_sem_grupo():
+    ents = [TextItem(text="x", position=(0, 0)), seg(0, 0, 1, 0)]
+    a = classify(ents)
+    assert a.dup_group[0] == -1
+    assert a.dup_group[1] >= 0
+    print("OK: classify não agrupa quem não é segmento")
+
+
+def test_classify_byte_cost():
+    ents = [seg(0, 0, 1, 0),
+            Polyline(points=[(0, 0), (1, 0), (1, 1)]),
+            TextItem(text="x", position=(0, 0))]
+    a = classify(ents)
+    assert a.byte_cost[0] == 210, a.byte_cost
+    assert a.byte_cost[1] == 180 + 42 * 3, a.byte_cost
+    assert a.byte_cost[2] == 330, a.byte_cost
+    print("OK: classify calcula custo em bytes")
+
+
 if __name__ == "__main__":
     test_filter_layers()
     test_filter_fills()
@@ -111,4 +162,9 @@ if __name__ == "__main__":
     test_join_respects_layer_color()
     test_join_preserves_non_segments()
     test_estimate_monotonic()
+    test_classify_layers()
+    test_classify_length_mm()
+    test_classify_dup_group()
+    test_classify_nao_segmento_sem_grupo()
+    test_classify_byte_cost()
     print("Todos os testes de otimização passaram.")

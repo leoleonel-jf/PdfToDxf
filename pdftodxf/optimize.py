@@ -25,6 +25,85 @@ class ExportOptions:
     round_coords: bool = False         # arredondar coordenadas na escrita
 
 
+# bytes aproximados por entidade em DXF ASCII (medidos em arquivos reais)
+_BYTES = {"Segment": 210, "Arc": 235, "Bezier": 620, "TextItem": 330}
+_POLY_BASE = 180
+_POLY_PER_PT = 42
+_ROUND_FACTOR = 0.78  # arredondar coordenadas corta ~22% do tamanho
+
+
+@dataclass
+class EntityAttrs:
+    """Etiquetas pré-calculadas, em arrays paralelos à lista de entidades.
+
+    Produzidas uma única vez por `classify()` e consumidas por `select()` —
+    tanto aqui quanto na versão TypeScript que roda no navegador. Guardar o
+    julgamento caro como número é o que impede as duas implementações de
+    divergirem.
+    """
+
+    kind: list[str] = field(default_factory=list)         # "Segment", "Arc", ...
+    layer_id: list[int] = field(default_factory=list)     # índice em `layers`
+    is_fill: list[bool] = field(default_factory=list)
+    length_mm: list[float] = field(default_factory=list)  # 0.0 fora de Segment
+    dup_group: list[int] = field(default_factory=list)    # -1 fora de Segment
+    byte_cost: list[int] = field(default_factory=list)
+    layers: list[str] = field(default_factory=list)
+    n_groups: int = 0
+
+    def __len__(self) -> int:
+        return len(self.kind)
+
+
+def classify(entities: list[Entity]) -> EntityAttrs:
+    """Fase cara: percorre as entidades uma vez e resume cada uma em números.
+
+    O trabalho pesado é o `dup_group`: o conjunto de hash que descobre quais
+    segmentos são o mesmo traço é montado aqui, uma única vez, e vira um
+    inteiro por entidade.
+    """
+    attrs = EntityAttrs()
+    layer_index: dict[str, int] = {}
+    group_index: dict[tuple, int] = {}
+
+    for e in entities:
+        name = type(e).__name__
+
+        lid = layer_index.get(e.layer)
+        if lid is None:
+            lid = len(attrs.layers)
+            layer_index[e.layer] = lid
+            attrs.layers.append(e.layer)
+
+        if name == "Segment":
+            length_mm = math.hypot(e.p2[0] - e.p1[0], e.p2[1] - e.p1[1]) * PT_TO_MM
+            a = (round(e.p1[0], 3), round(e.p1[1], 3))
+            b = (round(e.p2[0], 3), round(e.p2[1], 3))
+            key = (e.layer, e.color, a, b) if a <= b else (e.layer, e.color, b, a)
+            gid = group_index.get(key)
+            if gid is None:
+                gid = len(group_index)
+                group_index[key] = gid
+        else:
+            length_mm = 0.0
+            gid = -1
+
+        if name == "Polyline":
+            cost = _POLY_BASE + _POLY_PER_PT * len(e.points)
+        else:
+            cost = _BYTES.get(name, 300)
+
+        attrs.kind.append(name)
+        attrs.layer_id.append(lid)
+        attrs.is_fill.append(e.is_fill)
+        attrs.length_mm.append(length_mm)
+        attrs.dup_group.append(gid)
+        attrs.byte_cost.append(cost)
+
+    attrs.n_groups = len(group_index)
+    return attrs
+
+
 def _seg_len(e: Segment) -> float:
     return math.hypot(e.p2[0] - e.p1[0], e.p2[1] - e.p1[1])
 
@@ -135,13 +214,6 @@ def join_segments(entities: list[Entity]) -> list[Entity]:
                 result.append(Polyline(points=chain, closed=closed,
                                        layer=layer, color=color))
     return result
-
-
-# bytes aproximados por entidade em DXF ASCII (medidos em arquivos reais)
-_BYTES = {"Segment": 210, "Arc": 235, "Bezier": 620, "TextItem": 330}
-_POLY_BASE = 180
-_POLY_PER_PT = 42
-_ROUND_FACTOR = 0.78  # arredondar coordenadas corta ~22% do tamanho
 
 
 def estimate_bytes(entities: list[Entity], opts: ExportOptions,

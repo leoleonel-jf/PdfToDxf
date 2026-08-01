@@ -51,6 +51,8 @@ class App(tk.Tk):
         self.export_dialog = None
         self._preview_entities = None    # prévia ativa (lista filtrada) ou None
         self._preview_token = 0
+        self._bg_item = None    # id da imagem de fundo no canvas (PDF ou prévia)
+        self._bg_meta = None    # (x0, y0, zoom) da prévia exibida; None se for o PDF
 
         # fila thread-safe para atualizar a UI a partir de threads de trabalho
         self._ui_queue: queue.Queue = queue.Queue()
@@ -210,19 +212,30 @@ class App(tk.Tk):
         y0 = max(r.y0, (0 - self.oy) / self.zoom)
         x1 = min(r.x1, (cw - self.ox) / self.zoom)
         y1 = min(r.y1, (ch - self.oy) / self.zoom)
-        self.canvas.delete("all")
         if x1 <= x0 or y1 <= y0:
+            self._clear_canvas()
             return
         if self._preview_entities is not None:
+            # não limpa o canvas aqui: a imagem atual continua visível até a
+            # nova ficar pronta (evita o "piscar" branco durante o desenho)
             self._render_preview((x0, y0, x1, y1))
             return
+        self._clear_canvas()
         clip = fitz.Rect(x0, y0, x1, y1)
         pix = self.page.get_pixmap(matrix=fitz.Matrix(self.zoom, self.zoom), clip=clip)
         img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
         self._photo = ImageTk.PhotoImage(img)
-        self.canvas.create_image(x0 * self.zoom + self.ox, y0 * self.zoom + self.oy,
-                                 image=self._photo, anchor="nw")
+        self._bg_item = self.canvas.create_image(
+            x0 * self.zoom + self.ox, y0 * self.zoom + self.oy,
+            image=self._photo, anchor="nw")
+        self._bg_meta = None
         self._draw_markers()
+
+    def _clear_canvas(self) -> None:
+        """Limpa o canvas invalidando a referência da imagem de fundo."""
+        self.canvas.delete("all")
+        self._bg_item = None
+        self._bg_meta = None
 
     # ------------------------------------------------------------ prévia
     def set_preview(self, entities) -> None:
@@ -238,6 +251,15 @@ class App(tk.Tk):
         renderer = PreviewRenderer(self.page.rect.height)
         self._preview_token += 1
         token = self._preview_token
+
+        # enquanto a nova imagem não fica pronta, reposiciona a antiga para
+        # acompanhar o pan (no mesmo zoom ela continua alinhada ao desenho)
+        if self._bg_item is not None and self._bg_meta is not None:
+            px, py, pzoom = self._bg_meta
+            if abs(pzoom - zoom) < 1e-9:
+                self.canvas.coords(self._bg_item,
+                                   px * zoom + self.ox, py * zoom + self.oy)
+                self._draw_markers()
         self.set_status("Prévia: desenhando…")
 
         def work():
@@ -250,10 +272,15 @@ class App(tk.Tk):
     def _show_preview(self, img, x0, y0, zoom) -> None:
         if self._preview_entities is None:
             return
-        self._photo = ImageTk.PhotoImage(img)
-        self.canvas.delete("all")
-        self.canvas.create_image(x0 * zoom + self.ox, y0 * zoom + self.oy,
-                                 image=self._photo, anchor="nw")
+        # troca atômica: cria a nova imagem e só então apaga a anterior
+        photo = ImageTk.PhotoImage(img)
+        item = self.canvas.create_image(x0 * zoom + self.ox, y0 * zoom + self.oy,
+                                        image=photo, anchor="nw")
+        if self._bg_item is not None:
+            self.canvas.delete(self._bg_item)
+        self._photo = photo          # mantém a referência viva
+        self._bg_item = item
+        self._bg_meta = (x0, y0, zoom)
         self._draw_markers()
         n = len(self._preview_entities)
         self.set_status(f"Prévia: {n:,} entidades exibidas".replace(",", "."))

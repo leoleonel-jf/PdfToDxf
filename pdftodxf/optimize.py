@@ -252,23 +252,24 @@ def join_segments(entities: list[Entity]) -> list[Entity]:
     return result
 
 
-def estimate_bytes(entities: list[Entity], opts: ExportOptions,
+def estimate_bytes(attrs: EntityAttrs, mask: list[bool], opts: ExportOptions,
                    joined_stats: tuple[int, int, int] | None = None) -> int:
-    """Estimativa do tamanho do DXF em bytes para as entidades já filtradas.
+    """Estimativa do tamanho do DXF, em bytes, para a seleção dada.
 
-    joined_stats: (n_polylines, total_vertices, n_segments_isolados) medidos de
-    uma junção real, se disponível; senão usa aproximação de 85% de encadeamento.
+    joined_stats: (n_polilinhas, total_de_vértices, n_segmentos_isolados) medidos
+    de uma junção real, se disponível; senão usa a aproximação de 85% de
+    encadeamento. É o único número aproximado da estimativa, e é o mesmo cálculo
+    feito no navegador.
     """
     total = 0
     n_seg = 0
-    for e in entities:
-        name = type(e).__name__
-        if name == "Segment":
+    for i, keep in enumerate(mask):
+        if not keep:
+            continue
+        if attrs.kind[i] == "Segment":
             n_seg += 1
-        elif name == "Polyline":
-            total += _POLY_BASE + _POLY_PER_PT * len(e.points)
         else:
-            total += _BYTES.get(name, 300)
+            total += attrs.byte_cost[i]
 
     if opts.join_polylines and n_seg:
         if joined_stats:

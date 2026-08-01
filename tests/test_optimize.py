@@ -92,14 +92,36 @@ def test_join_preserves_non_segments():
     print("OK: junção preserva outros tipos")
 
 
+def estimar(ents, opts):
+    a = classify(ents)
+    return estimate_bytes(a, select(a, opts), opts)
+
+
 def test_estimate_monotonic():
     ents = [seg(i, 0, i + 1, 0) for i in range(1000)]
-    base = estimate_bytes(ents, ExportOptions())
-    joined = estimate_bytes(ents, ExportOptions(join_polylines=True))
-    rounded = estimate_bytes(ents, ExportOptions(round_coords=True))
-    both = estimate_bytes(ents, ExportOptions(join_polylines=True, round_coords=True))
+    base = estimar(ents, ExportOptions())
+    joined = estimar(ents, ExportOptions(join_polylines=True))
+    rounded = estimar(ents, ExportOptions(round_coords=True))
+    both = estimar(ents, ExportOptions(join_polylines=True, round_coords=True))
     assert joined < base and rounded < base and both < joined
     print("OK: estimativa monotônica")
+
+
+def test_estimate_ignora_descartados():
+    ents = [seg(0, 0, 1, 0, layer="A"), seg(0, 0, 1, 0, layer="B")]
+    inteiro = estimar(ents, ExportOptions())
+    metade = estimar(ents, ExportOptions(excluded_layers={"B"}))
+    assert metade == inteiro - 210, (inteiro, metade)
+    print("OK: estimativa ignora quem foi descartado")
+
+
+def test_estimate_soma_custo_de_polilinha():
+    ents = [Polyline(points=[(0, 0), (1, 0), (1, 1)])]
+    a = classify(ents)
+    vazio = estimate_bytes(a, [False], ExportOptions())
+    cheio = estimate_bytes(a, [True], ExportOptions())
+    assert cheio - vazio == 180 + 42 * 3, (vazio, cheio)
+    print("OK: estimativa cobra polilinha por vértice")
 
 
 def test_classify_layers():
@@ -229,6 +251,8 @@ if __name__ == "__main__":
     test_join_respects_layer_color()
     test_join_preserves_non_segments()
     test_estimate_monotonic()
+    test_estimate_ignora_descartados()
+    test_estimate_soma_custo_de_polilinha()
     test_classify_layers()
     test_classify_length_mm()
     test_classify_dup_group()

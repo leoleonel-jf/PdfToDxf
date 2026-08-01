@@ -38,10 +38,11 @@ def test_casos():
                              dedup=o["dedup"],
                              join_polylines=o["join_polylines"],
                              round_coords=o["round_coords"])
+        esperado = [c == "1" for c in caso["esperado"]]
         obtido = select(attrs, opts)
-        divergentes = [i for i, (a, b) in enumerate(zip(obtido, caso["esperado"]))
+        divergentes = [i for i, (a, b) in enumerate(zip(obtido, esperado))
                        if a != b]
-        assert not divergentes and len(obtido) == len(caso["esperado"]), (
+        assert not divergentes and len(obtido) == len(esperado), (
             f"divergência em {caso['nome']}: índices {divergentes[:5]}"
             f"{' e mais' if len(divergentes) > 5 else ''}")
 

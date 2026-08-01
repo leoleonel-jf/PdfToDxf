@@ -12,6 +12,13 @@ Rode depois de qualquer mudança em select() ou classify():
 
 O arquivo gerado é versionado. Se ele mudar num commit que não pretendia mudar
 comportamento, isso é um alerta, não um detalhe.
+
+O campo "esperado" de cada caso é a máscara booleana do select(), mas gravada
+como uma string de '0'/'1' (um caractere por entidade) em vez de uma lista de
+booleanos — com 1024 casos e ~230 entidades por tabela, uma lista de booleanos
+com indent=1 gastava ~2,8 MB só em vírgulas e quebras de linha. Para decodificar
+em Python: `[c == "1" for c in caso["esperado"]]`. Em TypeScript, a mesma ideia:
+`[...s].map(c => c === "1")`.
 """
 
 import itertools
@@ -182,7 +189,7 @@ def main():
                     "join_polylines": juntar,
                     "round_coords": arredondar,
                 },
-                "esperado": mask,
+                "esperado": "".join("1" if k else "0" for k in mask),
                 "bytes_esperado": estimate_bytes(attrs, mask, opts),
             })
 

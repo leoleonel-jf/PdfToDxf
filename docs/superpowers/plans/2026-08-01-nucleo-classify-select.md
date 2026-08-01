@@ -875,8 +875,9 @@ def gerar_entidades(n, semente):
 
     A grade precisa ser pequena de propósito: 9 pontos dão 36 pares não
     ordenados que, multiplicados pelos 4 layers e 3 cores, somam 432 chaves
-    possíveis para ~90 segmentos. Numa grade de 6x6 as colisões ficam raras e
-    o caminho do dedup mal é exercitado.
+    possíveis para ~225 segmentos — dezenas de duplicatas por tabela. Numa
+    grade de 6x6 as colisões ficam raras e o caminho do dedup mal é
+    exercitado.
     """
     rnd = random.Random(semente)
     ents = []
@@ -915,7 +916,7 @@ def main():
     tabelas = []
     casos = []
     for semente in range(3):
-        ents = gerar_entidades(120, semente)
+        ents = gerar_entidades(300, semente)
         attrs = classify(ents)
         tabelas.append({
             "kind": attrs.kind,

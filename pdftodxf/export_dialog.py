@@ -11,7 +11,7 @@ from tkinter import ttk
 from PIL import Image, ImageDraw, ImageTk
 
 from .geometry import Arc, Bezier, Polyline, Segment, TextItem, bezier_point
-from .optimize import ExportOptions, estimate_bytes
+from .optimize import ExportOptions, classify, estimate_bytes, select
 
 PREVIEW_DEBOUNCE_MS = 350
 
@@ -43,7 +43,9 @@ class ExportDialog(tk.Toplevel):
         self._debounce_job = None
         self._render_token = 0
         self._layer_counts = self._count_layers()
-        self._baseline = estimate_bytes(result.entities, ExportOptions())
+        self.attrs = classify(result.entities)
+        self._baseline = estimate_bytes(
+            self.attrs, [True] * len(self.attrs), ExportOptions())
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._close)
@@ -160,9 +162,8 @@ class ExportDialog(tk.Toplevel):
             round_coords=self.var_round.get(),
         )
 
-    def _kept_entities(self, opts: ExportOptions):
-        from .optimize import apply_filters
-        return apply_filters(self.result.entities, opts)
+    def _kept_mask(self, opts: ExportOptions):
+        return select(self.attrs, opts)
 
     def _on_change(self):
         if self._debounce_job:
@@ -176,8 +177,9 @@ class ExportDialog(tk.Toplevel):
         token = self._render_token = self._render_token + 1
 
         def work():
-            kept = self._kept_entities(opts)
-            est = estimate_bytes(kept, opts)
+            mask = self._kept_mask(opts)
+            kept = [e for e, k in zip(self.result.entities, mask) if k]
+            est = estimate_bytes(self.attrs, mask, opts)
             if token != self._render_token:
                 return
             self.app.ui(lambda: self._show_estimate(len(kept), est))

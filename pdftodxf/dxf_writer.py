@@ -121,9 +121,10 @@ def write_dxf(result: ExtractionResult, output_path: str, scale: float = 1.0,
 def export_dxf(result: ExtractionResult, output_path: str, scale: float,
                unit: str, opts) -> dict[str, int]:
     """Pipeline completo: filtros -> junção -> escrita, conforme ExportOptions."""
-    from .optimize import apply_filters, join_segments
+    from .optimize import apply_selection, classify, join_segments, select
 
-    entities = apply_filters(result.entities, opts)
+    attrs = classify(result.entities)
+    entities = apply_selection(result.entities, select(attrs, opts))
     if opts.join_polylines:
         entities = join_segments(entities)
     decimals = 4 if opts.round_coords else None

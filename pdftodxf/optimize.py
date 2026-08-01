@@ -140,38 +140,6 @@ def apply_selection(entities: list[Entity], mask: list[bool]) -> list[Entity]:
     return [e for e, keep in zip(entities, mask) if keep]
 
 
-def _seg_len(e: Segment) -> float:
-    return math.hypot(e.p2[0] - e.p1[0], e.p2[1] - e.p1[1])
-
-
-def apply_filters(entities: list[Entity], opts: ExportOptions) -> list[Entity]:
-    """Filtros baratos (layers, preenchimentos, micro-segmentos, dedup).
-
-    Não faz a junção em polilinhas — essa é um passo separado (mais caro)
-    feito só na exportação, pois não muda o aspecto visual.
-    """
-    min_len_pt = opts.min_len_mm / PT_TO_MM if opts.min_len_mm > 0 else 0.0
-    seen: set = set()
-    out: list[Entity] = []
-    for e in entities:
-        if e.layer in opts.excluded_layers:
-            continue
-        if opts.drop_fills and e.is_fill:
-            continue
-        if isinstance(e, Segment):
-            if min_len_pt and _seg_len(e) < min_len_pt:
-                continue
-            if opts.dedup:
-                a = (round(e.p1[0], 3), round(e.p1[1], 3))
-                b = (round(e.p2[0], 3), round(e.p2[1], 3))
-                key = (e.layer, e.color, a, b) if a <= b else (e.layer, e.color, b, a)
-                if key in seen:
-                    continue
-                seen.add(key)
-        out.append(e)
-    return out
-
-
 def join_segments(entities: list[Entity]) -> list[Entity]:
     """Une segmentos encadeados (fim de um = início do outro) em Polylines.
 

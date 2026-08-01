@@ -7,50 +7,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pdftodxf.calibration import PT_TO_MM
 from pdftodxf.geometry import Polyline, Segment, TextItem
-from pdftodxf.optimize import (EntityAttrs, ExportOptions, apply_filters,
-                               apply_selection, classify, estimate_bytes,
-                               join_segments, select)
+from pdftodxf.optimize import (EntityAttrs, ExportOptions, apply_selection,
+                               classify, estimate_bytes, join_segments,
+                               select)
 
 
 def seg(x1, y1, x2, y2, layer="0", color=None, is_fill=False):
     return Segment(p1=(x1, y1), p2=(x2, y2), layer=layer, color=color,
                    is_fill=is_fill)
-
-
-def test_filter_layers():
-    ents = [seg(0, 0, 1, 0, layer="A"), seg(0, 0, 1, 0, layer="B")]
-    out = apply_filters(ents, ExportOptions(excluded_layers={"B"}))
-    assert len(out) == 1 and out[0].layer == "A"
-    print("OK: filtro de layers")
-
-
-def test_filter_fills():
-    ents = [seg(0, 0, 1, 0), seg(0, 0, 1, 0, is_fill=True)]
-    out = apply_filters(ents, ExportOptions(drop_fills=True))
-    assert len(out) == 1 and not out[0].is_fill
-    print("OK: filtro de preenchimentos")
-
-
-def test_filter_micro():
-    small = 0.05 / PT_TO_MM  # 0.05 mm em pts
-    big = 5.0 / PT_TO_MM
-    ents = [seg(0, 0, small, 0), seg(0, 0, big, 0)]
-    out = apply_filters(ents, ExportOptions(min_len_mm=0.1))
-    assert len(out) == 1 and out[0].p2[0] == big
-    # limiar 0 desliga o filtro
-    out = apply_filters(ents, ExportOptions(min_len_mm=0.0))
-    assert len(out) == 2
-    print("OK: filtro de micro-segmentos")
-
-
-def test_dedup():
-    ents = [seg(0, 0, 1, 1), seg(0, 0, 1, 1),      # duplicado exato
-            seg(1, 1, 0, 0),                        # duplicado invertido
-            seg(0, 0, 2, 2),                        # diferente
-            seg(0, 0, 1, 1, layer="X")]             # mesmo traço, outro layer
-    out = apply_filters(ents, ExportOptions(dedup=True))
-    assert len(out) == 3, f"esperava 3, veio {len(out)}"
-    print("OK: dedup de sobrepostos")
 
 
 def test_join_chain():
@@ -242,10 +206,6 @@ def test_select_preserva_ordem():
 
 
 if __name__ == "__main__":
-    test_filter_layers()
-    test_filter_fills()
-    test_filter_micro()
-    test_dedup()
     test_join_chain()
     test_join_closed()
     test_join_respects_layer_color()

@@ -88,8 +88,13 @@ Os demais testes rodam do mesmo jeito:
 
 ```powershell
 python tests/test_optimize.py
+python tests/test_preview.py
 python tests/test_casos_select.py
 ```
+
+`tests/test_preview.py` abre a janela do app de verdade: confere que o canvas
+nunca fica sem imagem durante o redesenho da prévia (a "piscada branca") nem
+acumula imagens empilhadas.
 
 `tests/casos_select.json` é o contrato entre o `select()` do Python e a versão
 que roda no navegador. Se você mudar `classify()` ou `select()`, regenere com

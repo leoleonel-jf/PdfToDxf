@@ -831,10 +831,22 @@ etapa 3 não tenha liberdade de inventar comportamento.
 - Consome: `classify`, `select`, `ExportOptions`
 - Produz: `tests/casos_select.json` com a forma
   `{"tabelas": [attrs, ...], "casos": [{"nome": str, "tabela": int,
-  "opcoes": {...}, "esperado": [bool]}]}`, lido na etapa 3 pelo vitest. As
-  tabelas de etiquetas ficam separadas dos casos porque as mesmas 120 entidades
-  são reaproveitadas por dezenas de combinações de opções — repeti-las inflaria
-  o arquivo sem acrescentar cobertura.
+  "opcoes": {...}, "esperado": [bool], "bytes_esperado": int}]}`, lido na etapa
+  3 pelo vitest. As tabelas de etiquetas ficam separadas dos casos porque as
+  mesmas 300 entidades são reaproveitadas por dezenas de combinações de opções
+  — repeti-las inflaria o arquivo sem acrescentar cobertura.
+
+> **Revisão final.** O contrato foi ampliado depois da revisão do branch e hoje
+> tem 1024 casos, não os 144 dos passos abaixo. Mudou o seguinte, e o arquivo
+> `tests/gerar_casos_select.py` no repositório é a fonte da verdade:
+> `bytes_esperado` congela também o `estimate_bytes()` (a divisão inteira e o
+> truncamento dele não existem em JavaScript); `join_polylines` e `round_coords`
+> entraram no produto cartesiano das opções porque mudam a estimativa; a lista
+> de `min_len_mm` ganhou um limiar exatamente igual ao comprimento de um
+> segmento de 1 pt, para que trocar `<` por `<=` no `select()` seja detectado; e
+> uma quarta tabela, escrita à mão, traz duplicatas do mesmo `dup_group` com
+> comprimentos dos dois lados de um limiar, para que a ordem "comprimento antes
+> de reservar o grupo" também seja detectada.
 
 - [ ] **Passo 1: escrever o gerador**
 
@@ -964,7 +976,8 @@ qualquer diferença no `git diff` significa mudança de comportamento de verdade
 python tests/gerar_casos_select.py
 ```
 
-Esperado: `144 casos gravados em .../tests/casos_select.json`
+Esperado: `144 casos gravados em .../tests/casos_select.json` (depois da revisão
+final do branch são `1024 casos gravados em ...`)
 
 - [ ] **Passo 3: escrever o teste que consome os casos**
 
@@ -1026,6 +1039,7 @@ python tests/test_casos_select.py
 ```
 
 Esperado: `OK: 144 casos de paridade` e `Todos os casos de paridade passaram.`
+(depois da revisão final do branch, `OK: 1024 casos de paridade`)
 
 - [ ] **Passo 5: confirmar que o gerador é determinístico**
 

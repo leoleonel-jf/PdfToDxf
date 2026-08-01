@@ -107,10 +107,13 @@ def classify(entities: list[Entity]) -> EntityAttrs:
 def select(attrs: EntityAttrs, opts: ExportOptions) -> list[bool]:
     """Fase barata: decide quem entra, só comparando os números do classify().
 
-    Sem hash e sem alocação por entidade — é esta função que é espelhada em
-    TypeScript para a prévia do navegador. A ordem de varredura importa: dentro
-    de um grupo de duplicatas, quem sobrevive é o primeiro que passa nos demais
-    filtros.
+    Sem montar tabelas de hash por entidade: só um conjunto de layers
+    excluídos, montado uma vez antes do laço, e comparações sobre os arrays. É
+    esta função que é espelhada em TypeScript para a prévia do navegador. A
+    ordem de varredura importa: dentro de um grupo de duplicatas, quem sobrevive
+    é o primeiro que passa nos demais filtros — e o filtro de comprimento vem
+    antes de reservar o grupo, então um segmento curto demais não impede o
+    próximo do mesmo grupo de ser emitido.
     """
     excluded = {i for i, name in enumerate(attrs.layers)
                 if name in opts.excluded_layers}

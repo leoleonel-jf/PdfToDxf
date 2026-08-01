@@ -129,8 +129,9 @@ terminar é permitido: a exportação acontece no servidor, sobre a extração
 completa, e não depende do que já chegou ao navegador. A estimativa de tamanho
 fica marcada como parcial até o carregamento terminar.
 
-O limiar do esqueleto é calculado no `classify()`, que já ordena os comprimentos
-— é um percentil, não uma varredura extra.
+O limiar do esqueleto é um percentil dos `length_mm` já calculados pelo
+`classify()` — uma ordenação na hora de empacotar, não um segundo exame das
+entidades.
 
 ### Formato binário da geometria
 

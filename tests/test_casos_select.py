@@ -36,7 +36,11 @@ def test_casos():
                              min_len_mm=o["min_len_mm"],
                              dedup=o["dedup"])
         obtido = select(attrs, opts)
-        assert obtido == caso["esperado"], f"divergência em {caso['nome']}"
+        divergentes = [i for i, (a, b) in enumerate(zip(obtido, caso["esperado"]))
+                       if a != b]
+        assert not divergentes and len(obtido) == len(caso["esperado"]), (
+            f"divergência em {caso['nome']}: índices {divergentes[:5]}"
+            f"{' e mais' if len(divergentes) > 5 else ''}")
 
     print(f"OK: {len(dados['casos'])} casos de paridade")
 

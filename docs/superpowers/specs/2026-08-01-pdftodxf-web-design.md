@@ -29,6 +29,8 @@ mesmo núcleo.
 | Layout | Cabeçalho de duas faixas com todas as opções à vista |
 | Deploy | Docker Compose + Caddy (HTTPS automático) |
 | Registro de conversões | Um `.md` por página extraída, em `/registros`, guardado por 1 ano |
+| Carregamento | Progressivo: esqueleto primeiro, detalhe em segundo plano |
+| Dispositivos | Mouse e toque; calibração com lupa no celular |
 
 ## Arquitetura
 
@@ -94,17 +96,40 @@ removido. Um caminho só, exercitado pelas duas interfaces.
    grava o resultado no cache em disco e escreve o registro em `/registros`
    (ver seção própria). O PDF original é apagado assim que todas as páginas
    pedidas foram extraídas ou o trabalho expira.
-4. O navegador baixa `geometry.bin` (coordenadas e atributos) e `meta.json`
-   (layers, limites do desenho, contagens, dimensões da página).
-5. O canvas desenha. Pan e zoom são transformação de matriz — não vão ao servidor.
+4. O navegador baixa `meta.json` (layers, limites do desenho, contagens,
+   dimensões da página) e a geometria em duas partes: o esqueleto primeiro,
+   o detalhe em segundo plano.
+5. O canvas desenha assim que o esqueleto chega. Pan e zoom são transformação de
+   matriz — não vão ao servidor.
 6. **Calibrar:** dois cliques no canvas, converte pixels para pontos de papel,
    aplica a mesma fórmula de `calibration.scale_from_two_points`, mostra a escala
    deduzida na barra. Alternativa "Escala 1:N" também disponível, como no desktop.
 7. **Opções e layers:** cada clique roda `select()` em TypeScript, redesenha e
    soma os `byte_cost` sobreviventes. Instantâneo, sem rede.
-8. **Exportar:** envia escala, unidade e opções. O servidor recupera a extração
-   do cache, roda `select()` (versão Python), `join_segments()` e
-   `dxf_writer.write_dxf()`, e devolve o DXF para download.
+8. **Exportar:** envia escala, unidade e opções. Se essa combinação já foi
+   gerada, o servidor reentrega o arquivo do cache sem consumir cota. Senão
+   recupera a extração do cache, roda `select()` (versão Python),
+   `join_segments()` e `dxf_writer.write_dxf()`, e devolve o DXF para download.
+
+### Carregamento progressivo
+
+Numa planta densa a geometria completa pode passar de 10 MB comprimidos, e
+esperar o último byte deixaria a tela vazia por vários segundos. A entrega é
+dividida em duas partes:
+
+1. **Esqueleto** — só as entidades acima de um limiar de comprimento, tipicamente
+   uns 5% do total, que é o que dá a leitura da planta: paredes, contornos,
+   textos. Chega em uma fração do tamanho e a tela desenha quase imediatamente.
+2. **Detalhe** — o restante, baixado em segundo plano e desenhado por lotes
+   conforme chega, sem bloquear pan, zoom ou calibração.
+
+Uma faixa discreta indica que o detalhe ainda está carregando. Exportar antes de
+terminar é permitido: a exportação acontece no servidor, sobre a extração
+completa, e não depende do que já chegou ao navegador. A estimativa de tamanho
+fica marcada como parcial até o carregamento terminar.
+
+O limiar do esqueleto é calculado no `classify()`, que já ordena os comprimentos
+— é um percentil, não uma varredura extra.
 
 ### Formato binário da geometria
 
@@ -154,6 +179,38 @@ Todo clique nas faixas atualiza a prévia e a estimativa na hora.
 **Rodapé:** uma linha fixa informando que o texto das plantas e o endereço IP
 são registrados por 1 ano, com link para a página de privacidade.
 
+### Celular e tablet
+
+O desenho responde a toque, não só a mouse: um dedo arrasta, dois dedos dão zoom
+e o toque duplo enquadra. Em telas estreitas as duas faixas do cabeçalho viram
+rolagem horizontal, mantendo tudo à vista sem espremer os botões.
+
+A calibração por dois pontos ganha **lupa**: enquanto o dedo está pressionado,
+uma janelinha ampliada mostra onde o ponto vai cair, e ele é confirmado ao
+soltar. Sem isso o dedo cobre exatamente o que precisa ser mirado e ninguém
+acerta a extremidade de uma cota.
+
+### Estados de espera e de erro
+
+Cada situação tem uma mensagem que diz o que houve e o que fazer:
+
+| Situação | O que a tela mostra |
+|---|---|
+| Enviando o PDF | Barra de progresso do envio, com opção de cancelar |
+| Na fila | Posição na fila e a informação de que a extração começa em seguida |
+| Extraindo | Indicador de trabalho em andamento, sem prazo falso |
+| Detalhe carregando | Faixa discreta; o desenho já está utilizável |
+| PDF escaneado (sem vetores) | Explica que só PDFs vetoriais funcionam e por quê, sem consumir cota |
+| Acima do teto de entidades | Diz que a planta é grande demais e qual é o limite |
+| Worker morto por memória ou tempo | Diz que a planta não pôde ser processada e que a cota não foi consumida |
+| Cota de arquivos esgotada | Quanto falta para liberar; para visitante, oferece o cadastro |
+| Cota de downloads esgotada | Mesma coisa, indicando que repetir uma exportação já feita é livre |
+| Arquivo maior que o teto do plano | Avisa antes de o envio começar e oferece o cadastro ao visitante |
+| Trabalho expirado (4 horas) | Diz que a planta expirou e pede o reenvio |
+
+Falha de extração por limite de recurso e PDF sem vetores **não consomem cota** —
+o consumo do arquivo só é confirmado quando a extração termina bem.
+
 ## Estrutura do repositório
 
 ```
@@ -177,9 +234,10 @@ web/api/
   registros.py       geração dos .md de registro e expurgo de 1 ano
 web/frontend/src/
   main.ts            composição da tela
-  canvas.ts          renderizador
+  canvas.ts          renderizador, com gestos de mouse e de toque
   select.ts          espelho TypeScript de optimize.select()
-  calibrate.ts       calibração por dois pontos
+  calibrate.ts       calibração por dois pontos, com lupa no toque
+  estados.ts         mensagens de espera, erro e cota esgotada
   toolbar.ts         as duas faixas do cabeçalho
   conta.ts           entrar, cadastrar e o indicador de cota restante
   api.ts             cliente HTTP
@@ -195,7 +253,7 @@ deploy/              Dockerfile, docker-compose.yml, Caddyfile
 | `POST /api/jobs` | Recebe o PDF (em pedaços). Devolve `job_id` e número de páginas. |
 | `GET /api/jobs/{id}` | Estado: na fila, extraindo, pronto ou erro. |
 | `POST /api/jobs/{id}/pages/{n}` | Enfileira a extração daquela página. |
-| `GET /api/jobs/{id}/pages/{n}/geometry.bin` | Geometria binária. |
+| `GET /api/jobs/{id}/pages/{n}/geometry.bin?parte=esqueleto\|detalhe` | Geometria binária, em duas partes. |
 | `GET /api/jobs/{id}/pages/{n}/meta.json` | Layers, limites, contagens. |
 | `POST /api/jobs/{id}/pages/{n}/export` | Recebe escala, unidade e opções. Devolve link do DXF. |
 | `GET /api/download/{token}` | Entrega o DXF gerado. |
@@ -228,6 +286,12 @@ o DXF consome um dos 3 downloads daquele arquivo. Abrir páginas, navegar,
 calibrar, mexer nas opções e ver a prévia é livre e ilimitado — só o download
 conta. Os 3 downloads existem justamente para permitir reexportar a mesma planta
 com compactações diferentes.
+
+**Repetir o mesmo download é de graça.** Cada exportação é identificada pela
+combinação de página, escala, unidade e opções de compactação. Pedir de novo uma
+combinação já gerada reentrega o arquivo do cache sem consumir cota — só
+combinação inédita conta. Assim uma conexão que cai, um clique duplicado ou um
+download perdido não custam um terço da janela.
 
 **A janela é deslizante:** cada consumo é registrado com a hora, e a cota
 disponível é o limite menos o que foi consumido nas últimas 2 horas. Não existe
@@ -365,12 +429,17 @@ as duas implementações do `select()` quebra a suíte. É o teste que sustenta 
 promessa de que a prévia é o DXF.
 
 **3. API.** PDF sintético convertido de ponta a ponta; página acima do teto de
-entidades é recusada com mensagem; arquivos expirados somem do disco.
+entidades é recusada com mensagem; arquivos expirados somem do disco; o esqueleto
+e o detalhe somados reproduzem exatamente a lista de entidades da extração, sem
+faltar nem repetir nenhuma; PDF sem vetores e worker morto por limite de recurso
+devolvem erro identificável e não consomem cota.
 
 **3b. Contas e cotas.** Visitante sem conta envia 1 arquivo e baixa 3 vezes; o
 segundo arquivo e o quarto download são recusados. Um PDF de 40 MB é recusado
 para visitante e aceito para quem tem conta, e a recusa acontece antes de o envio
-começar. Um PDF acima de 100 MB é recusado para todos. Limpar o cookie anônimo não
+começar. Um PDF acima de 100 MB é recusado para todos. Repetir uma exportação com
+a mesma combinação de página, escala, unidade e opções não consome download, e
+qualquer mudança na combinação consome. Limpar o cookie anônimo não
 devolve cota, porque o IP ainda conta. Usuário logado envia 3 arquivos com 3
 downloads cada e é barrado no quarto arquivo. A janela deslizante libera vaga
 2 horas após cada consumo, e não em horário fixo. Navegar, calibrar e alternar

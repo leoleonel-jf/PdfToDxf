@@ -125,6 +125,33 @@ def test_classify_dup_group():
     print("OK: classify agrupa duplicatas")
 
 
+def test_classify_dup_group_arredonda_em_3_casas():
+    """Fixa a precisão da chave de duplicata em 3 casas — nem 2, nem 4.
+
+    O `round(..., 3)` do classify() é o que define quando dois traços são "o
+    mesmo". Subir para 4 casas separaria o primeiro par; descer para 2 juntaria
+    o segundo. Os dois lados são verificados para que o número não possa mudar
+    sem que um teste caia.
+    """
+    # diferença na 4ª casa: ainda é o mesmo traço
+    a = classify([seg(0, 0, 1.0, 0), seg(0, 0, 1.0004, 0)])
+    assert a.dup_group[0] == a.dup_group[1], (
+        "diferença na 4ª casa decimal deveria cair no mesmo dup_group")
+    assert a.n_groups == 1, a.n_groups
+
+    # diferença na 3ª casa: já são traços distintos (é este par que cai se o
+    # arredondamento afrouxar para 2 casas)
+    b = classify([seg(0, 0, 1.0, 0), seg(0, 0, 1.004, 0)])
+    assert b.dup_group[0] != b.dup_group[1], (
+        "diferença na 3ª casa decimal deveria cair em dup_groups diferentes")
+
+    # diferença na 2ª casa: distintos com folga
+    c = classify([seg(0, 0, 1.0, 0), seg(0, 0, 1.01, 0)])
+    assert c.dup_group[0] != c.dup_group[1], (
+        "diferença na 2ª casa decimal deveria cair em dup_groups diferentes")
+    print("OK: chave de duplicata arredonda em 3 casas")
+
+
 def test_classify_nao_segmento_sem_grupo():
     ents = [TextItem(text="x", position=(0, 0)), seg(0, 0, 1, 0)]
     a = classify(ents)
@@ -275,6 +302,7 @@ if __name__ == "__main__":
     test_classify_layers()
     test_classify_length_mm()
     test_classify_dup_group()
+    test_classify_dup_group_arredonda_em_3_casas()
     test_classify_nao_segmento_sem_grupo()
     test_classify_byte_cost()
     test_select_layers()

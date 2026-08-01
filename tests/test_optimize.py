@@ -8,7 +8,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pdftodxf.calibration import PT_TO_MM
 from pdftodxf.geometry import Polyline, Segment, TextItem
 from pdftodxf.optimize import (EntityAttrs, ExportOptions, apply_filters,
-                               classify, estimate_bytes, join_segments)
+                               apply_selection, classify, estimate_bytes,
+                               join_segments, select)
 
 
 def seg(x1, y1, x2, y2, layer="0", color=None, is_fill=False):
@@ -152,6 +153,72 @@ def test_classify_byte_cost():
     print("OK: classify calcula custo em bytes")
 
 
+def filtrar(ents, opts):
+    """Atalho: classifica, seleciona e devolve as entidades que sobraram."""
+    a = classify(ents)
+    return apply_selection(ents, select(a, opts))
+
+
+def test_select_layers():
+    ents = [seg(0, 0, 1, 0, layer="A"), seg(0, 0, 1, 0, layer="B")]
+    out = filtrar(ents, ExportOptions(excluded_layers={"B"}))
+    assert len(out) == 1 and out[0].layer == "A"
+    print("OK: select exclui layers")
+
+
+def test_select_fills():
+    ents = [seg(0, 0, 1, 0), seg(0, 0, 2, 0, is_fill=True)]
+    out = filtrar(ents, ExportOptions(drop_fills=True))
+    assert len(out) == 1 and not out[0].is_fill
+    print("OK: select remove preenchimentos")
+
+
+def test_select_micro():
+    small = 0.05 / PT_TO_MM
+    big = 5.0 / PT_TO_MM
+    ents = [seg(0, 0, small, 0), seg(0, 0, big, 0)]
+    out = filtrar(ents, ExportOptions(min_len_mm=0.1))
+    assert len(out) == 1 and out[0].p2[0] == big
+    out = filtrar(ents, ExportOptions(min_len_mm=0.0))
+    assert len(out) == 2
+    print("OK: select descarta micro-segmentos")
+
+
+def test_select_dedup():
+    ents = [seg(0, 0, 1, 1), seg(0, 0, 1, 1), seg(1, 1, 0, 0),
+            seg(0, 0, 2, 2), seg(0, 0, 1, 1, layer="X")]
+    out = filtrar(ents, ExportOptions(dedup=True))
+    assert len(out) == 3, f"esperava 3, veio {len(out)}"
+    print("OK: select deduplica sobrepostos")
+
+
+def test_select_dedup_elege_o_primeiro_sobrevivente():
+    # o primeiro do grupo é preenchimento; com drop_fills ligado quem deve
+    # sobreviver é o segundo, e não os dois nem nenhum
+    ents = [seg(0, 0, 1, 1, is_fill=True), seg(0, 0, 1, 1)]
+    out = filtrar(ents, ExportOptions(dedup=True, drop_fills=True))
+    assert len(out) == 1 and not out[0].is_fill
+    # sem drop_fills, o primeiro do grupo é que fica
+    out = filtrar(ents, ExportOptions(dedup=True))
+    assert len(out) == 1 and out[0].is_fill
+    print("OK: select elege o primeiro sobrevivente do grupo")
+
+
+def test_select_dedup_nao_afeta_outros_tipos():
+    t1 = TextItem(text="x", position=(0, 0))
+    t2 = TextItem(text="x", position=(0, 0))
+    out = filtrar([t1, t2], ExportOptions(dedup=True))
+    assert len(out) == 2
+    print("OK: dedup não mexe em quem não é segmento")
+
+
+def test_select_preserva_ordem():
+    ents = [seg(i, 0, i + 1, 0) for i in range(5)]
+    out = filtrar(ents, ExportOptions())
+    assert [e.p1[0] for e in out] == [0, 1, 2, 3, 4]
+    print("OK: select preserva a ordem original")
+
+
 if __name__ == "__main__":
     test_filter_layers()
     test_filter_fills()
@@ -167,4 +234,11 @@ if __name__ == "__main__":
     test_classify_dup_group()
     test_classify_nao_segmento_sem_grupo()
     test_classify_byte_cost()
+    test_select_layers()
+    test_select_fills()
+    test_select_micro()
+    test_select_dedup()
+    test_select_dedup_elege_o_primeiro_sobrevivente()
+    test_select_dedup_nao_afeta_outros_tipos()
+    test_select_preserva_ordem()
     print("Todos os testes de otimização passaram.")

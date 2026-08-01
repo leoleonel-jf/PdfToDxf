@@ -104,6 +104,42 @@ def classify(entities: list[Entity]) -> EntityAttrs:
     return attrs
 
 
+def select(attrs: EntityAttrs, opts: ExportOptions) -> list[bool]:
+    """Fase barata: decide quem entra, só comparando os números do classify().
+
+    Sem hash e sem alocação por entidade — é esta função que é espelhada em
+    TypeScript para a prévia do navegador. A ordem de varredura importa: dentro
+    de um grupo de duplicatas, quem sobrevive é o primeiro que passa nos demais
+    filtros.
+    """
+    excluded = {i for i, name in enumerate(attrs.layers)
+                if name in opts.excluded_layers}
+    emitted = bytearray(attrs.n_groups)
+    mask = [False] * len(attrs)
+
+    for i in range(len(attrs)):
+        if attrs.layer_id[i] in excluded:
+            continue
+        if opts.drop_fills and attrs.is_fill[i]:
+            continue
+        if attrs.kind[i] == "Segment":
+            if opts.min_len_mm > 0.0 and attrs.length_mm[i] < opts.min_len_mm:
+                continue
+            if opts.dedup:
+                g = attrs.dup_group[i]
+                if emitted[g]:
+                    continue
+                emitted[g] = 1
+        mask[i] = True
+
+    return mask
+
+
+def apply_selection(entities: list[Entity], mask: list[bool]) -> list[Entity]:
+    """Aplica a máscara do select() à lista original de entidades."""
+    return [e for e, keep in zip(entities, mask) if keep]
+
+
 def _seg_len(e: Segment) -> float:
     return math.hypot(e.p2[0] - e.p1[0], e.p2[1] - e.p1[1])
 

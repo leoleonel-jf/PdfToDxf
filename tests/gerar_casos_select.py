@@ -1,6 +1,11 @@
 """Gera tests/casos_select.json, o contrato entre o select() do Python e o do
 navegador.
 
+Cada caso congela duas coisas: a máscara devolvida pelo `select()` e o número
+devolvido pelo `estimate_bytes()`. O segundo importa porque a estimativa usa
+divisão inteira e truncamento (`chained // 12`, `int(...)`), que não existem em
+JavaScript — sem um número congelado, a versão TypeScript escreveria no escuro.
+
 Rode depois de qualquer mudança em select() ou classify():
 
     python tests/gerar_casos_select.py
@@ -19,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pdftodxf.calibration import PT_TO_MM
 from pdftodxf.geometry import Arc, Polyline, Segment, TextItem
-from pdftodxf.optimize import ExportOptions, classify, select
+from pdftodxf.optimize import ExportOptions, classify, estimate_bytes, select
 
 SAIDA = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "casos_select.json")
@@ -124,11 +129,17 @@ def gerar_entidades_limiar():
 
 
 def opcoes_variadas():
+    """Produto cartesiano das opções.
+
+    `join_polylines` e `round_coords` não mudam a máscara do `select()`, mas
+    mudam o `estimate_bytes` — entram aqui porque o contrato também congela o
+    número de bytes.
+    """
     excluidos = [[], ["HACHURA"], ["COTAS", "HACHURA"], list(LAYERS)]
-    for exc, fills, micro, dedup in itertools.product(
+    for exc, fills, micro, dedup, juntar, arredondar in itertools.product(
             excluidos, [False, True], [0.0, LIMIAR_1PT, 0.5, 2.0],
-            [False, True]):
-        yield exc, fills, micro, dedup
+            [False, True], [False, True], [False, True]):
+        yield exc, fills, micro, dedup, juntar, arredondar
 
 
 def main():
@@ -153,9 +164,12 @@ def main():
             "layers": attrs.layers,
             "n_groups": attrs.n_groups,
         })
-        for i, (exc, fills, micro, dedup) in enumerate(opcoes_variadas()):
+        for i, (exc, fills, micro, dedup, juntar,
+                arredondar) in enumerate(opcoes_variadas()):
             opts = ExportOptions(excluded_layers=set(exc), drop_fills=fills,
-                                 min_len_mm=micro, dedup=dedup)
+                                 min_len_mm=micro, dedup=dedup,
+                                 join_polylines=juntar,
+                                 round_coords=arredondar)
             mask = select(attrs, opts)
             casos.append({
                 "nome": f"{nome_tabela}-opcao{i}",
@@ -165,8 +179,11 @@ def main():
                     "drop_fills": fills,
                     "min_len_mm": micro,
                     "dedup": dedup,
+                    "join_polylines": juntar,
+                    "round_coords": arredondar,
                 },
                 "esperado": mask,
+                "bytes_esperado": estimate_bytes(attrs, mask, opts),
             })
 
     with open(SAIDA, "w", encoding="utf-8") as f:

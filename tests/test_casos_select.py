@@ -10,7 +10,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from pdftodxf.optimize import EntityAttrs, ExportOptions, select
+from pdftodxf.optimize import (EntityAttrs, ExportOptions, estimate_bytes,
+                               select)
 
 CASOS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "casos_select.json")
@@ -34,13 +35,20 @@ def test_casos():
         opts = ExportOptions(excluded_layers=set(o["excluded_layers"]),
                              drop_fills=o["drop_fills"],
                              min_len_mm=o["min_len_mm"],
-                             dedup=o["dedup"])
+                             dedup=o["dedup"],
+                             join_polylines=o["join_polylines"],
+                             round_coords=o["round_coords"])
         obtido = select(attrs, opts)
         divergentes = [i for i, (a, b) in enumerate(zip(obtido, caso["esperado"]))
                        if a != b]
         assert not divergentes and len(obtido) == len(caso["esperado"]), (
             f"divergência em {caso['nome']}: índices {divergentes[:5]}"
             f"{' e mais' if len(divergentes) > 5 else ''}")
+
+        bytes_obtido = estimate_bytes(attrs, obtido, opts)
+        assert bytes_obtido == caso["bytes_esperado"], (
+            f"bytes divergentes em {caso['nome']}: "
+            f"{bytes_obtido} != {caso['bytes_esperado']}")
 
     print(f"OK: {len(dados['casos'])} casos de paridade")
 

@@ -461,7 +461,13 @@ CORES = [None, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)]
 
 
 def gerar_entidades(n, semente):
-    """Entidades aleatórias com muita repetição, para o dedup ter o que fazer."""
+    """Entidades aleatórias numa grade de 3x3, para o dedup ter o que fazer.
+
+    A grade precisa ser pequena de propósito: 9 pontos dão 36 pares não
+    ordenados que, com 4 layers e 3 cores, somam 432 chaves possíveis para
+    ~225 segmentos — dezenas de duplicatas por semente. Numa grade de 6x6 as
+    colisões caem para menos de 4% e o dedup mal é exercitado.
+    """
     rnd = random.Random(semente)
     ents = []
     for _ in range(n):
@@ -470,8 +476,7 @@ def gerar_entidades(n, semente):
         fill = rnd.random() < 0.3
         tipo = rnd.random()
         if tipo < 0.75:
-            # coordenadas de uma grade pequena: garante duplicatas frequentes
-            x1, y1, x2, y2 = (rnd.randrange(0, 6) for _ in range(4))
+            x1, y1, x2, y2 = (rnd.randrange(0, 3) for _ in range(4))
             if rnd.random() < 0.5:
                 x1, y1, x2, y2 = x2, y2, x1, y1  # ponta invertida
             ents.append(Segment(p1=(float(x1), float(y1)), p2=(float(x2), float(y2)),
@@ -866,7 +871,13 @@ CORES = [None, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)]
 
 
 def gerar_entidades(n, semente):
-    """Entidades numa grade pequena, para produzir duplicatas de propósito."""
+    """Entidades numa grade de 3x3, para produzir duplicatas em quantidade.
+
+    A grade precisa ser pequena de propósito: 9 pontos dão 36 pares não
+    ordenados que, multiplicados pelos 4 layers e 3 cores, somam 432 chaves
+    possíveis para ~90 segmentos. Numa grade de 6x6 as colisões ficam raras e
+    o caminho do dedup mal é exercitado.
+    """
     rnd = random.Random(semente)
     ents = []
     for _ in range(n):
@@ -875,7 +886,7 @@ def gerar_entidades(n, semente):
         fill = rnd.random() < 0.3
         tipo = rnd.random()
         if tipo < 0.75:
-            x1, y1, x2, y2 = (float(rnd.randrange(0, 6)) for _ in range(4))
+            x1, y1, x2, y2 = (float(rnd.randrange(0, 3)) for _ in range(4))
             if rnd.random() < 0.5:
                 x1, y1, x2, y2 = x2, y2, x1, y1
             ents.append(Segment(p1=(x1, y1), p2=(x2, y2), layer=layer,

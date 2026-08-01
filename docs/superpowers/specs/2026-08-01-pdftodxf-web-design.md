@@ -18,7 +18,9 @@ mesmo núcleo.
 | Decisão | Escolha |
 |---|---|
 | Formato | App web completo no navegador (não é só API) |
-| Acesso | Público, sem cadastro, protegido por limites técnicos |
+| Acesso | Público; usa sem conta com cota menor, cadastro triplica a cota |
+| Cota | Sem conta: 1 arquivo, 3 downloads / 2 h · Com conta: 3 arquivos, 3 downloads cada / 2 h |
+| Entrada | Google e e-mail com senha |
 | VPS | 8+ vCPU, 16+ GB RAM |
 | Onde a geometria vive | No navegador — servidor extrai uma vez e envia |
 | Desktop | Continua vivo, mesmo repositório, núcleo compartilhado |
@@ -138,7 +140,8 @@ no desktop.
 Layout de duas faixas no cabeçalho, com o desenho ocupando todo o resto da tela.
 
 **Faixa 1:** abrir PDF · seletor de página · calibrar (2 pontos) · escala e
-unidade atuais · estimativa de tamanho · botão Exportar DXF.
+unidade atuais · estimativa de tamanho · botão Exportar DXF · à direita, a cota
+restante e o botão de entrar ou o nome da conta.
 
 **Faixa 2:** opções de compactação como botões ligáveis (unir em polilinhas,
 arredondar coordenadas, remover duplicados, remover preenchimentos, descartar
@@ -165,7 +168,10 @@ web/api/
   main.py            rotas FastAPI
   jobs.py            fila em ProcessPoolExecutor, estado dos trabalhos
   packing.py         serialização de geometry.bin e meta.json
-  limits.py          limites de tamanho, cota por IP, tetos de recurso
+  limits.py          limites técnicos de tamanho e de recurso
+  auth.py            cadastro, login por senha e por Google, sessão
+  quotas.py          janela deslizante de 2 horas, cota anônima e logada
+  db.py              SQLite: usuários, identidades e consumo de cota
   storage.py         cache em disco, prazos e limpeza
   registros.py       geração dos .md de registro e expurgo de 1 ano
 web/frontend/src/
@@ -174,6 +180,7 @@ web/frontend/src/
   select.ts          espelho TypeScript de optimize.select()
   calibrate.ts       calibração por dois pontos
   toolbar.ts         as duas faixas do cabeçalho
+  conta.ts           entrar, cadastrar e o indicador de cota restante
   api.ts             cliente HTTP
   privacidade.html   página de privacidade, linkada no rodapé
 tests/               testes do núcleo, de paridade e de API
@@ -191,19 +198,68 @@ deploy/              Dockerfile, docker-compose.yml, Caddyfile
 | `GET /api/jobs/{id}/pages/{n}/meta.json` | Layers, limites, contagens. |
 | `POST /api/jobs/{id}/pages/{n}/export` | Recebe escala, unidade e opções. Devolve link do DXF. |
 | `GET /api/download/{token}` | Entrega o DXF gerado. |
+| `POST /api/auth/registro` | Cria conta por e-mail e dispara o link de confirmação. |
+| `POST /api/auth/entrar` | Entra por e-mail e senha. |
+| `GET /api/auth/google` · `GET /api/auth/google/retorno` | Entrada pelo Google. |
+| `POST /api/auth/sair` | Encerra a sessão. |
+| `POST /api/auth/senha` | Pede e conclui a redefinição de senha. |
+| `GET /api/cota` | Arquivos e downloads restantes e quando a próxima vaga libera. |
 
 Páginas são extraídas sob demanda: abrir um caderno de 40 folhas processa apenas
-as folhas efetivamente visitadas, e custa um único envio na cota do visitante.
+as folhas efetivamente visitadas, e custa um único arquivo na cota do visitante.
 
-## Limites de uso público
+## Contas e cotas de uso
+
+### A regra
+
+| | Arquivos por janela | Downloads por arquivo | Janela |
+|---|---|---|---|
+| Visitante sem conta | 1 | 3 | 2 horas |
+| Usuário logado | 3 | 3 | 2 horas |
+
+**O que consome cota:** enviar um PDF consome um dos arquivos da janela; baixar
+o DXF consome um dos 3 downloads daquele arquivo. Abrir páginas, navegar,
+calibrar, mexer nas opções e ver a prévia é livre e ilimitado — só o download
+conta. Os 3 downloads existem justamente para permitir reexportar a mesma planta
+com compactações diferentes.
+
+**A janela é deslizante:** cada consumo é registrado com a hora, e a cota
+disponível é o limite menos o que foi consumido nas últimas 2 horas. Não existe
+"virada" em horário fixo — a tela mostra quanto resta e quando a próxima vaga
+libera.
+
+**Quando a cota acaba,** a mensagem diz o que aconteceu, quando libera e, para
+quem não tem conta, oferece o cadastro como caminho para 3 arquivos.
+
+### Como o visitante sem conta é identificado
+
+Por um cookie anônimo de longa duração **e** pelo endereço IP, valendo o mais
+restritivo dos dois. Só o cookie seria contornável limpando o navegador; só o
+IP puniria escritórios inteiros atrás de um mesmo endereço. Exigindo os dois,
+limpar cookies não devolve cota e um IP compartilhado ainda tem folga.
+
+### Contas
+
+Duas portas de entrada: **entrar com Google** e **e-mail com senha**. Contas por
+e-mail confirmam o endereço por link antes de valer a cota maior; a senha é
+guardada com hash Argon2, nunca em texto. Recuperação de senha por link com
+prazo curto.
+
+Os dados ficam em SQLite no volume persistente — usuários, identidades Google
+vinculadas e o histórico de consumo de cota. Para um servidor só, com esse
+volume de escrita, é suficiente e evita mais um serviço no Compose. A sessão é
+um cookie assinado, com prazo e renovação.
+
+Para impedir que alguém fabrique contas em série e multiplique a cota, há um
+teto de criação de contas por IP por dia.
+
+### Limites técnicos (valem para todos)
 
 | Limite | Valor |
 |---|---|
 | Tamanho máximo do PDF | 100 MB |
 | Teto de entidades por página | 3.000.000 (acima disso, recusa explicando o motivo) |
 | Extrações simultâneas | 4 (de 8 vCPU) |
-| Envios por IP | 3 por hora |
-| Exportações por IP | 10 por hora |
 | Prazo dos arquivos | 4 horas |
 | Cota total de disco | 40 GB, com limpeza do mais antigo quando estourar |
 
@@ -245,8 +301,9 @@ arquivo malicioso não consiga escrever fora da pasta.
 
 ### Conteúdo
 
-Cabeçalho de identificação em frontmatter YAML: IP, nome original do PDF, página,
-data e hora, `job_id`, tamanho do PDF em bytes e tempo de extração em segundos.
+Cabeçalho de identificação em frontmatter YAML: IP, identificador da conta
+(vazio quando o visitante não está logado), nome original do PDF, página, data e
+hora, `job_id`, tamanho do PDF em bytes e tempo de extração em segundos.
 
 Corpo do documento:
 
@@ -280,9 +337,13 @@ Docker Compose com dois contêineres:
   compilados
 - **caddy** — proxy reverso na frente, resolvendo HTTPS e certificado sozinho
 
-Dois volumes: um para os arquivos temporários (prazo de 4 horas) e outro para
-`/registros` (prazo de 1 ano). A limpeza dos dois roda como tarefa periódica
-dentro do app. O volume de registros não é servido pela web em nenhuma rota.
+Três volumes: os arquivos temporários (prazo de 4 horas), `/registros` (prazo de
+1 ano) e o banco SQLite de contas e cotas (permanente, com backup). A limpeza dos
+dois primeiros roda como tarefa periódica dentro do app. O volume de registros
+não é servido pela web em nenhuma rota.
+
+Segredos — chave de assinatura da sessão, credenciais do Google e do servidor de
+e-mail — vêm de variáveis de ambiente, nunca do repositório.
 
 ## Testes
 
@@ -299,8 +360,18 @@ as duas implementações do `select()` quebra a suíte. É o teste que sustenta 
 promessa de que a prévia é o DXF.
 
 **3. API.** PDF sintético convertido de ponta a ponta; arquivo acima de 100 MB é
-recusado; página acima do teto de entidades é recusada com mensagem; a cota por
-IP bloqueia o quarto envio na mesma hora; arquivos expirados somem do disco.
+recusado; página acima do teto de entidades é recusada com mensagem; arquivos
+expirados somem do disco.
+
+**3b. Contas e cotas.** Visitante sem conta envia 1 arquivo e baixa 3 vezes; o
+segundo arquivo e o quarto download são recusados. Limpar o cookie anônimo não
+devolve cota, porque o IP ainda conta. Usuário logado envia 3 arquivos com 3
+downloads cada e é barrado no quarto arquivo. A janela deslizante libera vaga
+2 horas após cada consumo, e não em horário fixo. Navegar, calibrar e alternar
+opções não consome nada. Conta por e-mail sem confirmação fica com a cota de
+visitante. Entrada pelo Google vincula à conta de mesmo e-mail em vez de criar
+outra. Senha nunca é gravada em texto. O teto de criação de contas por IP por dia
+bloqueia a fabricação em série.
 
 **4. Registros.** A extração de um PDF sintético gera o `.md` esperado em
 `/registros`, com todos os textos da planta presentes; um nome de arquivo com
@@ -311,7 +382,8 @@ novos permanecem.
 
 ## Fora de escopo
 
-- Cadastro de usuários, contas e cotas por conta
+- Planos pagos, cobrança e cotas compradas
+- Painel administrativo de usuários
 - Verificação anti-robô (captcha)
 - Saída em DWG
 - PDFs escaneados (vetorização por visão computacional)

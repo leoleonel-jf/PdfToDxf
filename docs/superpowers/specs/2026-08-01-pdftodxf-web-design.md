@@ -19,7 +19,7 @@ mesmo núcleo.
 |---|---|
 | Formato | App web completo no navegador (não é só API) |
 | Acesso | Público; usa sem conta com cota menor, cadastro triplica a cota |
-| Cota | Sem conta: 1 arquivo, 3 downloads / 2 h · Com conta: 3 arquivos, 3 downloads cada / 2 h |
+| Cota | Sem conta: 1 arquivo de até 20 MB, 3 downloads / 2 h · Com conta: 3 arquivos de até 100 MB, 3 downloads cada / 2 h |
 | Entrada | Google e e-mail com senha |
 | VPS | 8+ vCPU, 16+ GB RAM |
 | Onde a geometria vive | No navegador — servidor extrai uma vez e envia |
@@ -86,8 +86,9 @@ removido. Um caminho só, exercitado pelas duas interfaces.
 
 ### Fluxo de uma conversão
 
-1. Usuário escolhe o PDF. Upload em pedaços (o limite é 100 MB). O servidor
-   devolve `job_id` e o número de páginas.
+1. Usuário escolhe o PDF. Upload em pedaços, respeitando o teto de tamanho do
+   seu plano (20 MB sem conta, 100 MB com conta). O servidor devolve `job_id` e
+   o número de páginas.
 2. Usuário escolhe a página. O servidor enfileira a extração.
 3. Um processo worker roda `extractor.extract_page()` e depois `classify()`,
    grava o resultado no cache em disco e escreve o registro em `/registros`
@@ -212,10 +213,15 @@ as folhas efetivamente visitadas, e custa um único arquivo na cota do visitante
 
 ### A regra
 
-| | Arquivos por janela | Downloads por arquivo | Janela |
-|---|---|---|---|
-| Visitante sem conta | 1 | 3 | 2 horas |
-| Usuário logado | 3 | 3 | 2 horas |
+| | Arquivos por janela | Downloads por arquivo | Tamanho máximo do PDF | Janela |
+|---|---|---|---|---|
+| Visitante sem conta | 1 | 3 | 20 MB | 2 horas |
+| Usuário logado | 3 | 3 | 100 MB | 2 horas |
+
+O teto de tamanho é verificado **antes** do envio começar, pelo tamanho que o
+navegador informa, e conferido de novo no servidor conforme os pedaços chegam.
+Um visitante que escolhe uma planta de 40 MB recebe na hora a mensagem de que
+aquele arquivo exige conta, sem esperar o envio inteiro para ser recusado.
 
 **O que consome cota:** enviar um PDF consome um dos arquivos da janela; baixar
 o DXF consome um dos 3 downloads daquele arquivo. Abrir páginas, navegar,
@@ -257,7 +263,6 @@ teto de criação de contas por IP por dia.
 
 | Limite | Valor |
 |---|---|
-| Tamanho máximo do PDF | 100 MB |
 | Teto de entidades por página | 3.000.000 (acima disso, recusa explicando o motivo) |
 | Extrações simultâneas | 4 (de 8 vCPU) |
 | Prazo dos arquivos | 4 horas |
@@ -359,12 +364,13 @@ O mesmo arquivo é executado pelo pytest e pelo vitest. Qualquer divergência en
 as duas implementações do `select()` quebra a suíte. É o teste que sustenta a
 promessa de que a prévia é o DXF.
 
-**3. API.** PDF sintético convertido de ponta a ponta; arquivo acima de 100 MB é
-recusado; página acima do teto de entidades é recusada com mensagem; arquivos
-expirados somem do disco.
+**3. API.** PDF sintético convertido de ponta a ponta; página acima do teto de
+entidades é recusada com mensagem; arquivos expirados somem do disco.
 
 **3b. Contas e cotas.** Visitante sem conta envia 1 arquivo e baixa 3 vezes; o
-segundo arquivo e o quarto download são recusados. Limpar o cookie anônimo não
+segundo arquivo e o quarto download são recusados. Um PDF de 40 MB é recusado
+para visitante e aceito para quem tem conta, e a recusa acontece antes de o envio
+começar. Um PDF acima de 100 MB é recusado para todos. Limpar o cookie anônimo não
 devolve cota, porque o IP ainda conta. Usuário logado envia 3 arquivos com 3
 downloads cada e é barrado no quarto arquivo. A janela deslizante libera vaga
 2 horas após cada consumo, e não em horário fixo. Navegar, calibrar e alternar

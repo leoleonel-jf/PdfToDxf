@@ -27,6 +27,7 @@ mesmo núcleo.
 | Backend | Python + FastAPI (reusa o núcleo) |
 | Frontend | TypeScript puro + Canvas, compilado com Vite |
 | Layout | Cabeçalho de duas faixas com todas as opções à vista |
+| Visual | CSS próprio, sem dependência: moldura escura estilo CAD, desenho sobre fundo claro |
 | Deploy | Docker Compose + Caddy (HTTPS automático) |
 | Registro de conversões | Um `.md` por página extraída, em `/registros`, guardado por 1 ano |
 | Carregamento | Progressivo: esqueleto primeiro, detalhe em segundo plano |
@@ -163,6 +164,28 @@ no desktop.
 
 ## Interface
 
+### Visual
+
+CSS próprio, escrito à mão com variáveis, sem framework nem biblioteca de
+componentes. A lista de componentes é curta — botões, chips ligáveis, seletor de
+página, campo numérico e duas caixas de diálogo (entrar e cadastrar) — e não
+justifica dependência externa nem etapa extra de build.
+
+**Moldura escura, papel claro.** As faixas do cabeçalho, o rodapé e as bordas são
+escuras, como a interface de um CAD, para não competir com o desenho. A área do
+desenho é clara, com o traço preto sobre fundo claro, igual ao PDF original e ao
+que sai na impressão — quem está conferindo com a folha impressa na mão vê a
+mesma coisa nos dois lugares.
+
+O fundo do desenho é uma variável única no renderizador, então inverter isso mais
+tarde é uma linha de código, caso a preferência mude.
+
+Tipografia do sistema, sem fonte baixada. Ícones desenhados em SVG inline, só os
+poucos necessários. Nada de gradiente, sombra ou animação decorativa: a atenção
+pertence ao desenho.
+
+### Layout
+
 Layout de duas faixas no cabeçalho, com o desenho ocupando todo o resto da tela.
 
 **Faixa 1:** abrir PDF · seletor de página · calibrar (2 pontos) · escala e
@@ -241,6 +264,7 @@ web/frontend/src/
   toolbar.ts         as duas faixas do cabeçalho
   conta.ts           entrar, cadastrar e o indicador de cota restante
   api.ts             cliente HTTP
+  estilo.css         variáveis de cor e os poucos componentes, escrito à mão
   privacidade.html   página de privacidade, linkada no rodapé
 tests/               testes do núcleo, de paridade e de API
 deploy/              Dockerfile, docker-compose.yml, Caddyfile

@@ -84,6 +84,18 @@ python tests/test_roundtrip.py
 Gera um PDF sintético com medidas conhecidas, converte e confere que as
 distâncias, arcos e textos batem no DXF resultante.
 
+Os demais testes rodam do mesmo jeito:
+
+```powershell
+python tests/test_optimize.py
+python tests/test_casos_select.py
+```
+
+`tests/casos_select.json` é o contrato entre o `select()` do Python e a versão
+que roda no navegador. Se você mudar `classify()` ou `select()`, regenere com
+`python tests/gerar_casos_select.py` e confira o diff: mudança nesse arquivo
+significa mudança de comportamento visível na prévia.
+
 ## Limitações / futuro
 
 - Saída **DWG**: não suportada (formato fechado). O DXF abre nativamente no

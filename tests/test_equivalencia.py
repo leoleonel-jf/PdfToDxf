@@ -29,8 +29,9 @@ def gerar_entidades(n, semente):
         fill = rnd.random() < 0.3
         tipo = rnd.random()
         if tipo < 0.75:
-            # coordenadas de uma grade pequena: garante duplicatas frequentes
-            x1, y1, x2, y2 = (rnd.randrange(0, 6) for _ in range(4))
+            # grade 3x3 (9 pontos, 36 pares) x 4 layers x 3 cores = 432 chaves
+            # possiveis para ~225 segmentos: colisoes ficam comuns
+            x1, y1, x2, y2 = (rnd.randrange(0, 3) for _ in range(4))
             if rnd.random() < 0.5:
                 x1, y1, x2, y2 = x2, y2, x1, y1  # ponta invertida
             ents.append(Segment(p1=(float(x1), float(y1)), p2=(float(x2), float(y2)),

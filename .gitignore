@@ -1,0 +1,25 @@
+# Dados de trabalho — plantas de clientes e arquivos gerados NÃO vão pro repo
+input/
+Input/
+output/
+*.pdf
+*.dxf
+*.dwg
+
+# Artefatos de depuração
+debug_*.png
+debug_*.pkl
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Editores / SO
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

@@ -1,0 +1,182 @@
+"""Redução do DXF: filtros, deduplicação, junção em polilinhas e estimativa.
+
+Todas as funções são puras (recebem/retornam listas de entidades de geometry.py,
+coordenadas em pts de papel, Y para cima).
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+
+from .calibration import PT_TO_MM
+from .geometry import Arc, Bezier, Entity, Polyline, Segment, TextItem
+
+
+@dataclass
+class ExportOptions:
+    """Opções de exportação/compactação escolhidas pelo usuário."""
+
+    excluded_layers: set[str] = field(default_factory=set)
+    drop_fills: bool = False           # remover preenchimentos (hachuras sólidas)
+    min_len_mm: float = 0.0            # descartar segmentos menores que isso (mm de papel); 0 = off
+    dedup: bool = False                # remover segmentos duplicados/sobrepostos
+    join_polylines: bool = False       # unir segmentos encadeados em LWPOLYLINE
+    round_coords: bool = False         # arredondar coordenadas na escrita
+
+
+def _seg_len(e: Segment) -> float:
+    return math.hypot(e.p2[0] - e.p1[0], e.p2[1] - e.p1[1])
+
+
+def apply_filters(entities: list[Entity], opts: ExportOptions) -> list[Entity]:
+    """Filtros baratos (layers, preenchimentos, micro-segmentos, dedup).
+
+    Não faz a junção em polilinhas — essa é um passo separado (mais caro)
+    feito só na exportação, pois não muda o aspecto visual.
+    """
+    min_len_pt = opts.min_len_mm / PT_TO_MM if opts.min_len_mm > 0 else 0.0
+    seen: set = set()
+    out: list[Entity] = []
+    for e in entities:
+        if e.layer in opts.excluded_layers:
+            continue
+        if opts.drop_fills and e.is_fill:
+            continue
+        if isinstance(e, Segment):
+            if min_len_pt and _seg_len(e) < min_len_pt:
+                continue
+            if opts.dedup:
+                a = (round(e.p1[0], 3), round(e.p1[1], 3))
+                b = (round(e.p2[0], 3), round(e.p2[1], 3))
+                key = (e.layer, e.color, a, b) if a <= b else (e.layer, e.color, b, a)
+                if key in seen:
+                    continue
+                seen.add(key)
+        out.append(e)
+    return out
+
+
+def join_segments(entities: list[Entity]) -> list[Entity]:
+    """Une segmentos encadeados (fim de um = início do outro) em Polylines.
+
+    Agrupa por (layer, cor); segmentos isolados permanecem como Segment.
+    A geometria não muda — só a representação (LWPOLYLINE é ~5x mais compacta).
+    """
+    others: list[Entity] = []
+    groups: dict = {}
+    for e in entities:
+        if isinstance(e, Segment):
+            groups.setdefault((e.layer, e.color), []).append(e)
+        else:
+            others.append(e)
+
+    result: list[Entity] = others
+    for (layer, color), segs in groups.items():
+        n = len(segs)
+        # endpoint -> lista de (índice do segmento, extremidade 0/1)
+        point_map: dict = {}
+        keys = []
+        for i, s in enumerate(segs):
+            ka = (round(s.p1[0], 3), round(s.p1[1], 3))
+            kb = (round(s.p2[0], 3), round(s.p2[1], 3))
+            keys.append((ka, kb))
+            point_map.setdefault(ka, []).append((i, 0))
+            point_map.setdefault(kb, []).append((i, 1))
+
+        used = [False] * n
+
+        def take_next(pt_key, exclude):
+            """Próximo segmento não usado que toca pt_key."""
+            for idx, end in point_map.get(pt_key, ()):
+                if not used[idx] and idx != exclude:
+                    return idx, end
+            return None, None
+
+        for i in range(n):
+            if used[i]:
+                continue
+            used[i] = True
+            chain = [segs[i].p1, segs[i].p2]
+            chain_keys = [keys[i][0], keys[i][1]]
+            # estende para frente
+            while True:
+                idx, end = take_next(chain_keys[-1], -1)
+                if idx is None:
+                    break
+                used[idx] = True
+                s = segs[idx]
+                if end == 0:
+                    chain.append(s.p2)
+                    chain_keys.append(keys[idx][1])
+                else:
+                    chain.append(s.p1)
+                    chain_keys.append(keys[idx][0])
+            # estende para trás
+            while True:
+                idx, end = take_next(chain_keys[0], -1)
+                if idx is None:
+                    break
+                used[idx] = True
+                s = segs[idx]
+                if end == 0:
+                    chain.insert(0, s.p2)
+                    chain_keys.insert(0, keys[idx][1])
+                else:
+                    chain.insert(0, s.p1)
+                    chain_keys.insert(0, keys[idx][0])
+
+            if len(chain) == 2:
+                result.append(segs[i])
+            else:
+                closed = chain_keys[0] == chain_keys[-1]
+                if closed:
+                    chain = chain[:-1]
+                result.append(Polyline(points=chain, closed=closed,
+                                       layer=layer, color=color))
+    return result
+
+
+# bytes aproximados por entidade em DXF ASCII (medidos em arquivos reais)
+_BYTES = {"Segment": 210, "Arc": 235, "Bezier": 620, "TextItem": 330}
+_POLY_BASE = 180
+_POLY_PER_PT = 42
+_ROUND_FACTOR = 0.78  # arredondar coordenadas corta ~22% do tamanho
+
+
+def estimate_bytes(entities: list[Entity], opts: ExportOptions,
+                   joined_stats: tuple[int, int, int] | None = None) -> int:
+    """Estimativa do tamanho do DXF em bytes para as entidades já filtradas.
+
+    joined_stats: (n_polylines, total_vertices, n_segments_isolados) medidos de
+    uma junção real, se disponível; senão usa aproximação de 85% de encadeamento.
+    """
+    total = 0
+    n_seg = 0
+    for e in entities:
+        name = type(e).__name__
+        if name == "Segment":
+            n_seg += 1
+        elif name == "Polyline":
+            total += _POLY_BASE + _POLY_PER_PT * len(e.points)
+        else:
+            total += _BYTES.get(name, 300)
+
+    if opts.join_polylines and n_seg:
+        if joined_stats:
+            n_poly, n_pts, n_alone = joined_stats
+            total += n_poly * _POLY_BASE + n_pts * _POLY_PER_PT + n_alone * _BYTES["Segment"]
+        else:
+            # aproximação: ~85% dos segmentos se encadeiam em polilinhas
+            chained = int(n_seg * 0.85)
+            alone = n_seg - chained
+            n_poly = max(1, chained // 12)  # cadeias médias de ~12 segmentos
+            total += n_poly * _POLY_BASE + (chained + n_poly) * _POLY_PER_PT
+            total += alone * _BYTES["Segment"]
+    else:
+        total += n_seg * _BYTES["Segment"]
+
+    total += 60_000  # cabeçalho/tabelas
+    if opts.round_coords:
+        total = int(total * _ROUND_FACTOR)
+    return total

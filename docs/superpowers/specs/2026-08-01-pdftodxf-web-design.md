@@ -26,6 +26,7 @@ mesmo núcleo.
 | Frontend | TypeScript puro + Canvas, compilado com Vite |
 | Layout | Cabeçalho de duas faixas com todas as opções à vista |
 | Deploy | Docker Compose + Caddy (HTTPS automático) |
+| Registro de conversões | Um `.md` por página extraída, em `/registros`, guardado por 1 ano |
 
 ## Arquitetura
 
@@ -86,9 +87,10 @@ removido. Um caminho só, exercitado pelas duas interfaces.
 1. Usuário escolhe o PDF. Upload em pedaços (o limite é 100 MB). O servidor
    devolve `job_id` e o número de páginas.
 2. Usuário escolhe a página. O servidor enfileira a extração.
-3. Um processo worker roda `extractor.extract_page()` e depois `classify()`, e
-   grava o resultado no cache em disco. O PDF original é apagado assim que
-   todas as páginas pedidas foram extraídas ou o trabalho expira.
+3. Um processo worker roda `extractor.extract_page()` e depois `classify()`,
+   grava o resultado no cache em disco e escreve o registro em `/registros`
+   (ver seção própria). O PDF original é apagado assim que todas as páginas
+   pedidas foram extraídas ou o trabalho expira.
 4. O navegador baixa `geometry.bin` (coordenadas e atributos) e `meta.json`
    (layers, limites do desenho, contagens, dimensões da página).
 5. O canvas desenha. Pan e zoom são transformação de matriz — não vão ao servidor.
@@ -145,6 +147,9 @@ os excedentes quando a planta tiver muitos layers.
 
 Todo clique nas faixas atualiza a prévia e a estimativa na hora.
 
+**Rodapé:** uma linha fixa informando que o texto das plantas e o endereço IP
+são registrados por 1 ano, com link para a página de privacidade.
+
 ## Estrutura do repositório
 
 ```
@@ -162,6 +167,7 @@ web/api/
   packing.py         serialização de geometry.bin e meta.json
   limits.py          limites de tamanho, cota por IP, tetos de recurso
   storage.py         cache em disco, prazos e limpeza
+  registros.py       geração dos .md de registro e expurgo de 1 ano
 web/frontend/src/
   main.ts            composição da tela
   canvas.ts          renderizador
@@ -169,6 +175,7 @@ web/frontend/src/
   calibrate.ts       calibração por dois pontos
   toolbar.ts         as duas faixas do cabeçalho
   api.ts             cliente HTTP
+  privacidade.html   página de privacidade, linkada no rodapé
 tests/               testes do núcleo, de paridade e de API
 deploy/              Dockerfile, docker-compose.yml, Caddyfile
 ```
@@ -211,6 +218,59 @@ fila sem mexer no restante.
 
 O PDF original é apagado logo após a extração. Geometria e DXF expiram em 4
 horas. Nenhum arquivo enviado é indexado, listado publicamente ou reaproveitado.
+O registro descrito na seção seguinte é a única coisa que sobrevive a esse prazo.
+
+## Registro de conversões
+
+Cada página extraída gera um arquivo Markdown em `/registros`. O registro é
+gravado no fim da extração, junto com o `classify()`, e não depende de o usuário
+chegar a exportar o DXF.
+
+### Nome do arquivo
+
+`{ip}-{nome-do-pdf}-p{pagina}-{timestamp}.md`
+
+- `ip` — endereço de origem com pontos e dois-pontos trocados por `_`, para ser
+  nome de arquivo válido em qualquer sistema (`192_168_0_10`). Atrás do Caddy, o
+  endereço real vem do cabeçalho `X-Forwarded-For`.
+- `nome-do-pdf` — nome enviado, sem a extensão, higienizado (apenas letras,
+  números, hífen e sublinhado) e truncado em 60 caracteres.
+- `pagina` — número da página extraída, começando em 1. Necessário porque um
+  mesmo envio pode gerar vários registros.
+- `timestamp` — `YYYYMMDD-HHMMSS` em UTC.
+
+Se o nome resultante já existir, um sufixo numérico é acrescentado. O caminho
+final é sempre validado para ficar dentro de `/registros`, para que um nome de
+arquivo malicioso não consiga escrever fora da pasta.
+
+### Conteúdo
+
+Cabeçalho de identificação em frontmatter YAML: IP, nome original do PDF, página,
+data e hora, `job_id`, tamanho do PDF em bytes e tempo de extração em segundos.
+
+Corpo do documento:
+
+- **Textos da planta** — todos os `TextItem` extraídos, em tabela, com o texto,
+  a posição, a altura e a rotação de cada um, na ordem em que o extrator os
+  encontrou.
+- **Layers** — lista dos layers detectados e quantas entidades cada um tem.
+- **Contagem de entidades** — total por tipo (`Segment`, `Polyline`, `Arc`,
+  `Bezier`, `TextItem`).
+- **Geometria da folha** — dimensões da página em pontos e em mm, e os limites
+  do desenho.
+
+Não é gravada a geometria em si — apenas texto e números agregados.
+
+### Prazo e transparência
+
+Os registros são apagados automaticamente após **1 ano**, pela mesma tarefa
+periódica que limpa os arquivos temporários. A pasta `/registros` fica em volume
+próprio, fora do volume de arquivos temporários, e nunca é servida pela web.
+
+Como o registro guarda conteúdo de documentos de terceiros associado a um
+endereço IP, a interface traz uma linha fixa no rodapé informando isso, com link
+para uma página de privacidade que explica o que é guardado, por quanto tempo e
+como pedir a remoção.
 
 ## Deploy
 
@@ -220,8 +280,9 @@ Docker Compose com dois contêineres:
   compilados
 - **caddy** — proxy reverso na frente, resolvendo HTTPS e certificado sozinho
 
-Um volume para os arquivos temporários. A limpeza por prazo e por cota roda como
-tarefa periódica dentro do app.
+Dois volumes: um para os arquivos temporários (prazo de 4 horas) e outro para
+`/registros` (prazo de 1 ano). A limpeza dos dois roda como tarefa periódica
+dentro do app. O volume de registros não é servido pela web em nenhuma rota.
 
 ## Testes
 
@@ -240,6 +301,13 @@ promessa de que a prévia é o DXF.
 **3. API.** PDF sintético convertido de ponta a ponta; arquivo acima de 100 MB é
 recusado; página acima do teto de entidades é recusada com mensagem; a cota por
 IP bloqueia o quarto envio na mesma hora; arquivos expirados somem do disco.
+
+**4. Registros.** A extração de um PDF sintético gera o `.md` esperado em
+`/registros`, com todos os textos da planta presentes; um nome de arquivo com
+caracteres de caminho (`../`, barras) é higienizado e o arquivo não escapa da
+pasta; dois envios do mesmo arquivo pelo mesmo IP no mesmo segundo não se
+sobrescrevem; registros com mais de 1 ano são apagados pelo expurgo e os mais
+novos permanecem.
 
 ## Fora de escopo
 

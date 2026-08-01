@@ -119,11 +119,16 @@ def write_dxf(result: ExtractionResult, output_path: str, scale: float = 1.0,
 
 
 def export_dxf(result: ExtractionResult, output_path: str, scale: float,
-               unit: str, opts) -> dict[str, int]:
-    """Pipeline completo: filtros -> junção -> escrita, conforme ExportOptions."""
+               unit: str, opts, attrs=None) -> dict[str, int]:
+    """Pipeline completo: filtros -> junção -> escrita, conforme ExportOptions.
+
+    attrs: etiquetas já calculadas por `classify()`, se quem chama as tiver em
+    mãos (o diálogo de exportação as guarda desde a abertura). Sem elas a fase
+    cara roda de novo aqui — mesmo resultado, só mais lento.
+    """
     from .optimize import apply_selection, classify, join_segments, select
 
-    attrs = classify(result.entities)
+    attrs = classify(result.entities) if attrs is None else attrs
     entities = apply_selection(result.entities, select(attrs, opts))
     if opts.join_polylines:
         entities = join_segments(entities)

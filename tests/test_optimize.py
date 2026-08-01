@@ -2,10 +2,15 @@
 
 import os
 import sys
+import tempfile
+
+import ezdxf
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pdftodxf.calibration import PT_TO_MM
+from pdftodxf.dxf_writer import export_dxf
+from pdftodxf.extractor import ExtractionResult
 from pdftodxf.geometry import Polyline, Segment, TextItem
 from pdftodxf.optimize import (EntityAttrs, ExportOptions, apply_selection,
                                classify, estimate_bytes, join_segments,
@@ -205,6 +210,60 @@ def test_select_preserva_ordem():
     print("OK: select preserva a ordem original")
 
 
+def _resumo_dxf(path):
+    """Resumo comparável do DXF: tipo, layer e geometria de cada entidade.
+
+    Não compara os bytes do arquivo porque o cabeçalho traz carimbo de data e
+    GUIDs, que mudam a cada gravação.
+    """
+    doc = ezdxf.readfile(path)
+    resumo = []
+    for e in doc.modelspace():
+        t = e.dxftype()
+        if t == "LINE":
+            resumo.append((t, e.dxf.layer, tuple(e.dxf.start)[:2],
+                           tuple(e.dxf.end)[:2]))
+        elif t == "LWPOLYLINE":
+            resumo.append((t, e.dxf.layer,
+                           tuple((p[0], p[1]) for p in e.get_points())))
+        elif t == "TEXT":
+            resumo.append((t, e.dxf.layer, e.dxf.text,
+                           tuple(e.dxf.insert)[:2]))
+        else:
+            resumo.append((t, e.dxf.layer))
+    return resumo
+
+
+def test_export_dxf_aceita_attrs_prontos():
+    """Passar as etiquetas prontas dá exatamente o mesmo DXF que deixar
+    o export_dxf() chamar classify() por conta própria."""
+    ents = [seg(0, 0, 10, 0),                       # duplicata do próximo
+            seg(0, 0, 10, 0),
+            seg(0, 0, 0.05 / PT_TO_MM, 0),          # micro-segmento
+            seg(0, 0, 5, 0, layer="B"),
+            seg(0, 0, 5, 5, is_fill=True),
+            Polyline(points=[(0, 0), (1, 0), (1, 1)]),
+            TextItem(text="oi", position=(2, 2), height=2.0)]
+    result = ExtractionResult(entities=ents, page_width=100.0,
+                              page_height=100.0,
+                              layers={e.layer for e in ents})
+    opts = ExportOptions(excluded_layers={"B"}, drop_fills=True,
+                         min_len_mm=0.1, dedup=True, join_polylines=True,
+                         round_coords=True)
+    tmp = tempfile.mkdtemp()
+    sem_path = os.path.join(tmp, "sem_attrs.dxf")
+    com_path = os.path.join(tmp, "com_attrs.dxf")
+
+    sem = export_dxf(result, sem_path, scale=2.0, unit="mm", opts=opts)
+    com = export_dxf(result, com_path, scale=2.0, unit="mm", opts=opts,
+                     attrs=classify(ents))
+
+    assert sem == com, (sem, com)
+    assert _resumo_dxf(sem_path) == _resumo_dxf(com_path)
+    assert sem, "o DXF de controle saiu vazio — o teste não provaria nada"
+    print("OK: export_dxf reaproveita as etiquetas prontas")
+
+
 if __name__ == "__main__":
     test_join_chain()
     test_join_closed()
@@ -225,4 +284,5 @@ if __name__ == "__main__":
     test_select_dedup_elege_o_primeiro_sobrevivente()
     test_select_dedup_nao_afeta_outros_tipos()
     test_select_preserva_ordem()
+    test_export_dxf_aceita_attrs_prontos()
     print("Todos os testes de otimização passaram.")

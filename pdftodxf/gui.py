@@ -519,10 +519,15 @@ class App(tk.Tk):
         result = self.extraction
         scale = self.scale or (25.4 / 72.0)  # sem escala: mm de papel
         unit = self.unit if self.scale else "mm"
+        # o diálogo já classificou estas mesmas entidades ao abrir; reaproveitar
+        # as etiquetas evita repetir a fase cara na exportação
+        dlg = self.export_dialog
+        attrs = dlg.attrs if dlg is not None else None
 
         def work():
             try:
-                counts = run_export(result, out, scale=scale, unit=unit, opts=opts)
+                counts = run_export(result, out, scale=scale, unit=unit,
+                                    opts=opts, attrs=attrs)
             except Exception as e:
                 tb = traceback.format_exc()
                 self.ui(lambda: self._export_failed(e, tb))

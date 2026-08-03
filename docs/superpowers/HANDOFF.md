@@ -63,7 +63,7 @@ Regenerar é determinístico — se o `git diff` sujar, o comportamento mudou.
 |---|---|---|
 | 1 | `length_um` inteiro no núcleo | pronta, revisada |
 | 2 | serviço, envio do PDF, armazenamento | pronta, revisada |
-| 3 | fila de extração em processo separado | **implementada, NÃO revisada** |
+| 3 | fila de extração em processo separado | pronta, revisada |
 | 4 | empacotamento binário da geometria | não começou |
 | 5 | divisão esqueleto/detalhe + rotas | não começou |
 | 6 | exportação com cache por combinação | não começou |
@@ -100,16 +100,20 @@ Rodados em 2026-08-03, todos passando com saída limpa:
    estimativa e a prévia; desligar um layer some com ele; salvar gera o arquivo;
    o DXF abre no CAD com as medidas certas.
 
-2. **Revisar a tarefa 3 da etapa 2** (commit `d480df2`). Ela foi implementada e
-   os testes passam, mas nunca passou pela revisão por tarefa que todas as
-   outras tiveram. É a tarefa mais arriscada da etapa: processo separado, tetos
-   de recurso, e comportamento que difere entre Windows e Linux.
+2. **Tarefas 4 a 7 da etapa 2**, na ordem do plano.
 
-3. **Tarefas 4 a 7 da etapa 2**, na ordem do plano.
+3. **Mesclar a etapa 1** quando a conferência manual passar.
 
-4. **Mesclar a etapa 1** quando a conferência manual passar.
+4. **Planejar as etapas 3, 4 e 5.**
 
-5. **Planejar as etapas 3, 4 e 5.**
+A revisão da tarefa 3 já foi feita (commit de correções `122cc3e`). Achou dois
+defeitos graves, ambos corrigidos com teste de regressão: o PDF original era
+apagado assim que a fila esvaziava, o que tornava impossível extrair a página 2
+de um documento de duas páginas; e `pedir_extracao` conferia o estado fora da
+trava, então dois POSTs simultâneos para a mesma página submetiam dois workers
+que disputavam o mesmo `cache.pickle`. A spec foi ajustada junto, porque quem
+especificou o apagamento errado foi o plano. Detalhe em
+`.superpowers/sdd/progress-etapa2.md`.
 
 ## Ambiente
 
@@ -136,6 +140,10 @@ Nada disso bloqueia; está registrado para não se perder.
 - **`EntityAttrs.kind` é lista de strings** e o laço quente do `select()` compara
   string por entidade. Em 3 milhões de entidades no navegador isso pesa. O
   formato binário da etapa 2 já grava código numérico; falta reconciliar.
+- `"extraindo"` está no contrato de estado da página e nada o escreve: o
+  processo pai é o dono do estado e não sabe a hora em que o worker pega o
+  trabalho. Quem lê deve tratá-lo como "em andamento", igual a `"na_fila"`.
+  Está documentado no topo de `web/api/jobs.py`.
 - `web/api/main.py`: `criar_trabalho` fica fora do `try/except` que limpa o
   disco. Se a gravação da ficha falhar, a pasta do trabalho fica para trás.
 - `web/api/storage.py`: `gravar_ficha` pode deixar um `.json.tmp` órfão se o

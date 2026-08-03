@@ -45,7 +45,7 @@ class EntityAttrs:
     kind: list[str] = field(default_factory=list)         # "Segment", "Arc", ...
     layer_id: list[int] = field(default_factory=list)     # índice em `layers`
     is_fill: list[bool] = field(default_factory=list)
-    length_mm: list[float] = field(default_factory=list)  # 0.0 fora de Segment
+    length_um: list[int] = field(default_factory=list)     # 0 fora de Segment
     dup_group: list[int] = field(default_factory=list)    # -1 fora de Segment
     byte_cost: list[int] = field(default_factory=list)
     layers: list[str] = field(default_factory=list)
@@ -76,7 +76,8 @@ def classify(entities: list[Entity]) -> EntityAttrs:
             attrs.layers.append(e.layer)
 
         if name == "Segment":
-            length_mm = math.hypot(e.p2[0] - e.p1[0], e.p2[1] - e.p1[1]) * PT_TO_MM
+            mm = math.hypot(e.p2[0] - e.p1[0], e.p2[1] - e.p1[1]) * PT_TO_MM
+            length_um = int(mm * 1000.0 + 0.5)
             a = (round(e.p1[0], 3), round(e.p1[1], 3))
             b = (round(e.p2[0], 3), round(e.p2[1], 3))
             key = (e.layer, e.color, a, b) if a <= b else (e.layer, e.color, b, a)
@@ -85,7 +86,7 @@ def classify(entities: list[Entity]) -> EntityAttrs:
                 gid = len(group_index)
                 group_index[key] = gid
         else:
-            length_mm = 0.0
+            length_um = 0
             gid = -1
 
         if name == "Polyline":
@@ -96,7 +97,7 @@ def classify(entities: list[Entity]) -> EntityAttrs:
         attrs.kind.append(name)
         attrs.layer_id.append(lid)
         attrs.is_fill.append(e.is_fill)
-        attrs.length_mm.append(length_mm)
+        attrs.length_um.append(length_um)
         attrs.dup_group.append(gid)
         attrs.byte_cost.append(cost)
 
@@ -114,9 +115,18 @@ def select(attrs: EntityAttrs, opts: ExportOptions) -> list[bool]:
     é o primeiro que passa nos demais filtros — e o filtro de comprimento vem
     antes de reservar o grupo, então um segmento curto demais não impede o
     próximo do mesmo grupo de ser emitido.
+
+    A comparação de comprimento é toda em inteiros: `length_um` (de
+    `classify()`) já é micrômetros de papel, e o limiar `min_len_mm` é
+    convertido para micrômetros uma única vez, antes do laço, com
+    arredondamento para cima no meio (`int(x + 0.5)`, não o `round()` do
+    Python nem `Math.round` que arredondasse para baixo) — a mesma regra que a
+    versão TypeScript aplica com `Math.round`, para as duas nunca discordarem
+    sobre um comprimento bem em cima do limiar.
     """
     excluded = {i for i, name in enumerate(attrs.layers)
                 if name in opts.excluded_layers}
+    min_len_um = int(opts.min_len_mm * 1000.0 + 0.5)
     emitted = bytearray(attrs.n_groups)
     mask = [False] * len(attrs)
 
@@ -126,7 +136,7 @@ def select(attrs: EntityAttrs, opts: ExportOptions) -> list[bool]:
         if opts.drop_fills and attrs.is_fill[i]:
             continue
         if attrs.kind[i] == "Segment":
-            if opts.min_len_mm > 0.0 and attrs.length_mm[i] < opts.min_len_mm:
+            if min_len_um > 0 and attrs.length_um[i] < min_len_um:
                 continue
             if opts.dedup:
                 g = attrs.dup_group[i]

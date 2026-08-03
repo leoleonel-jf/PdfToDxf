@@ -25,7 +25,7 @@ def test_casos():
     for a in dados["tabelas"]:
         tabelas.append(EntityAttrs(
             kind=a["kind"], layer_id=a["layer_id"], is_fill=a["is_fill"],
-            length_mm=a["length_mm"], dup_group=a["dup_group"],
+            length_um=a["length_um"], dup_group=a["dup_group"],
             byte_cost=a["byte_cost"], layers=a["layers"],
             n_groups=a["n_groups"]))
 

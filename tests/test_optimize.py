@@ -102,12 +102,21 @@ def test_classify_layers():
     print("OK: classify indexa layers")
 
 
-def test_classify_length_mm():
+def test_classify_length_um():
     ents = [seg(0, 0, 1 / PT_TO_MM, 0), TextItem(text="x", position=(0, 0))]
     a = classify(ents)
-    assert abs(a.length_mm[0] - 1.0) < 1e-9, a.length_mm
-    assert a.length_mm[1] == 0.0
-    print("OK: classify mede comprimento em mm")
+    assert a.length_um[0] == 1000, a.length_um   # 1 mm = 1000 µm
+    assert a.length_um[1] == 0
+    print("OK: classify mede comprimento em µm inteiros")
+
+
+def test_classify_length_um_arredonda_para_cima_no_meio():
+    # meio micrômetro tem que subir, não cair para o par mais próximo:
+    # o navegador usa Math.round, que arredonda .5 para cima
+    ents = [seg(0, 0, 0.0025 / PT_TO_MM, 0)]     # 2,5 µm
+    a = classify(ents)
+    assert a.length_um[0] == 3, a.length_um
+    print("OK: classify arredonda meio µm para cima")
 
 
 def test_classify_dup_group():
@@ -200,6 +209,16 @@ def test_select_micro():
     out = filtrar(ents, ExportOptions(min_len_mm=0.0))
     assert len(out) == 2
     print("OK: select descarta micro-segmentos")
+
+
+def test_select_micro_limiar_exato():
+    """Um segmento com exatamente o comprimento do limiar é mantido."""
+    ents = [seg(0, 0, 2.0 / PT_TO_MM, 0)]        # exatamente 2 mm
+    out = filtrar(ents, ExportOptions(min_len_mm=2.0))
+    assert len(out) == 1, "o limiar é 'menor que', não 'menor ou igual'"
+    out = filtrar(ents, ExportOptions(min_len_mm=2.001))
+    assert len(out) == 0
+    print("OK: select trata o limiar exato como mantido")
 
 
 def test_select_dedup():
@@ -300,7 +319,8 @@ if __name__ == "__main__":
     test_estimate_ignora_descartados()
     test_estimate_soma_custo_de_polilinha()
     test_classify_layers()
-    test_classify_length_mm()
+    test_classify_length_um()
+    test_classify_length_um_arredonda_para_cima_no_meio()
     test_classify_dup_group()
     test_classify_dup_group_arredonda_em_3_casas()
     test_classify_nao_segmento_sem_grupo()
@@ -308,6 +328,7 @@ if __name__ == "__main__":
     test_select_layers()
     test_select_fills()
     test_select_micro()
+    test_select_micro_limiar_exato()
     test_select_dedup()
     test_select_dedup_elege_o_primeiro_sobrevivente()
     test_select_dedup_nao_afeta_outros_tipos()

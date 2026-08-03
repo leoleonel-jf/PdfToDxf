@@ -10,8 +10,8 @@
 para que o navegador possa filtrar sem reimplementar nenhum algoritmo.
 
 **Arquitetura:** `classify()` percorre as entidades uma vez e devolve arrays
-paralelos de números — comprimento em mm, layer, preenchimento, grupo de
-duplicatas e custo em bytes. `select()` recebe esses arrays e as opções e
+paralelos de números — comprimento em µm inteiros de papel, layer, preenchimento,
+grupo de duplicatas e custo em bytes. `select()` recebe esses arrays e as opções e
 devolve uma máscara de quem entra, usando só comparações. O julgamento caro
 (quais segmentos são duplicatas entre si) vira dado, então a futura versão
 TypeScript do `select()` não pode divergir do Python. O app desktop passa a usar
@@ -106,12 +106,12 @@ def test_classify_layers():
     print("OK: classify indexa layers")
 
 
-def test_classify_length_mm():
+def test_classify_length_um():
     ents = [seg(0, 0, 1 / PT_TO_MM, 0), TextItem(text="x", position=(0, 0))]
     a = classify(ents)
-    assert abs(a.length_mm[0] - 1.0) < 1e-9, a.length_mm
-    assert a.length_mm[1] == 0.0
-    print("OK: classify mede comprimento em mm")
+    assert a.length_um[0] == 1000, a.length_um   # 1 mm = 1000 µm
+    assert a.length_um[1] == 0
+    print("OK: classify mede comprimento em µm inteiros")
 
 
 def test_classify_dup_group():
@@ -156,7 +156,7 @@ Acrescente as chamadas no bloco `if __name__ == "__main__":`, logo depois de
 
 ```python
     test_classify_layers()
-    test_classify_length_mm()
+    test_classify_length_um()
     test_classify_dup_group()
     test_classify_nao_segmento_sem_grupo()
     test_classify_byte_cost()
@@ -189,7 +189,7 @@ class EntityAttrs:
     kind: list[str] = field(default_factory=list)         # "Segment", "Arc", ...
     layer_id: list[int] = field(default_factory=list)     # índice em `layers`
     is_fill: list[bool] = field(default_factory=list)
-    length_mm: list[float] = field(default_factory=list)  # 0.0 fora de Segment
+    length_um: list[int] = field(default_factory=list)     # 0 fora de Segment
     dup_group: list[int] = field(default_factory=list)    # -1 fora de Segment
     byte_cost: list[int] = field(default_factory=list)
     layers: list[str] = field(default_factory=list)
@@ -220,7 +220,8 @@ def classify(entities: list[Entity]) -> EntityAttrs:
             attrs.layers.append(e.layer)
 
         if name == "Segment":
-            length_mm = math.hypot(e.p2[0] - e.p1[0], e.p2[1] - e.p1[1]) * PT_TO_MM
+            mm = math.hypot(e.p2[0] - e.p1[0], e.p2[1] - e.p1[1]) * PT_TO_MM
+            length_um = int(mm * 1000.0 + 0.5)
             a = (round(e.p1[0], 3), round(e.p1[1], 3))
             b = (round(e.p2[0], 3), round(e.p2[1], 3))
             key = (e.layer, e.color, a, b) if a <= b else (e.layer, e.color, b, a)
@@ -229,7 +230,7 @@ def classify(entities: list[Entity]) -> EntityAttrs:
                 gid = len(group_index)
                 group_index[key] = gid
         else:
-            length_mm = 0.0
+            length_um = 0
             gid = -1
 
         if name == "Polyline":
@@ -240,7 +241,7 @@ def classify(entities: list[Entity]) -> EntityAttrs:
         attrs.kind.append(name)
         attrs.layer_id.append(lid)
         attrs.is_fill.append(e.is_fill)
-        attrs.length_mm.append(length_mm)
+        attrs.length_um.append(length_um)
         attrs.dup_group.append(gid)
         attrs.byte_cost.append(cost)
 
@@ -251,6 +252,15 @@ def classify(entities: list[Entity]) -> EntityAttrs:
 A chave de duplicata é idêntica à de `apply_filters` — mesmo arredondamento de 3
 casas, mesma normalização de ponta invertida, e `layer` e `color` dentro da
 chave. Qualquer diferença aqui muda o resultado do dedup.
+
+`length_um` é o comprimento em inteiro de micrômetros de papel, não em mm de
+ponto flutuante: o binário que a etapa 3 vai trafegar para o navegador usa
+`Float32Array`, que não representa os mesmos float64 do Python bit a bit. Tirar
+o ponto flutuante da decisão evita que um comprimento bem em cima de um limiar
+seja mantido de um lado e descartado do outro. `int(x + 0.5)` arredonda para
+cima no meio (não o "para o par mais próximo" do `round()` do Python) — é o que
+`Math.round()` do JavaScript faz, e a versão TypeScript de `select()` precisa
+seguir a mesma regra.
 
 - [ ] **Passo 5: rodar e ver passar**
 
@@ -375,9 +385,15 @@ def select(attrs: EntityAttrs, opts: ExportOptions) -> list[bool]:
     TypeScript para a prévia do navegador. A ordem de varredura importa: dentro
     de um grupo de duplicatas, quem sobrevive é o primeiro que passa nos demais
     filtros.
+
+    A comparação de comprimento é entre inteiros em micrômetros de papel: o
+    limiar `min_len_mm` é convertido para `min_len_um` uma única vez, antes do
+    laço, com arredondamento para cima no meio (`int(x + 0.5)`, a mesma regra
+    de `Math.round()` do JavaScript).
     """
     excluded = {i for i, name in enumerate(attrs.layers)
                 if name in opts.excluded_layers}
+    min_len_um = int(opts.min_len_mm * 1000.0 + 0.5)
     emitted = bytearray(attrs.n_groups)
     mask = [False] * len(attrs)
 
@@ -387,7 +403,7 @@ def select(attrs: EntityAttrs, opts: ExportOptions) -> list[bool]:
         if opts.drop_fills and attrs.is_fill[i]:
             continue
         if attrs.kind[i] == "Segment":
-            if opts.min_len_mm > 0.0 and attrs.length_mm[i] < opts.min_len_mm:
+            if min_len_um > 0 and attrs.length_um[i] < min_len_um:
                 continue
             if opts.dedup:
                 g = attrs.dup_group[i]
@@ -934,7 +950,7 @@ def main():
             "kind": attrs.kind,
             "layer_id": attrs.layer_id,
             "is_fill": attrs.is_fill,
-            "length_mm": [round(v, 9) for v in attrs.length_mm],
+            "length_um": attrs.length_um,
             "dup_group": attrs.dup_group,
             "byte_cost": attrs.byte_cost,
             "layers": attrs.layers,
@@ -966,9 +982,10 @@ if __name__ == "__main__":
     main()
 ```
 
-`sort_keys=True` e o `round(v, 9)` deixam o arquivo estável entre execuções:
-rodar o gerador duas vezes sem mudar o código produz bytes idênticos, então
-qualquer diferença no `git diff` significa mudança de comportamento de verdade.
+`sort_keys=True` deixa o arquivo estável entre execuções: rodar o gerador duas
+vezes sem mudar o código produz bytes idênticos, então qualquer diferença no
+`git diff` significa mudança de comportamento de verdade. `length_um` já é
+inteiro, então não precisa de arredondamento para ficar estável.
 
 - [ ] **Passo 2: gerar o arquivo**
 
@@ -1010,7 +1027,7 @@ def test_casos():
     for a in dados["tabelas"]:
         tabelas.append(EntityAttrs(
             kind=a["kind"], layer_id=a["layer_id"], is_fill=a["is_fill"],
-            length_mm=a["length_mm"], dup_group=a["dup_group"],
+            length_um=a["length_um"], dup_group=a["dup_group"],
             byte_cost=a["byte_cost"], layers=a["layers"],
             n_groups=a["n_groups"]))
 

@@ -1,0 +1,7 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+
+# só para os testes (fastapi.testclient.TestClient): a versão do starlette
+# instalada exige httpx2 (o sucessor do httpx) para o cliente de teste.
+httpx2>=2.9

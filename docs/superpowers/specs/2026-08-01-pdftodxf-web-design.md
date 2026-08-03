@@ -96,7 +96,9 @@ removido. Um caminho só, exercitado pelas duas interfaces.
 3. Um processo worker roda `extractor.extract_page()` e depois `classify()`,
    grava o resultado no cache em disco e escreve o registro em `/registros`
    (ver seção própria). O PDF original é apagado assim que todas as páginas
-   pedidas foram extraídas ou o trabalho expira.
+   **do documento** foram extraídas, ou quando o trabalho expira. Não basta a
+   fila esvaziar: enquanto faltar página, o usuário ainda pode pedi-la, e sem o
+   original não há de onde extrair.
 4. O navegador baixa `meta.json` (layers, limites do desenho, contagens,
    dimensões da página) e a geometria em duas partes: o esqueleto primeiro,
    o detalhe em segundo plano.

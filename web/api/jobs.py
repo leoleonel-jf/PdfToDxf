@@ -4,16 +4,22 @@ Um `ProcessPoolExecutor` limita quantas extrações rodam ao mesmo tempo. Rodar
 fora do processo do serviço é o que permite uma planta monstruosa morrer sozinha
 sem levar o site junto: os limites de memória e de CPU são aplicados ao processo
 filho.
+
+O estado de uma página vale `"na_fila" | "extraindo" | "pronta" | "erro"`.
+`"extraindo"` está no contrato mas nada o escreve hoje: quem manda no estado é o
+processo pai, e ele não tem como saber a hora exata em que o worker pega o
+trabalho. Quem lê deve tratá-lo como "ainda em andamento", igual a `"na_fila"`.
 """
 
 from __future__ import annotations
 
-import json
+import os
 import pickle
 import sys
 import threading
 import traceback
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 from . import limits, storage   # a tarefa 5 acrescenta `packing` aqui
@@ -89,9 +95,12 @@ def _extrair_no_worker(pdf: str, pagina: int, destino: str, teto_entidades: int,
 
     pasta = Path(destino)
     pasta.mkdir(parents=True, exist_ok=True)
-    with open(pasta / "cache.pickle", "wb") as f:
+    alvo = pasta / "cache.pickle"
+    temporario = alvo.with_suffix(".pickle.tmp")
+    with open(temporario, "wb") as f:
         pickle.dump({"resultado": resultado, "attrs": attrs}, f,
                     protocol=pickle.HIGHEST_PROTOCOL)
+    os.replace(temporario, alvo)   # o worker pode morrer no meio da gravação
 
     return {
         "situacao": "pronta",
@@ -104,7 +113,13 @@ def _extrair_no_worker(pdf: str, pagina: int, destino: str, teto_entidades: int,
     }
 
 
-_trava = threading.Lock()
+_trava = threading.RLock()
+"""Protege toda leitura-e-escrita da ficha.
+
+Reentrante porque `pedir_extracao` decide sob a trava e chama `_gravar_estado`
+por baixo, e porque um futuro que já terminou faz o `add_done_callback` rodar
+no mesmo fio que submeteu.
+"""
 
 
 def _gravar_estado(job_id: str, pagina: int, estado: dict) -> None:
@@ -133,27 +148,43 @@ def _quando_terminar(job_id: str, pagina: int, futuro) -> None:
         estado = {"situacao": "erro", "codigo": "entidades_demais",
                   "mensagem": f"A planta tem {quantas} elementos e o limite "
                               f"é {teto}."}
-    except Exception as e:
+    except (BrokenProcessPool, MemoryError) as e:
         estado = {"situacao": "erro", "codigo": "recurso",
                   "mensagem": "Não consegui processar esta planta: ela passou do "
                               "limite de memória ou de tempo do servidor."}
+        traceback.print_exception(type(e), e, e.__traceback__, file=sys.stderr)
+    except Exception as e:
+        estado = {"situacao": "erro", "codigo": "interno",
+                  "mensagem": "Não consegui processar esta planta. "
+                              "A falha foi registrada no servidor."}
         traceback.print_exception(type(e), e, e.__traceback__, file=sys.stderr)
     _gravar_estado(job_id, pagina, estado)
     _apagar_origem_se_ocioso(job_id)
 
 
 def _apagar_origem_se_ocioso(job_id: str) -> None:
-    """Apaga o PDF original quando nenhuma página está mais na fila."""
-    ficha = storage.ler_ficha(job_id)
-    if not ficha:
-        return
-    pendentes = [p for p in ficha.get("paginas", {}).values()
-                 if p.get("situacao") in ("na_fila", "extraindo")]
-    if pendentes:
-        return
-    origem = storage.pasta(job_id) / "origem.pdf"
-    if origem.exists():
-        origem.unlink()
+    """Apaga o PDF original quando não sobra página nenhuma para extrair.
+
+    A condição é *todas* as páginas do documento terem terminado, não só as
+    pedidas até agora. Enquanto faltar página, o usuário ainda pode pedi-la, e
+    sem o original não há de onde extrair: apagar cedo demais deixava a planta
+    de várias páginas pela metade, com a segunda extração falhando por arquivo
+    inexistente. O que sobra sai na expiração de 4 horas, da tarefa 7.
+    """
+    with _trava:
+        ficha = storage.ler_ficha(job_id)
+        if not ficha:
+            return
+        n_paginas = ficha.get("n_paginas") or 0
+        if n_paginas <= 0:
+            return
+        terminadas = [p for p in ficha.get("paginas", {}).values()
+                      if p.get("situacao") in ("pronta", "erro")]
+        if len(terminadas) < n_paginas:
+            return
+        origem = storage.pasta(job_id) / "origem.pdf"
+        if origem.exists():
+            origem.unlink()
 
 
 def estado(job_id: str, pagina: int) -> dict | None:
@@ -164,20 +195,39 @@ def estado(job_id: str, pagina: int) -> dict | None:
 
 
 def pedir_extracao(job_id: str, pagina: int) -> dict:
-    """Enfileira a extração da página, se ela já não estiver em andamento."""
-    atual = estado(job_id, pagina)
-    if atual and atual.get("situacao") in ("na_fila", "extraindo", "pronta"):
-        return atual
+    """Enfileira a extração da página, se ela já não estiver em andamento.
 
-    inicial = {"situacao": "na_fila"}
-    _gravar_estado(job_id, pagina, inicial)
+    Conferir e reservar acontecem sob a mesma trava. As rotas do FastAPI são
+    síncronas, então rodam num pool de threads e dois POSTs para a mesma página
+    chegam de fato ao mesmo tempo: separar as duas coisas deixaria os dois
+    passarem pela conferência antes de qualquer um gravar, e dois workers
+    disputariam o mesmo `cache.pickle`.
+    """
+    with _trava:
+        atual = estado(job_id, pagina)
+        if atual and atual.get("situacao") in ("na_fila", "extraindo", "pronta"):
+            return atual
 
-    origem = storage.pasta(job_id) / "origem.pdf"
-    destino = storage.pasta_pagina(job_id, pagina)
-    futuro = pool().submit(
-        _extrair_no_worker, str(origem), pagina, str(destino),
-        limits.TETO_ENTIDADES, limits.TETO_MEMORIA_WORKER_BYTES,
-        limits.TETO_CPU_WORKER_SEGUNDOS)
-    futuro.add_done_callback(
-        lambda f: _quando_terminar(job_id, pagina, f))
-    return inicial
+        inicial = {"situacao": "na_fila"}
+        _gravar_estado(job_id, pagina, inicial)
+
+        origem = storage.pasta(job_id) / "origem.pdf"
+        destino = storage.pasta_pagina(job_id, pagina)
+        try:
+            futuro = pool().submit(
+                _extrair_no_worker, str(origem), pagina, str(destino),
+                limits.TETO_ENTIDADES, limits.TETO_MEMORIA_WORKER_BYTES,
+                limits.TETO_CPU_WORKER_SEGUNDOS)
+        except Exception as e:
+            # Sem isto a página ficaria em "na_fila" para sempre, esperando um
+            # worker que nunca foi submetido.
+            traceback.print_exception(type(e), e, e.__traceback__,
+                                      file=sys.stderr)
+            falha = {"situacao": "erro", "codigo": "interno",
+                     "mensagem": "Não consegui enfileirar esta página. "
+                                 "A falha foi registrada no servidor."}
+            _gravar_estado(job_id, pagina, falha)
+            return falha
+        futuro.add_done_callback(
+            lambda f: _quando_terminar(job_id, pagina, f))
+        return inicial

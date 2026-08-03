@@ -8,7 +8,7 @@ import shutil
 import fitz
 from fastapi import FastAPI, File, HTTPException, UploadFile
 
-from . import limits, storage
+from . import jobs, limits, storage
 
 PEDACO = 1024 * 1024   # 1 MB por leitura do envio
 
@@ -60,8 +60,7 @@ async def enviar(arquivo: UploadFile = File(...)) -> dict:
     return {"job_id": job_id, "n_paginas": n_paginas, "nome": ficha["nome"]}
 
 
-@app.get("/api/jobs/{job_id}")
-def consultar(job_id: str) -> dict:
+def _ficha_ou_404(job_id: str) -> dict:
     try:
         storage.validar_id(job_id)
     except ValueError:
@@ -70,3 +69,27 @@ def consultar(job_id: str) -> dict:
     if ficha is None:
         raise HTTPException(status_code=404, detail="Trabalho não encontrado.")
     return ficha
+
+
+@app.get("/api/jobs/{job_id}")
+def consultar(job_id: str) -> dict:
+    return _ficha_ou_404(job_id)
+
+
+@app.post("/api/jobs/{job_id}/pages/{pagina}")
+def extrair_pagina(job_id: str, pagina: int) -> dict:
+    ficha = _ficha_ou_404(job_id)
+    if pagina < 1 or pagina > ficha["n_paginas"]:
+        raise HTTPException(
+            status_code=404,
+            detail=f"O documento tem {ficha['n_paginas']} página(s).")
+    return jobs.pedir_extracao(job_id, pagina)
+
+
+@app.get("/api/jobs/{job_id}/pages/{pagina}")
+def estado_da_pagina(job_id: str, pagina: int) -> dict:
+    _ficha_ou_404(job_id)
+    atual = jobs.estado(job_id, pagina)
+    if atual is None:
+        raise HTTPException(status_code=404, detail="Página não solicitada.")
+    return atual

@@ -1047,6 +1047,14 @@ cada coisa começa:
 ...           os dados das seções, na ordem da tabela
 ```
 
+Toda seção começa em deslocamento múltiplo de 4; quando a anterior não termina
+redonda, entram zeros de enchimento entre as duas. O `tamanho` da tabela é o
+real, sem o enchimento. Isso não é enfeite: `new Uint32Array(buffer, desloc, n)`
+levanta `RangeError` se `desloc` não for múltiplo de 4, e as seções `kind` e
+`is_fill` são uint8 — ocupam exatamente `n` bytes, então qualquer página cuja
+contagem fuja da tabuada do 4 desalinharia tudo o que vem depois. Como o leitor
+usa os deslocamentos da tabela, o enchimento é invisível para ele.
+
 Seções, todas com `n` elementos exceto onde dito:
 
 | Tipo | Nome | Formato | Conteúdo |

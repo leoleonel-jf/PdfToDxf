@@ -119,10 +119,11 @@ def select(attrs: EntityAttrs, opts: ExportOptions) -> list[bool]:
     A comparação de comprimento é toda em inteiros: `length_um` (de
     `classify()`) já é micrômetros de papel, e o limiar `min_len_mm` é
     convertido para micrômetros uma única vez, antes do laço, com
-    arredondamento para cima no meio (`int(x + 0.5)`, não o `round()` do
-    Python nem `Math.round` que arredondasse para baixo) — a mesma regra que a
-    versão TypeScript aplica com `Math.round`, para as duas nunca discordarem
-    sobre um comprimento bem em cima do limiar.
+    arredondamento para cima no meio (`int(x + 0.5)`), não o "para o par mais
+    próximo" do `round()` do Python — é a mesma regra que `Math.round()` do
+    JavaScript aplica, e é a que a versão TypeScript de `select()` precisa
+    seguir, para as duas nunca discordarem sobre um comprimento bem em cima do
+    limiar.
     """
     excluded = {i for i, name in enumerate(attrs.layers)
                 if name in opts.excluded_layers}

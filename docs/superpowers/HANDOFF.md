@@ -64,13 +64,19 @@ Regenerar é determinístico — se o `git diff` sujar, o comportamento mudou.
 | 1 | `length_um` inteiro no núcleo | pronta, revisada |
 | 2 | serviço, envio do PDF, armazenamento | pronta, revisada |
 | 3 | fila de extração em processo separado | pronta, revisada |
-| 4 | empacotamento binário da geometria | não começou |
+| 4 | empacotamento binário da geometria | pronta, sem revisão independente |
 | 5 | divisão esqueleto/detalhe + rotas | não começou |
 | 6 | exportação com cache por combinação | não começou |
 | 7 | limpeza por prazo e cota de disco | não começou |
 
-Arquivos existentes: `web/api/{__init__,limits,storage,jobs,main}.py`,
-`web/requirements.txt`, `tests/test_api_upload.py`, `tests/test_api_extracao.py`.
+Arquivos existentes: `web/api/{__init__,limits,storage,jobs,packing,main}.py`,
+`web/requirements.txt`, `tests/test_api_upload.py`, `tests/test_api_extracao.py`,
+`tests/test_packing.py`.
+
+O formato binário da tarefa 4 enche cada seção até um múltiplo de 4. Isso não é
+detalhe de gosto: `kind` e `is_fill` são uint8 e ocupam `n` bytes, então sem o
+enchimento o `Uint32Array` da etapa 3 levantaria `RangeError` em qualquer página
+cuja contagem fuja da tabuada do 4. A regra está no plano, junto da tabela.
 
 ## O que está verificado
 
@@ -81,6 +87,7 @@ Rodados em 2026-08-03, todos passando com saída limpa:
 ./.venv/Scripts/python.exe tests/test_roundtrip.py
 ./.venv/Scripts/python.exe tests/test_preview.py
 ./.venv/Scripts/python.exe tests/test_casos_select.py
+./.venv/Scripts/python.exe tests/test_packing.py
 ./.venv/Scripts/python.exe tests/test_api_upload.py
 ./.venv/Scripts/python.exe tests/test_api_extracao.py
 ```
@@ -100,7 +107,10 @@ Rodados em 2026-08-03, todos passando com saída limpa:
    estimativa e a prévia; desligar um layer some com ele; salvar gera o arquivo;
    o DXF abre no CAD com as medidas certas.
 
-2. **Tarefas 4 a 7 da etapa 2**, na ordem do plano.
+2. **Tarefas 5 a 7 da etapa 2**, na ordem do plano. A tarefa 4 ficou sem
+   revisão independente — foi implementada e conferida na mesma sessão, porque
+   aquele harness não permitia subagente. Vale um olhar de fora antes de a
+   etapa 3 escrever o leitor TypeScript em cima do formato.
 
 3. **Mesclar a etapa 1** quando a conferência manual passar.
 

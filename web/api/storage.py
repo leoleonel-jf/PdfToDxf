@@ -14,10 +14,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import threading
 import time
 import uuid
 from pathlib import Path
+
+from . import limits
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
 
@@ -113,3 +116,83 @@ def ler_ficha(job_id: str) -> dict | None:
         return None
     with open(p, encoding="utf-8") as f:
         return json.load(f)
+
+
+def _tamanho(pasta: Path) -> int:
+    total = 0
+    for raiz_atual, _dirs, arquivos in os.walk(pasta):
+        for nome in arquivos:
+            try:
+                total += os.path.getsize(os.path.join(raiz_atual, nome))
+            except OSError:
+                pass   # o arquivo pode sumir durante a varredura
+    return total
+
+
+def tamanho_total() -> int:
+    return sum(_tamanho(p) for p in raiz().iterdir() if p.is_dir())
+
+
+def _trabalhos() -> list[tuple[str, float, int]]:
+    """Lista `(job_id, criado_em, tamanho)`.
+
+    Ficha ilegível vira idade zero absoluta, o que faz a limpeza tratar a pasta
+    como lixo a remover.
+    """
+    saida = []
+    for p in raiz().iterdir():
+        if not p.is_dir():
+            continue
+        try:
+            validar_id(p.name)
+        except ValueError:
+            continue        # pasta que não é trabalho: não é nossa, não mexe
+        try:
+            ficha = ler_ficha(p.name)
+            criado = float(ficha["criado_em"]) if ficha else 0.0
+        except (ValueError, KeyError, TypeError):
+            criado = 0.0    # json.JSONDecodeError é ValueError
+        saida.append((p.name, criado, _tamanho(p)))
+    return saida
+
+
+def apagar(job_id: str) -> bool:
+    """Apaga a pasta do trabalho. Devolve se ela realmente sumiu.
+
+    O `ignore_errors` é necessário — no Windows o `rmtree` estoura enquanto
+    alguém segura um arquivo, e a limpeza não pode morrer por isso. Mas engolir
+    o erro *e* dar a pasta como apagada seria pior: a conta da cota subtrairia
+    um espaço que continua ocupado e a varredura pararia achando que já coube.
+    Quem falhou fica para a passagem seguinte.
+    """
+    alvo = pasta(job_id)
+    shutil.rmtree(alvo, ignore_errors=True)
+    return not alvo.exists()
+
+
+def limpar(agora: float | None = None) -> dict:
+    """Apaga o que venceu e, se ainda estourar a cota, o mais antigo."""
+    agora = time.time() if agora is None else agora
+    trabalhos = _trabalhos()
+
+    expirados = []
+    vivos = []
+    for job_id, criado, tamanho in trabalhos:
+        if agora - criado > limits.PRAZO_SEGUNDOS:
+            if apagar(job_id):
+                expirados.append(job_id)
+                continue
+            # Não saiu do disco: continua contando para a cota.
+        vivos.append((job_id, criado, tamanho))
+
+    total = sum(t for _, _, t in vivos)
+    por_cota = []
+    for job_id, _criado, tamanho in sorted(vivos, key=lambda t: t[1]):
+        if total <= limits.COTA_DISCO_BYTES:
+            break
+        if apagar(job_id):
+            por_cota.append(job_id)
+            total -= tamanho
+
+    return {"expirados": expirados, "por_cota": por_cota,
+            "bytes_livres": max(0, limits.COTA_DISCO_BYTES - total)}

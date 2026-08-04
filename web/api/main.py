@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
 import shutil
+import traceback
 from pathlib import Path
 
 import fitz
@@ -14,8 +17,37 @@ from pydantic import BaseModel, Field
 from . import exportacao, jobs, limits, storage
 
 PEDACO = 1024 * 1024   # 1 MB por leitura do envio
+INTERVALO_LIMPEZA = 10 * 60   # 10 minutos
 
-app = FastAPI(title="PdfToDxf", docs_url=None, redoc_url=None)
+
+async def _limpeza_periodica() -> None:
+    while True:
+        await asyncio.sleep(INTERVALO_LIMPEZA)
+        try:
+            # Em thread: a limpeza percorre o disco e travaria o laço de eventos.
+            relato = await asyncio.to_thread(storage.limpar)
+            if relato["expirados"] or relato["por_cota"]:
+                print(f"limpeza: {len(relato['expirados'])} vencidos, "
+                      f"{len(relato['por_cota'])} por cota")
+        except Exception:
+            traceback.print_exc()   # a limpeza nunca pode derrubar o serviço
+
+
+@contextlib.asynccontextmanager
+async def ciclo_de_vida(_app: FastAPI):
+    tarefa = asyncio.create_task(_limpeza_periodica())
+    try:
+        yield
+    finally:
+        tarefa.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await tarefa
+
+
+# `lifespan=` e não `@app.on_event`: os decoradores de evento estão obsoletos
+# desde o FastAPI 0.109 e sujariam a saída dos testes com DeprecationWarning.
+app = FastAPI(title="PdfToDxf", docs_url=None, redoc_url=None,
+              lifespan=ciclo_de_vida)
 
 
 def _mb(n: int) -> int:

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import os
 import shutil
+from pathlib import Path
 
 import fitz
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
-from . import jobs, limits, storage
+from . import exportacao, jobs, limits, storage
 
 PEDACO = 1024 * 1024   # 1 MB por leitura do envio
 
@@ -96,8 +98,8 @@ def estado_da_pagina(job_id: str, pagina: int) -> dict:
     return atual
 
 
-def _arquivo_da_pagina(job_id: str, pagina: int, nome: str):
-    """Caminho de um arquivo de uma página que já ficou pronta."""
+def _pagina_pronta(job_id: str, pagina: int) -> Path:
+    """Pasta de uma página que já terminou a extração."""
     _ficha_ou_404(job_id)
     atual = jobs.estado(job_id, pagina)
     if atual is None:
@@ -105,7 +107,12 @@ def _arquivo_da_pagina(job_id: str, pagina: int, nome: str):
     if atual.get("situacao") != "pronta":
         raise HTTPException(status_code=409,
                             detail="A página ainda não está pronta.")
-    caminho = storage.pasta_pagina(job_id, pagina) / nome
+    return storage.pasta_pagina(job_id, pagina)
+
+
+def _arquivo_da_pagina(job_id: str, pagina: int, nome: str) -> Path:
+    """Caminho de um arquivo de uma página que já ficou pronta."""
+    caminho = _pagina_pronta(job_id, pagina) / nome
     if not caminho.exists():
         # Página marcada como pronta sem o arquivo é defeito nosso; sem esta
         # conferência o `FileResponse` estouraria no meio do envio, e o cliente
@@ -128,3 +135,48 @@ def geometria(job_id: str, pagina: int, parte: str = "esqueleto") -> FileRespons
                             detail="A parte tem que ser 'esqueleto' ou 'detalhe'.")
     return FileResponse(_arquivo_da_pagina(job_id, pagina, f"{parte}.bin"),
                         media_type="application/octet-stream")
+
+
+class Opcoes(BaseModel):
+    excluded_layers: list[str] = Field(default_factory=list)
+    drop_fills: bool = False
+    min_len_mm: float = Field(default=0.0, ge=0.0, le=1000.0)
+    dedup: bool = False
+    join_polylines: bool = False
+    round_coords: bool = False
+
+
+class PedidoDeExportacao(BaseModel):
+    escala: float = Field(gt=0.0)
+    unidade: str = Field(pattern="^(mm|cm|m)$")
+    opcoes: Opcoes = Field(default_factory=Opcoes)
+
+
+@app.post("/api/jobs/{job_id}/pages/{pagina}/export")
+def exportar(job_id: str, pagina: int, pedido: PedidoDeExportacao) -> dict:
+    # Pelo cache.pickle e não pela pasta: é dele que a exportação vive, e sem a
+    # conferência o `pickle.load` estouraria num 500 sem explicação.
+    _arquivo_da_pagina(job_id, pagina, "cache.pickle")
+    ch, _caminho, do_cache, entidades = exportacao.gerar(
+        job_id, pagina, pedido.escala, pedido.unidade, pedido.opcoes.model_dump())
+    return {
+        "chave": ch,
+        "url": f"/api/download/{job_id}/{ch}",
+        "cache": do_cache,
+        "entidades": entidades,
+    }
+
+
+@app.get("/api/download/{job_id}/{ch}")
+def baixar(job_id: str, ch: str) -> FileResponse:
+    ficha = _ficha_ou_404(job_id)
+    for pagina in ficha.get("paginas", {}):
+        try:
+            caminho = exportacao.caminho_do_dxf(job_id, int(pagina), ch)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Chave inválida.")
+        if caminho.exists():
+            nome = os.path.splitext(ficha["nome"])[0] + ".dxf"
+            return FileResponse(caminho, media_type="application/dxf",
+                                filename=nome)
+    raise HTTPException(status_code=404, detail="Arquivo não encontrado.")

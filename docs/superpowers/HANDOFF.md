@@ -123,12 +123,14 @@ o suspeito é a troca atômica da ficha, não lentidão: a extração leva 0,5 s
    estimativa e a prévia; desligar um layer some com ele; salvar gera o arquivo;
    o DXF abre no CAD com as medidas certas.
 
-2. **Revisar as tarefas 4 a 7 da etapa 2.** Elas foram implementadas e
-   conferidas na mesma sessão, porque aquele harness não permitia subagente —
-   não tiveram a revisão independente que as tarefas 1 a 3 tiveram. Vale um
-   olhar de fora antes de a etapa 3 escrever o leitor TypeScript em cima do
-   formato binário, que é o ponto de não-retorno: um erro no formato depois
-   disso custa duas implementações.
+2. **Revisão independente das tarefas 4 a 7.** Elas já passaram por uma
+   revisão (commit `55f941b`), mas feita pelo mesmo modelo que as escreveu —
+   aquele harness não permitia subagente. Ela achou e corrigiu três defeitos,
+   dois graves, o que é sinal de que valeu; mas um autor revisando a si mesmo é
+   cego onde o próprio modelo mental está errado. Vale um olhar de fora antes
+   de a etapa 3 escrever o leitor TypeScript em cima do formato binário — esse
+   é o ponto de não-retorno, porque depois dele um erro no formato custa duas
+   implementações.
 
 3. **Decidir sobre a exportação no processo do site** (ver dívida abaixo). É
    decisão de projeto, não conserto — muda o contrato da rota.
@@ -185,6 +187,14 @@ Nada disso bloqueia; está registrado para não se perder.
   não tem nada disso: carrega o `cache.pickle` inteiro e escreve o DXF ali
   mesmo. Corrigir muda o contrato da rota — viraria assíncrona, com polling,
   como a extração — então é decisão de projeto, não conserto.
+- `web/api/jobs.py`: o cache é gravado com `pickle.dumps`, que materializa o
+  pickle inteiro na memória — medido em ~230 MB no teto de 3 milhões de
+  entidades. O plano usava `pickle.dump` direto no arquivo; a regressão entrou
+  quando o `_gravar_atomico` passou a receber bytes prontos. Basta ele aceitar
+  uma função que escreve.
+- `web/api/packing.py`: `desempacotar` levanta `KeyError`, e não `ValueError`,
+  para um arquivo com a magia certa e a tabela de seções incompleta. Só afeta
+  os testes — em produção quem lê o formato é o TypeScript.
 - `web/api/main.py`: `criar_trabalho` fica fora do `try/except` que limpa o
   disco. Se a gravação da ficha falhar, a pasta do trabalho fica para trás.
 - `tests/test_casos_select.py` já aponta os índices divergentes; a mensagem

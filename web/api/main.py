@@ -7,6 +7,7 @@ import shutil
 
 import fitz
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 
 from . import jobs, limits, storage
 
@@ -93,3 +94,37 @@ def estado_da_pagina(job_id: str, pagina: int) -> dict:
     if atual is None:
         raise HTTPException(status_code=404, detail="Página não solicitada.")
     return atual
+
+
+def _arquivo_da_pagina(job_id: str, pagina: int, nome: str):
+    """Caminho de um arquivo de uma página que já ficou pronta."""
+    _ficha_ou_404(job_id)
+    atual = jobs.estado(job_id, pagina)
+    if atual is None:
+        raise HTTPException(status_code=404, detail="Página não solicitada.")
+    if atual.get("situacao") != "pronta":
+        raise HTTPException(status_code=409,
+                            detail="A página ainda não está pronta.")
+    caminho = storage.pasta_pagina(job_id, pagina) / nome
+    if not caminho.exists():
+        # Página marcada como pronta sem o arquivo é defeito nosso; sem esta
+        # conferência o `FileResponse` estouraria no meio do envio, e o cliente
+        # veria a conexão cair em vez de um erro.
+        raise HTTPException(status_code=500,
+                            detail="Arquivo da página não encontrado.")
+    return caminho
+
+
+@app.get("/api/jobs/{job_id}/pages/{pagina}/meta.json")
+def meta_da_pagina(job_id: str, pagina: int) -> FileResponse:
+    return FileResponse(_arquivo_da_pagina(job_id, pagina, "meta.json"),
+                        media_type="application/json")
+
+
+@app.get("/api/jobs/{job_id}/pages/{pagina}/geometry.bin")
+def geometria(job_id: str, pagina: int, parte: str = "esqueleto") -> FileResponse:
+    if parte not in ("esqueleto", "detalhe"):
+        raise HTTPException(status_code=400,
+                            detail="A parte tem que ser 'esqueleto' ou 'detalhe'.")
+    return FileResponse(_arquivo_da_pagina(job_id, pagina, f"{parte}.bin"),
+                        media_type="application/octet-stream")

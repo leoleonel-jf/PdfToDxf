@@ -13,6 +13,7 @@ trabalho. Quem lê deve tratá-lo como "ainda em andamento", igual a `"na_fila"`
 
 from __future__ import annotations
 
+import json
 import os
 import pickle
 import sys
@@ -22,7 +23,7 @@ from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
-from . import limits, storage   # a tarefa 5 acrescenta `packing` aqui
+from . import limits, packing, storage
 
 
 class SemVetores(Exception):
@@ -73,9 +74,21 @@ def _aplicar_limites(memoria: int, cpu: int) -> str:
     return f"memória {memoria} B, CPU {cpu} s"
 
 
+def _gravar_atomico(caminho: Path, dados: bytes) -> None:
+    """Grava por inteiro ou não grava: o worker pode morrer no meio.
+
+    Quem lê estes arquivos são as rotas de geometria, e um `.bin` cortado pela
+    metade viraria lixo na tela do usuário em vez de um erro honesto.
+    """
+    temporario = caminho.with_name(caminho.name + ".tmp")
+    with open(temporario, "wb") as f:
+        f.write(dados)
+    os.replace(temporario, caminho)
+
+
 def _extrair_no_worker(pdf: str, pagina: int, destino: str, teto_entidades: int,
                        teto_memoria: int, teto_cpu: int) -> dict:
-    """Roda no processo filho: extrai, classifica e grava o cache.
+    """Roda no processo filho: extrai, classifica, divide e grava tudo.
 
     Recebe os tetos como argumento, e não os lê de `limits`, para que o processo
     pai continue sendo o único dono da política.
@@ -95,22 +108,30 @@ def _extrair_no_worker(pdf: str, pagina: int, destino: str, teto_entidades: int,
 
     pasta = Path(destino)
     pasta.mkdir(parents=True, exist_ok=True)
-    alvo = pasta / "cache.pickle"
-    temporario = alvo.with_suffix(".pickle.tmp")
-    with open(temporario, "wb") as f:
-        pickle.dump({"resultado": resultado, "attrs": attrs}, f,
-                    protocol=pickle.HIGHEST_PROTOCOL)
-    os.replace(temporario, alvo)   # o worker pode morrer no meio da gravação
+    _gravar_atomico(pasta / "cache.pickle",
+                    pickle.dumps({"resultado": resultado, "attrs": attrs},
+                                 protocol=pickle.HIGHEST_PROTOCOL))
 
-    return {
-        "situacao": "pronta",
+    esqueleto, detalhe, limiar = packing.dividir(attrs)
+    _gravar_atomico(pasta / "esqueleto.bin",
+                    packing.empacotar(resultado, attrs, esqueleto))
+    _gravar_atomico(pasta / "detalhe.bin",
+                    packing.empacotar(resultado, attrs, detalhe))
+
+    meta = {
+        "pagina": pagina,
         "n_entidades": len(resultado.entities),
         "contagem": resultado.counts(),
         "layers": attrs.layers,
         "largura_pt": resultado.page_width,
         "altura_pt": resultado.page_height,
-        "limites_aplicados": aplicados,
+        "limiar_esqueleto_um": limiar,
+        "partes": {"esqueleto": len(esqueleto), "detalhe": len(detalhe)},
     }
+    _gravar_atomico(pasta / "meta.json",
+                    json.dumps(meta, ensure_ascii=False).encode("utf-8"))
+
+    return {"situacao": "pronta", **meta, "limites_aplicados": aplicados}
 
 
 _trava = threading.RLock()

@@ -1402,7 +1402,9 @@ git commit -m "Cria o formato binario da geometria com tabela de secoes"
 polilinhas, curvas — poucos e estruturais) mais os segmentos mais longos, até
 chegar perto do alvo. O alvo é `max(20_000, n // 20)`, ou seja 5% das entidades
 com um piso. Se a página inteira couber no alvo, não há divisão: tudo vai no
-esqueleto e o detalhe fica vazio.
+esqueleto e o detalhe fica vazio. O mesmo vale para uma página sem segmento
+nenhum — só polilinhas e texto, como uma planta de hachura pesada: a regra só
+sabe cortar por comprimento de segmento, então não há o que mandar ao detalhe.
 
 - [ ] **Passo 1: escrever o teste que falha**
 

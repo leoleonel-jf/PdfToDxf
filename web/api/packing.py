@@ -157,6 +157,59 @@ def empacotar(resultado, attrs, indices: list[int]) -> bytes:
     return bytes(cabecalho + tabela + corpo)
 
 
+ALVO_MINIMO = 20_000
+FRACAO_ESQUELETO = 20   # 1/20 = 5% das entidades
+
+
+def alvo_padrao(n: int) -> int:
+    return max(ALVO_MINIMO, n // FRACAO_ESQUELETO)
+
+
+def dividir(attrs, alvo: int | None = None) -> tuple[list[int], list[int], int]:
+    """Separa as entidades em esqueleto e detalhe.
+
+    O esqueleto leva tudo que não é `Segment` — textos, arcos, polilinhas e
+    curvas, que são poucos e dão a leitura do desenho — mais os segmentos mais
+    longos, até chegar perto do alvo. Devolve `(esqueleto, detalhe, limiar_um)`,
+    com as duas listas em ordem original e o limiar de comprimento usado.
+
+    Quando a página inteira cabe no alvo, não há divisão: tudo vai no esqueleto,
+    o detalhe volta vazio e o limiar é 0.
+    """
+    n = len(attrs)
+    if alvo is None:
+        alvo = alvo_padrao(n)
+    if n <= alvo:
+        return list(range(n)), [], 0
+
+    segmentos = [i for i in range(n) if attrs.kind[i] == "Segment"]
+    if not segmentos:
+        # A regra só sabe cortar por comprimento de segmento. Sem segmento não
+        # há o que mandar ao detalhe — e a conta de vagas abaixo ficaria
+        # negativa, levando o `max()` a receber lista vazia.
+        return list(range(n)), [], 0
+
+    outros = n - len(segmentos)
+    vagas = alvo - outros
+    if vagas <= 0:
+        # há mais não-segmentos que o alvo: o esqueleto é só eles
+        limiar = max(attrs.length_um[i] for i in segmentos) + 1
+    else:
+        # `vagas < len(segmentos)` sempre: se coubessem todos, teríamos
+        # `alvo >= outros + len(segmentos) == n` e o retorno lá em cima já teria
+        # acontecido.
+        ordenados = sorted((attrs.length_um[i] for i in segmentos), reverse=True)
+        limiar = ordenados[vagas - 1]
+
+    esqueleto, detalhe = [], []
+    for i in range(n):
+        if attrs.kind[i] != "Segment" or attrs.length_um[i] >= limiar:
+            esqueleto.append(i)
+        else:
+            detalhe.append(i)
+    return esqueleto, detalhe, limiar
+
+
 def desempacotar(dados: bytes) -> dict:
     """Lê o binário de volta. Existe para os testes: em produção quem lê é o TS."""
     if len(dados) < 16 or dados[:4] != MAGICO:

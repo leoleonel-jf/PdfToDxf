@@ -128,21 +128,44 @@ dividida em duas partes:
 
 Uma faixa discreta indica que o detalhe ainda está carregando. Exportar antes de
 terminar é permitido: a exportação acontece no servidor, sobre a extração
-completa, e não depende do que já chegou ao navegador. A estimativa de tamanho
-fica marcada como parcial até o carregamento terminar.
+completa, e não depende do que já chegou ao navegador.
 
-O limiar do esqueleto é um percentil dos `length_mm` já calculados pelo
-`classify()` — uma ordenação na hora de empacotar, não um segundo exame das
-entidades.
+Até o detalhe chegar, **o desenho e a estimativa são provisórios**. Não é só uma
+questão de faltar traço na tela: com "remover duplicados" ligado, o `select()`
+elege um sobrevivente por grupo de duplicatas, em ordem original — e como o
+esqueleto leva os segmentos longos e o detalhe os curtos, dois do mesmo grupo
+caem em partes diferentes. O esqueleto sozinho pode então mostrar um traço que o
+DXF final descarta. Por isso o cliente **intercala as duas partes de volta em
+ordem de índice** antes de decidir qualquer coisa, e por isso a estimativa
+aparece marcada como parcial enquanto a faixa estiver visível.
+
+O limiar do esqueleto é um alvo de contagem com piso, aplicado sobre o
+`length_um` inteiro já calculado pelo `classify()`: os não-segmentos entram
+todos, e os segmentos entram do mais longo para o mais curto até o alvo encher.
+Quem empata com o limiar entra em ordem de índice, só enquanto houver vaga — sem
+esse corte, uma hachura densa, em que milhares de segmentos têm o mesmo
+comprimento, jogaria a página inteira no esqueleto. É uma ordenação na hora de
+empacotar, não um segundo exame das entidades.
 
 ### Formato binário da geometria
 
-`geometry.bin` é uma concatenação de seções, uma por tipo de entidade
-(`Segment`, `Polyline`, `Arc`, `Bezier`, `TextItem`), cada uma com arrays
-paralelos de `Float32Array` para coordenadas e `Int32Array`/`Uint8Array` para os
-atributos vindos do `classify()`. Os textos vão num bloco UTF-8 separado com
-índices de deslocamento. O deslocamento e o comprimento de cada seção ficam no
-`meta.json`. A resposta é comprimida com gzip pelo Caddy.
+`geometry.bin` **se descreve sozinho**: um cabeçalho com uma tabela de seções e,
+em seguida, os dados. O leitor não precisa de um segundo arquivo para saber onde
+cada coisa começa.
+
+As seções são **por atributo**, não por tipo de entidade: uma para `idx`, uma
+para `kind` (código numérico de 0 a 4), uma para `layer_id`, e assim por diante,
+mais as coordenadas em `Float32Array` com uma tabela de deslocamentos, e os
+textos num bloco UTF-8 separado com seus próprios deslocamentos. Arrays
+paralelos, todos com o mesmo comprimento, do jeito que o `classify()` os produz.
+
+Toda seção começa em deslocamento múltiplo de 4, com zeros de enchimento quando
+preciso: `new Uint32Array(buffer, desloc, n)` levanta `RangeError` se o
+deslocamento não for múltiplo de 4, e as seções de uint8 ocupam exatamente `n`
+bytes. O tamanho gravado na tabela é o real, sem o enchimento, então o
+enchimento é invisível para quem lê.
+
+A resposta é comprimida com gzip pelo Caddy.
 
 Ordem de leitura no cliente = ordem de escrita no servidor = ordem original das
 entidades, que é o que faz o `select()` das duas pontas concordar.
@@ -261,7 +284,10 @@ web/api/
 web/frontend/src/
   main.ts            composição da tela
   canvas.ts          renderizador, com gestos de mouse e de toque
+  formato.ts         leitor de geometry.bin, sem copiar o buffer
+  worker.ts          guarda e intercala as partes, roda select e estimativa
   select.ts          espelho TypeScript de optimize.select()
+  estimativa.ts      espelho TypeScript de optimize.estimate_bytes
   calibrate.ts       calibração por dois pontos, com lupa no toque
   estados.ts         mensagens de espera, erro e cota esgotada
   toolbar.ts         as duas faixas do cabeçalho

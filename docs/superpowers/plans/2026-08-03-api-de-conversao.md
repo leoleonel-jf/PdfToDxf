@@ -1574,10 +1574,16 @@ def dividir(attrs, alvo: int | None = None) -> tuple[list[int], list[int], int]:
     return esqueleto, detalhe, limiar
 ```
 
-O limiar é o comprimento do último segmento que coube, e a comparação é
-`>=` — então empates entram todos no esqueleto, que pode passar um pouco do
-alvo. Passar um pouco é melhor do que cortar arbitrariamente no meio de um
-empate: a divisão fica determinística e não depende da ordem do `sorted`.
+O limiar é o comprimento do último segmento que coube. **Empates não entram
+todos:** os que empatam com o limiar são aceitos em ordem de índice, só até o
+alvo encher. A primeira redação deste plano deixava passar todos, argumentando
+que o esqueleto "passaria um pouco do alvo" — mas numa hachura densa, em que
+milhares de segmentos têm exatamente o mesmo comprimento, ele passava a página
+inteira, e a divisão morria justamente no caso pesado que a justifica. A ordem
+de índice mantém a divisão determinística sem depender da ordem do `sorted`.
+
+Consequência para quem lê o `limiar_esqueleto_um` do `meta.json`: ele não é um
+corte limpo. Segmentos exatamente daquele comprimento podem estar no detalhe.
 
 - [ ] **Passo 4: gravar as partes na extração**
 

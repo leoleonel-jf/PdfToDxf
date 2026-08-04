@@ -87,7 +87,8 @@ def _gravar_atomico(caminho: Path, dados: bytes) -> None:
 
 
 def _extrair_no_worker(pdf: str, pagina: int, destino: str, teto_entidades: int,
-                       teto_memoria: int, teto_cpu: int) -> dict:
+                       teto_memoria: int, teto_cpu: int,
+                       alvo_minimo_esqueleto: int) -> dict:
     """Roda no processo filho: extrai, classifica, divide e grava tudo.
 
     Recebe os tetos como argumento, e não os lê de `limits`, para que o processo
@@ -112,7 +113,8 @@ def _extrair_no_worker(pdf: str, pagina: int, destino: str, teto_entidades: int,
                     pickle.dumps({"resultado": resultado, "attrs": attrs},
                                  protocol=pickle.HIGHEST_PROTOCOL))
 
-    esqueleto, detalhe, limiar = packing.dividir(attrs)
+    alvo = packing.alvo_padrao(len(attrs), alvo_minimo_esqueleto)
+    esqueleto, detalhe, limiar = packing.dividir(attrs, alvo)
     _gravar_atomico(pasta / "esqueleto.bin",
                     packing.empacotar(resultado, attrs, esqueleto))
     _gravar_atomico(pasta / "detalhe.bin",
@@ -151,7 +153,13 @@ def _gravar_estado(job_id: str, pagina: int, estado: dict) -> None:
     o estado de uma das páginas sumiria.
     """
     with _trava:
-        ficha = storage.ler_ficha(job_id) or {}
+        ficha = storage.ler_ficha(job_id)
+        if ficha is None:
+            # O trabalho sumiu enquanto a página era extraída — expirou, caiu
+            # pela cota, ou o envio foi desfeito. Recriar a ficha aqui deixava
+            # um toco sem `n_paginas` nem `nome`, e as rotas seguintes
+            # estouravam KeyError em 500 no lugar do 404 honesto.
+            return
         ficha.setdefault("paginas", {})[str(pagina)] = estado
         storage.gravar_ficha(job_id, ficha)
 
@@ -254,7 +262,7 @@ def pedir_extracao(job_id: str, pagina: int) -> dict:
             futuro = pool().submit(
                 _extrair_no_worker, str(origem), pagina, str(destino),
                 limits.TETO_ENTIDADES, limits.TETO_MEMORIA_WORKER_BYTES,
-                limits.TETO_CPU_WORKER_SEGUNDOS)
+                limits.TETO_CPU_WORKER_SEGUNDOS, packing.ALVO_MINIMO)
         except Exception as e:
             # Sem isto a página ficaria em "na_fila" para sempre, esperando um
             # worker que nunca foi submetido.

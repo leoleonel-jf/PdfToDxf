@@ -74,6 +74,26 @@ def test_pagina_sem_segmento_nenhum():
     print("OK: página sem segmento nenhum não estoura")
 
 
+def test_empate_de_comprimento_nao_estoura_o_esqueleto():
+    """Hachura densa: milhares de segmentos exatamente do mesmo comprimento.
+
+    Cortar só por limiar mandava todos para o esqueleto, porque todos empatam
+    com ele — a página inteira ia na primeira parte, e a divisão falhava
+    justamente no caso pesado em que ela precisa valer. Pior: o `length_um` é
+    inteiro em micrômetros, então segmentos apenas parecidos colapsam no mesmo
+    valor e caem no mesmo buraco.
+    """
+    ents = [Segment(p1=(float(i), 0.0), p2=(float(i), 2.0)) for i in range(1000)]
+    a = classify(ents)
+    esqueleto, detalhe, _limiar = packing.dividir(a, alvo=100)
+
+    assert len(esqueleto) == 100, f"esqueleto com {len(esqueleto)} de alvo 100"
+    assert len(detalhe) == 900, len(detalhe)
+    assert sorted(esqueleto + detalhe) == list(range(1000))
+    assert esqueleto == sorted(esqueleto) and detalhe == sorted(detalhe)
+    print("OK: empate de comprimento não joga a página toda no esqueleto")
+
+
 def test_alvo_padrao_tem_piso_e_fracao():
     assert packing.alvo_padrao(100) == packing.ALVO_MINIMO
     assert packing.alvo_padrao(1_000_000) == 50_000
@@ -110,6 +130,38 @@ def test_rotas_servem_as_duas_partes():
     print("OK: as rotas servem as duas partes e juntas reproduzem tudo")
 
 
+def test_rotas_servem_um_detalhe_nao_vazio():
+    """A planta de teste dividida de verdade, com as duas partes cheias.
+
+    O alvo padrão tem piso de 20 000, então a planta minúscula sempre cabia
+    inteira no esqueleto: a rota `parte=detalhe` só era exercitada devolvendo
+    arquivo vazio, e a recombinação das duas partes nunca foi testada de fato.
+    Baixar o piso alcança o worker porque quem manda o alvo é o processo pai.
+    """
+    original = packing.ALVO_MINIMO
+    packing.ALVO_MINIMO = 4
+    try:
+        job = enviar(bytes_do_pdf_vetorial())
+        cliente.post(f"/api/jobs/{job}/pages/1")
+        esperar(job, 1)
+        m = cliente.get(f"/api/jobs/{job}/pages/1/meta.json").json()
+    finally:
+        packing.ALVO_MINIMO = original
+
+    assert m["partes"]["esqueleto"] > 0, m["partes"]
+    assert m["partes"]["detalhe"] > 0, m["partes"]
+
+    base = f"/api/jobs/{job}/pages/1/geometry.bin"
+    esq = packing.desempacotar(cliente.get(f"{base}?parte=esqueleto").content)
+    det = packing.desempacotar(cliente.get(f"{base}?parte=detalhe").content)
+    assert esq["n"] == m["partes"]["esqueleto"]
+    assert det["n"] == m["partes"]["detalhe"]
+    assert sorted(esq["idx"] + det["idx"]) == list(range(m["n_entidades"]))
+    assert esq["coords_de"](0), "esqueleto veio sem coordenadas"
+    assert det["coords_de"](0), "detalhe veio sem coordenadas"
+    print("OK: as rotas servem uma divisão de verdade, com as duas partes cheias")
+
+
 def test_parte_invalida():
     job = enviar(bytes_do_pdf_vetorial())
     cliente.post(f"/api/jobs/{job}/pages/1")
@@ -140,8 +192,10 @@ if __name__ == "__main__":
     test_pagina_pequena_nao_divide()
     test_esqueleto_fica_com_os_segmentos_mais_longos()
     test_pagina_sem_segmento_nenhum()
+    test_empate_de_comprimento_nao_estoura_o_esqueleto()
     test_alvo_padrao_tem_piso_e_fracao()
     test_rotas_servem_as_duas_partes()
+    test_rotas_servem_um_detalhe_nao_vazio()
     test_parte_invalida()
     test_pagina_nao_pronta_nao_serve_geometria()
     print("Todos os testes de geometria passaram.")

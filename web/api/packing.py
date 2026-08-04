@@ -161,8 +161,14 @@ ALVO_MINIMO = 20_000
 FRACAO_ESQUELETO = 20   # 1/20 = 5% das entidades
 
 
-def alvo_padrao(n: int) -> int:
-    return max(ALVO_MINIMO, n // FRACAO_ESQUELETO)
+def alvo_padrao(n: int, minimo: int | None = None) -> int:
+    """Alvo do esqueleto: 5% das entidades, com piso.
+
+    O piso vem por argumento quando quem chama é o worker, para que o processo
+    pai continue sendo o único dono da política — mesma razão dos tetos de
+    recurso. Sem isso, mexer no piso não alcançaria o processo filho.
+    """
+    return max(ALVO_MINIMO if minimo is None else minimo, n // FRACAO_ESQUELETO)
 
 
 def dividir(attrs, alvo: int | None = None) -> tuple[list[int], list[int], int]:
@@ -175,6 +181,10 @@ def dividir(attrs, alvo: int | None = None) -> tuple[list[int], list[int], int]:
 
     Quando a página inteira cabe no alvo, não há divisão: tudo vai no esqueleto,
     o detalhe volta vazio e o limiar é 0.
+
+    O limiar devolvido é o comprimento do segmento mais curto que coube. Ele
+    não é um corte limpo: segmentos exatamente desse comprimento podem ter
+    ficado de fora, porque o esqueleto para no alvo.
     """
     n = len(attrs)
     if alvo is None:
@@ -194,16 +204,34 @@ def dividir(attrs, alvo: int | None = None) -> tuple[list[int], list[int], int]:
     if vagas <= 0:
         # há mais não-segmentos que o alvo: o esqueleto é só eles
         limiar = max(attrs.length_um[i] for i in segmentos) + 1
+        no_limiar = 0
     else:
         # `vagas < len(segmentos)` sempre: se coubessem todos, teríamos
         # `alvo >= outros + len(segmentos) == n` e o retorno lá em cima já teria
         # acontecido.
         ordenados = sorted((attrs.length_um[i] for i in segmentos), reverse=True)
         limiar = ordenados[vagas - 1]
+        # Quantos empatam no limiar ainda cabem. Sem esta conta, uma hachura
+        # densa — milhares de segmentos do mesmo comprimento — jogava a página
+        # inteira no esqueleto, porque todos passavam no `>= limiar`. O laço
+        # roda no máximo `vagas` vezes: `ordenados` está em ordem decrescente.
+        acima = 0
+        for comprimento in ordenados:
+            if comprimento <= limiar:
+                break
+            acima += 1
+        no_limiar = vagas - acima
 
     esqueleto, detalhe = [], []
     for i in range(n):
-        if attrs.kind[i] != "Segment" or attrs.length_um[i] >= limiar:
+        if attrs.kind[i] != "Segment":
+            esqueleto.append(i)
+            continue
+        comprimento = attrs.length_um[i]
+        if comprimento > limiar:
+            esqueleto.append(i)
+        elif comprimento == limiar and no_limiar > 0:
+            no_limiar -= 1          # empatou e ainda havia vaga
             esqueleto.append(i)
         else:
             detalhe.append(i)

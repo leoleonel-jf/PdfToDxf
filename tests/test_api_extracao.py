@@ -219,6 +219,29 @@ def test_pedidos_simultaneos_submetem_uma_vez():
     print("OK: pedidos simultâneos da mesma página submetem um worker só")
 
 
+def test_trabalho_apagado_nao_ressuscita_como_toco():
+    """Trabalho apagado no meio da extração não pode voltar pela metade.
+
+    A limpeza por cota pode levar um trabalho enquanto uma página dele ainda
+    está em voo. O callback então gravava o estado, e o `ler_ficha(...) or {}`
+    recriava a ficha sem `n_paginas` nem `nome` — um toco. As rotas seguintes
+    estouravam `KeyError` e devolviam 500, quando a resposta honesta é 404: o
+    trabalho não existe mais.
+    """
+    import shutil
+
+    from web.api import jobs, storage
+
+    job = enviar(bytes_do_pdf_vetorial())
+    shutil.rmtree(storage.pasta(job), ignore_errors=True)
+    jobs._gravar_estado(job, 1, {"situacao": "pronta"})
+
+    assert storage.ler_ficha(job) is None, "a ficha do trabalho apagado voltou"
+    assert cliente.get(f"/api/jobs/{job}").status_code == 404
+    assert cliente.post(f"/api/jobs/{job}/pages/1").status_code == 404
+    print("OK: trabalho apagado não ressuscita como ficha pela metade")
+
+
 def test_falha_transitoria_ao_gravar_nao_prende_a_pagina():
     """Uma falha passageira ao gravar a ficha não pode prender a página.
 
@@ -294,6 +317,7 @@ if __name__ == "__main__":
     test_segunda_pagina_depois_da_primeira()
     test_original_some_quando_todas_as_paginas_terminam()
     test_pedidos_simultaneos_submetem_uma_vez()
+    test_trabalho_apagado_nao_ressuscita_como_toco()
     test_falha_transitoria_ao_gravar_nao_prende_a_pagina()
     test_erro_inesperado_nao_se_disfarca_de_recurso()
     print("Todos os testes de extração passaram.")

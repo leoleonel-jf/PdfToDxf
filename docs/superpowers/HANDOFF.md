@@ -25,7 +25,7 @@ próprio plano; só as etapas 1 e 2 foram planejadas até agora.
 |---|---|---|
 | `main` | até o plano da etapa 1 | base |
 | `nucleo-classify-select` | etapa 1 inteira + plano da etapa 2 | **pronta, não mesclada** |
-| `api-de-conversao` | etapa 2, tarefas 1 a 3 | em andamento |
+| `api-de-conversao` | etapa 2 inteira | **pronta, não mesclada** |
 
 `api-de-conversao` sai de `nucleo-classify-select`, que sai de `main`. Nada foi
 mesclado ainda.
@@ -67,7 +67,14 @@ Regenerar é determinístico — se o `git diff` sujar, o comportamento mudou.
 | 4 | empacotamento binário da geometria | pronta, sem revisão independente |
 | 5 | divisão esqueleto/detalhe + rotas | pronta, sem revisão independente |
 | 6 | exportação com cache por combinação | pronta, sem revisão independente |
-| 7 | limpeza por prazo e cota de disco | não começou |
+| 7 | limpeza por prazo e cota de disco | pronta, sem revisão independente |
+
+As sete tarefas estão feitas e a **definição de pronto da etapa 2 foi conferida
+item a item**: os seis arquivos de teste novos passam junto dos quatro da etapa
+1, o `requirements.txt` da raiz continua com três dependências, um PDF vetorial
+sobe e volta como DXF válido inteiramente por HTTP, esqueleto e detalhe somados
+reproduzem a extração, repetir uma exportação não gera arquivo novo, e os
+trabalhos vencem em 4 horas com a cota apagando do mais antigo.
 
 Arquivos existentes: `web/api/{__init__,limits,storage,jobs,packing,main}.py`,
 `web/requirements.txt`, `tests/test_api_upload.py`, `tests/test_api_extracao.py`,
@@ -93,6 +100,7 @@ Rodados em 2026-08-03, todos passando com saída limpa:
 ./.venv/Scripts/python.exe tests/test_api_extracao.py
 ./.venv/Scripts/python.exe tests/test_api_geometria.py
 ./.venv/Scripts/python.exe tests/test_api_export.py
+./.venv/Scripts/python.exe tests/test_storage.py
 ```
 
 A bateria inteira foi rodada três vezes seguidas, sem falha nenhuma. Isso
@@ -115,23 +123,31 @@ o suspeito é a troca atômica da ficha, não lentidão: a extração leva 0,5 s
    estimativa e a prévia; desligar um layer some com ele; salvar gera o arquivo;
    o DXF abre no CAD com as medidas certas.
 
-2. **Tarefa 7 da etapa 2** — expiração por prazo e cota de disco. É a última.
-   As tarefas 4, 5 e 6 ficaram sem revisão independente: foram implementadas e
-   conferidas na mesma sessão, porque aquele harness não permitia subagente.
-   Vale um olhar de fora antes de a etapa 3 escrever o leitor TypeScript em
-   cima do formato binário.
+2. **Revisar as tarefas 4 a 7 da etapa 2.** Elas foram implementadas e
+   conferidas na mesma sessão, porque aquele harness não permitia subagente —
+   não tiveram a revisão independente que as tarefas 1 a 3 tiveram. Vale um
+   olhar de fora antes de a etapa 3 escrever o leitor TypeScript em cima do
+   formato binário, que é o ponto de não-retorno: um erro no formato depois
+   disso custa duas implementações.
 
-3. **Mesclar a etapa 1** quando a conferência manual passar.
+3. **Decidir sobre a exportação no processo do site** (ver dívida abaixo). É
+   decisão de projeto, não conserto — muda o contrato da rota.
 
-4. **Planejar as etapas 3, 4 e 5.**
+4. **Mesclar as etapas 1 e 2** quando a conferência manual passar. `main` →
+   `nucleo-classify-select` → `api-de-conversao`, nessa ordem.
 
-A revisão da tarefa 3 já foi feita (commit de correções `122cc3e`). Achou dois
-defeitos graves, ambos corrigidos com teste de regressão: o PDF original era
-apagado assim que a fila esvaziava, o que tornava impossível extrair a página 2
-de um documento de duas páginas; e `pedir_extracao` conferia o estado fora da
-trava, então dois POSTs simultâneos para a mesma página submetiam dois workers
-que disputavam o mesmo `cache.pickle`. A spec foi ajustada junto, porque quem
-especificou o apagamento errado foi o plano. Detalhe em
+5. **Planejar as etapas 3, 4 e 5.**
+
+O que as revisões e a execução da etapa 2 pegaram, para não se perder: o PDF
+original era apagado assim que a fila esvaziava, o que tornava impossível
+extrair a página 2 de um documento de duas páginas; `pedir_extracao` conferia o
+estado fora da trava, então dois POSTs simultâneos submetiam dois workers para a
+mesma página; o formato binário não alinhava as seções, e o `Uint32Array` da
+etapa 3 levantaria `RangeError`; uma página sem segmento nenhum estourava
+`ValueError` na divisão; quatro exportações idênticas simultâneas disputavam o
+mesmo destino e morriam em 500; e uma falha passageira na gravação da ficha
+deixava a página presa em `na_fila` para sempre. A spec foi ajustada em dois
+pontos, porque quem especificou errado foi o plano. Detalhe em
 `.superpowers/sdd/progress-etapa2.md`.
 
 ## Ambiente

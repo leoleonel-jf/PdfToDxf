@@ -11,13 +11,17 @@ compartilham o mesmo núcleo.
 
 Documentos que governam o trabalho:
 
-- **Especificação:** `docs/superpowers/specs/2026-08-01-pdftodxf-web-design.md`
+- **Especificação geral:** `docs/superpowers/specs/2026-08-01-pdftodxf-web-design.md`
+- **Desenho da etapa 3:** `docs/superpowers/specs/2026-08-04-frontend-canvas-design.md`
 - **Plano da etapa 1:** `docs/superpowers/plans/2026-08-01-nucleo-classify-select.md`
 - **Plano da etapa 2:** `docs/superpowers/plans/2026-08-03-api-de-conversao.md`
 
 O projeto está dividido em 5 etapas: **1** núcleo, **2** API de conversão,
-**3** frontend, **4** contas/cotas/registros, **5** deploy. Cada etapa tem seu
-próprio plano; só as etapas 1 e 2 foram planejadas até agora.
+**3** frontend, **4** contas/cotas/registros, **5** deploy. As etapas 1 e 2
+estão planejadas e implementadas. A etapa 3 tem o **desenho aprovado** e ainda
+**não tem plano** — escrever esse plano é o próximo passo, e a spec dela foi
+escrita para bastar por si: leia-a antes, não é preciso resgatar a conversa que
+a originou.
 
 ## Onde o código está
 
@@ -138,7 +142,14 @@ o suspeito é a troca atômica da ficha, não lentidão: a extração leva 0,5 s
 4. **Mesclar as etapas 1 e 2** quando a conferência manual passar. `main` →
    `nucleo-classify-select` → `api-de-conversao`, nessa ordem.
 
-5. **Planejar as etapas 3, 4 e 5.**
+5. **Escrever o plano da etapa 3**, a partir de
+   `docs/superpowers/specs/2026-08-04-frontend-canvas-design.md`. O desenho já
+   está aprovado; falta o plano tarefa a tarefa, no mesmo formato dos das etapas
+   1 e 2. A primeira tarefa dele é uma **medição no navegador** — quanto custam
+   o `select()` e a reconstrução dos `Path2D` em 3 milhões de entidades — porque
+   a escolha pelo Web Worker é hipótese fundamentada, não número medido.
+
+6. **Planejar as etapas 4 e 5.**
 
 O que as revisões e a execução da etapa 2 pegaram, para não se perder: o PDF
 original era apagado assim que a fila esvaziava, o que tornava impossível

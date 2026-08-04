@@ -179,8 +179,24 @@ def _quando_terminar(job_id: str, pagina: int, futuro) -> None:
                   "mensagem": "Não consegui processar esta planta. "
                               "A falha foi registrada no servidor."}
         traceback.print_exception(type(e), e, e.__traceback__, file=sys.stderr)
-    _gravar_estado(job_id, pagina, estado)
-    _apagar_origem_se_ocioso(job_id)
+
+    try:
+        _gravar_estado(job_id, pagina, estado)
+        _apagar_origem_se_ocioso(job_id)
+    except Exception as e:
+        # Aqui é o fim da linha: o `concurrent.futures` engole o que escapar de
+        # um callback e só o registra no log. Sem esta tentativa final, uma
+        # falha ao gravar deixaria a página em "na_fila" para sempre — o
+        # navegador perguntaria sem nunca receber resposta.
+        traceback.print_exception(type(e), e, e.__traceback__, file=sys.stderr)
+        try:
+            _gravar_estado(job_id, pagina, {
+                "situacao": "erro", "codigo": "interno",
+                "mensagem": "Não consegui registrar o resultado desta página. "
+                            "A falha foi registrada no servidor."})
+        except Exception as outra:
+            traceback.print_exception(type(outra), outra,
+                                      outra.__traceback__, file=sys.stderr)
 
 
 def _apagar_origem_se_ocioso(job_id: str) -> None:

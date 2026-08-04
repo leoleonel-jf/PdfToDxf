@@ -219,6 +219,53 @@ def test_pedidos_simultaneos_submetem_uma_vez():
     print("OK: pedidos simultâneos da mesma página submetem um worker só")
 
 
+def test_falha_transitoria_ao_gravar_nao_prende_a_pagina():
+    """Uma falha passageira ao gravar a ficha não pode prender a página.
+
+    No Windows a troca atômica volta como `PermissionError` quando outro
+    processo — antivírus, indexador, um `FileResponse` ainda aberto — segura o
+    arquivo por um instante. Se isso acontece dentro do callback da extração, o
+    `concurrent.futures` engole a exceção e a página fica em "na_fila" para
+    sempre: o navegador pergunta e nunca recebe resposta.
+    """
+    from web.api import storage
+
+    job = enviar(bytes_do_pdf_vetorial())
+
+    real = os.replace
+    POR_GRAVACAO = 3          # menos que storage.TENTATIVAS_DE_TROCA
+    restantes = [POR_GRAVACAO]
+    total = [0]
+
+    def replace_teimoso(origem, destino, *args, **kwargs):
+        """Faz toda gravação da ficha falhar 3 vezes antes de deixar passar.
+
+        Assim tanto a gravação do POST quanto a do callback da extração passam
+        pelo caminho de repetição — é a do callback que importa, porque é a que
+        ninguém está olhando.
+        """
+        if str(destino).endswith("ficha.json") and restantes[0] > 0:
+            restantes[0] -= 1
+            total[0] += 1
+            raise PermissionError(5, "Acesso negado (simulado)")
+        resposta = real(origem, destino, *args, **kwargs)
+        if str(destino).endswith("ficha.json"):
+            restantes[0] = POR_GRAVACAO
+        return resposta
+
+    storage.os.replace = replace_teimoso
+    try:
+        cliente.post(f"/api/jobs/{job}/pages/1")
+        estado = esperar(job, 1, limite=30.0)
+    finally:
+        storage.os.replace = real
+
+    assert total[0] >= 2 * POR_GRAVACAO, \
+        f"só {total[0]} falhas: o callback não chegou a ser exercitado"
+    assert estado["situacao"] == "pronta", estado
+    print("OK: falha passageira ao gravar a ficha não prende a página")
+
+
 def test_erro_inesperado_nao_se_disfarca_de_recurso():
     """Um defeito no servidor tem de chegar como `interno`, não como `recurso`.
 
@@ -247,5 +294,6 @@ if __name__ == "__main__":
     test_segunda_pagina_depois_da_primeira()
     test_original_some_quando_todas_as_paginas_terminam()
     test_pedidos_simultaneos_submetem_uma_vez()
+    test_falha_transitoria_ao_gravar_nao_prende_a_pagina()
     test_erro_inesperado_nao_se_disfarca_de_recurso()
     print("Todos os testes de extração passaram.")

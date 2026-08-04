@@ -14,11 +14,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 import uuid
 from pathlib import Path
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
+
+TENTATIVAS_DE_TROCA = 5
 
 
 def raiz() -> Path:
@@ -68,13 +71,40 @@ def caminho_ficha(job_id: str) -> Path:
     return pasta(job_id) / "ficha.json"
 
 
+def trocar_com_paciencia(temporario: Path, destino: Path) -> None:
+    """`os.replace` insistindo um pouco antes de desistir.
+
+    No Windows a troca volta como `PermissionError` quando outro processo —
+    antivírus, indexador, um envio ainda aberto — segura o arquivo por alguns
+    milissegundos. Desistir na primeira tentativa deixaria a ficha
+    desatualizada, e quando quem grava é o callback da extração o
+    `concurrent.futures` engole a exceção: a página ficaria em "na_fila" para
+    sempre, com o navegador perguntando sem nunca receber resposta.
+    """
+    for tentativa in range(TENTATIVAS_DE_TROCA):
+        try:
+            os.replace(temporario, destino)
+            return
+        except PermissionError:
+            if tentativa == TENTATIVAS_DE_TROCA - 1:
+                raise
+            time.sleep(0.05 * (tentativa + 1))
+
+
 def gravar_ficha(job_id: str, ficha: dict) -> None:
     p = caminho_ficha(job_id)
     p.parent.mkdir(parents=True, exist_ok=True)
-    temporario = p.with_suffix(".json.tmp")
-    with open(temporario, "w", encoding="utf-8") as f:
-        json.dump(ficha, f, ensure_ascii=False)
-    os.replace(temporario, p)   # troca atômica: nunca deixa ficha pela metade
+    # Nome único por processo e por fio: dois escritores não podem disputar o
+    # mesmo temporário. O `finally` é que impede o `.tmp` órfão quando o
+    # `json.dump` estoura no meio.
+    temporario = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with open(temporario, "w", encoding="utf-8") as f:
+            json.dump(ficha, f, ensure_ascii=False)
+        trocar_com_paciencia(temporario, p)   # nunca deixa ficha pela metade
+    finally:
+        if temporario.exists():
+            temporario.unlink()
 
 
 def ler_ficha(job_id: str) -> dict | None:

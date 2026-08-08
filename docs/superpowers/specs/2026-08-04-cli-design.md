@@ -121,13 +121,19 @@ Sem pytest.
 
 1. **Deriva das flags** — o conjunto de flags de compactação é exatamente o
    conjunto de campos de `ExportOptions`. É o teste que sustenta a etapa.
-2. **Fronteira pública** — o `cli.py` não importa nada além da superfície
-   listada acima. Conferido lendo os `import` do módulo.
+2. **Fronteira pública** — um teste lê os `import` do `cli.py` com o `ast` e
+   afirma que nenhum sai da superfície listada acima. O `fitz` entra na lista
+   como exceção conhecida, porque contar páginas não tem função pública no
+   núcleo; uma segunda exceção significaria vazamento de verdade.
 3. **Converte de verdade** — um PDF sintético vira DXF que o `ezdxf` abre sem
    erro, com o `$INSUNITS` da unidade pedida.
-4. **As opções mordem** — `--dedup` produz menos entidades do que sem ele, e
-   `--excluir-layer` some com o layer no arquivo gerado.
-5. **`--escala` e `--plotagem`** dão o mesmo resultado quando equivalentes.
+4. **`--excluir-layer` morde** — o layer excluído some do arquivo gerado. O
+   `--dedup` não entra aqui: o PDF sintético não tem duplicatas o bastante para
+   a asserção significar alguma coisa, e o `select()` já é coberto pelos 1024
+   casos do contrato.
+5. **`--escala` e `--plotagem`** dão a mesma **geometria** quando equivalentes.
+   Comparar os arquivos byte a byte não serve: o `ezdxf` grava `$TDCREATE` no
+   cabeçalho, e dois DXF gerados em instantes diferentes divergem sem motivo.
 6. **Recusa sobrescrever** sem `--forcar`, e aceita com.
 7. **Códigos de saída** — página inexistente devolve 2; escala ausente devolve 1.
 8. **`inspecionar` não grava nada** e imprime os layers esperados.

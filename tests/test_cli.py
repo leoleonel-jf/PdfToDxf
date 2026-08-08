@@ -211,6 +211,19 @@ def test_cli_so_toca_a_superficie_publica_do_nucleo():
     print("OK: a CLI só toca a superfície pública do núcleo")
 
 
+def test_nao_existe_caminho_que_pule_o_julgamento():
+    """Nenhuma função pública grava DXF sem passar por classify/select.
+
+    O `convert()` fazia isso: extraía e escrevia direto, ignorando as opções.
+    Era a única porta dos fundos do projeto, e a CLI existe justamente para
+    provar que só há um caminho.
+    """
+    from pdftodxf import dxf_writer
+    assert not hasattr(dxf_writer, "convert"), (
+        "convert() voltou: ela grava DXF sem passar pelo select()")
+    print("OK: não há porta dos fundos para gravar DXF sem filtro")
+
+
 if __name__ == "__main__":
     test_flags_cobrem_todos_os_campos_de_exportoptions()
     test_converte_e_gera_dxf_valido()
@@ -223,4 +236,5 @@ if __name__ == "__main__":
     test_inspecionar_descreve_a_planta_sem_gravar()
     test_inspecionar_pagina_inexistente()
     test_cli_so_toca_a_superficie_publica_do_nucleo()
+    test_nao_existe_caminho_que_pule_o_julgamento()
     print("Todos os testes da linha de comando passaram.")

@@ -107,6 +107,21 @@ def test_pedido_invalido():
     print("OK: pedido inválido é recusado antes de gerar")
 
 
+def test_escala_infinita_e_recusada():
+    """`gt=0.0` não basta: `inf > 0` é verdadeiro, e o JSON permite Infinity.
+
+    O nan já caía sozinho — `nan > 0` é falso —, mas o infinito atravessava a
+    conferência e virava um DXF de coordenadas infinitas, que nenhum CAD abre.
+    """
+    job = preparar()
+    for ruim in ("Infinity", "-Infinity", "NaN"):
+        corpo = ('{"escala": %s, "unidade": "m", "opcoes": {}}' % ruim)
+        r = cliente.post(f"/api/jobs/{job}/pages/1/export", content=corpo,
+                         headers={"content-type": "application/json"})
+        assert r.status_code == 422, (ruim, r.status_code)
+    print("OK: escala infinita ou nan é recusada")
+
+
 def test_download_com_chave_inventada():
     job = preparar()
     r = cliente.get(f"/api/download/{job}/{'a' * 64}")
@@ -178,6 +193,7 @@ if __name__ == "__main__":
     test_combinacao_diferente_gera_outro()
     test_ordem_dos_layers_nao_muda_a_chave()
     test_pedido_invalido()
+    test_escala_infinita_e_recusada()
     test_download_com_chave_inventada()
     test_export_em_pagina_que_nao_ficou_pronta()
     test_geracoes_simultaneas_da_mesma_chave()

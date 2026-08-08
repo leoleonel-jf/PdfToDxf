@@ -9,9 +9,12 @@ import shutil
 import traceback
 from pathlib import Path
 
+import math
+
 import fitz
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from . import exportacao, jobs, limits, storage
@@ -178,8 +181,36 @@ class Opcoes(BaseModel):
     round_coords: bool = False
 
 
+def _serializavel(valor):
+    """Troca por texto o que não cabe em JSON, mantendo o resto intacto."""
+    if isinstance(valor, float) and not math.isfinite(valor):
+        return repr(valor)
+    if isinstance(valor, dict):
+        return {k: _serializavel(v) for k, v in valor.items()}
+    if isinstance(valor, (list, tuple)):
+        return [_serializavel(v) for v in valor]
+    if isinstance(valor, (str, int, bool, type(None))):
+        return valor
+    return repr(valor)
+
+
+@app.exception_handler(RequestValidationError)
+def _erro_de_validacao(request: Request, exc: RequestValidationError):
+    """422 com o detalhe saneado.
+
+    O relato padrão devolve o valor recebido junto da queixa. Quando esse valor
+    é `inf` ou `nan` — exatamente o caso que se quer recusar — o codificador de
+    JSON estoura ao montar a resposta, e a recusa vira um 500 sem explicação.
+    """
+    return JSONResponse(status_code=422,
+                        content={"detail": _serializavel(exc.errors())})
+
+
 class PedidoDeExportacao(BaseModel):
-    escala: float = Field(gt=0.0)
+    # `allow_inf_nan=False` não é zelo: `gt=0.0` sozinho deixa passar Infinity,
+    # que o JSON aceita, e o DXF sai com coordenadas infinitas. O nan já caía
+    # aqui por acidente, porque `nan > 0` é falso.
+    escala: float = Field(gt=0.0, allow_inf_nan=False)
     unidade: str = Field(pattern="^(mm|cm|m)$")
     opcoes: Opcoes = Field(default_factory=Opcoes)
 

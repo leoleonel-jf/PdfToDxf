@@ -8,6 +8,12 @@ Converte plantas em **PDF vetorial** (plotadas/exportadas do AutoCAD) de volta p
 
 ## Como usar
 
+Dois cliques em **`PdfToDxf.bat`**, na pasta do projeto. Arrastar um PDF sobre
+ele abre o programa já com a planta carregada. Para ter na área de trabalho,
+clique com o botão direito no `.bat` → *Enviar para* → *Área de trabalho*.
+
+Pela linha de comando dá no mesmo:
+
 ```powershell
 python main.py
 ```

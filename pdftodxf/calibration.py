@@ -22,6 +22,10 @@ def scale_from_two_points(p1: tuple[float, float], p2: tuple[float, float],
     paper = math.hypot(p2[0] - p1[0], p2[1] - p1[1])
     if paper < 1e-9:
         raise ValueError("Os dois pontos de calibração coincidem.")
+    if not math.isfinite(real_dist):
+        # `nan <= 0` é falso: sem esta linha, um nan passaria pela conferência
+        # de positividade logo abaixo e sairia como DXF de coordenadas nan.
+        raise ValueError("A medida real não é um número.")
     if real_dist <= 0:
         raise ValueError("A medida real deve ser positiva.")
     return real_dist / paper
@@ -32,6 +36,8 @@ def scale_from_plot_scale(ratio: float, unit: str = "m") -> float:
 
     Ex.: 1:50 em metros → 1 pt = 0.3528 mm papel = 17.64 mm reais = 0.01764 m.
     """
+    if not math.isfinite(ratio):
+        raise ValueError("A escala não é um número.")
     if ratio <= 0:
         raise ValueError("A escala deve ser positiva (ex.: 50 para 1:50).")
     if unit not in MM_PER_UNIT:

@@ -16,6 +16,7 @@ from pathlib import Path
 from .calibration import INSUNITS, scale_from_plot_scale
 from .dxf_writer import export_dxf
 from .extractor import extract_page
+from .numeros import ler_inteiro, ler_numero
 from .optimize import ExportOptions, classify, estimate_bytes, select
 
 SUCESSO = 0
@@ -45,7 +46,10 @@ def _acrescentar_opcoes(sub: argparse.ArgumentParser) -> None:
     sub.add_argument("--sem-preenchimento", action="store_true",
                      dest="sem_preenchimento",
                      help="descartar hachuras sólidas")
-    sub.add_argument("--min-mm", type=float, default=0.0, dest="min_mm",
+    # Os campos numéricos entram como texto e são lidos por `numeros.py`: o
+    # `type=float` do argparse recusa a vírgula decimal e aborta o processo com
+    # uma mensagem em inglês, fora do jogo de códigos de saída desta CLI.
+    sub.add_argument("--min-mm", default="0", dest="min_mm",
                      metavar="N",
                      help="descartar segmentos menores que N mm de papel")
     sub.add_argument("--excluir-layer", action="append", default=[],
@@ -61,11 +65,11 @@ def montar_parser() -> argparse.ArgumentParser:
 
     conv = comandos.add_parser("converter", help="gravar o DXF")
     conv.add_argument("entrada", help="o PDF de entrada")
-    conv.add_argument("--pagina", type=int, default=1, metavar="N",
+    conv.add_argument("--pagina", default="1", metavar="N",
                       help="página a converter, começando em 1 (padrão: 1)")
-    conv.add_argument("--escala", type=float, metavar="F",
+    conv.add_argument("--escala", metavar="F",
                       help="fator direto: 1 pt de papel vale F unidades")
-    conv.add_argument("--plotagem", type=float, metavar="R",
+    conv.add_argument("--plotagem", metavar="R",
                       help="escala de plotagem 1:R (ex.: 50 para 1:50)")
     conv.add_argument("--unidade", choices=sorted(INSUNITS), default="m",
                       help="unidade de saída (padrão: m)")
@@ -78,17 +82,20 @@ def montar_parser() -> argparse.ArgumentParser:
     insp = comandos.add_parser(
         "inspecionar", help="descrever a planta sem gravar nada")
     insp.add_argument("entrada", help="o PDF de entrada")
-    insp.add_argument("--pagina", type=int, metavar="N",
+    insp.add_argument("--pagina", metavar="N",
                       help="só esta página (padrão: todas)")
 
     return parser
 
 
 def opcoes_de(args: argparse.Namespace) -> ExportOptions:
+    minimo = ler_numero(args.min_mm, o_que="o valor de --min-mm")
+    if minimo < 0:
+        raise ValueError("O valor de --min-mm não pode ser negativo.")
     return ExportOptions(
         excluded_layers=set(args.excluir_layer),
         drop_fills=args.sem_preenchimento,
-        min_len_mm=args.min_mm,
+        min_len_mm=minimo,
         dedup=args.dedup,
         join_polylines=args.unir,
         round_coords=args.arredondar,
@@ -108,10 +115,12 @@ def fator_de_escala(args: argparse.Namespace) -> float:
     if not tem_escala and not tem_plotagem:
         raise ValueError("Falta a escala: use --escala ou --plotagem.")
     if tem_escala:
-        if args.escala <= 0:
+        escala = ler_numero(args.escala, o_que="a escala")
+        if escala <= 0:
             raise ValueError("A escala deve ser positiva.")
-        return args.escala
-    return scale_from_plot_scale(args.plotagem, args.unidade)
+        return escala
+    return scale_from_plot_scale(
+        ler_numero(args.plotagem, o_que="a escala de plotagem"), args.unidade)
 
 
 def _extrair(entrada: str, pagina: int):
@@ -131,6 +140,8 @@ def _extrair(entrada: str, pagina: int):
 def _converter(args: argparse.Namespace) -> int:
     try:
         escala = fator_de_escala(args)
+        opts = opcoes_de(args)
+        pagina = ler_inteiro(args.pagina, o_que="a página")
     except ValueError as e:
         print(f"erro: {e}", file=sys.stderr)
         return ERRO_DE_USO
@@ -142,13 +153,12 @@ def _converter(args: argparse.Namespace) -> int:
         return ERRO_DE_USO
 
     try:
-        resultado = _extrair(args.entrada, args.pagina)
+        resultado = _extrair(args.entrada, pagina)
     except Exception as e:
         print(f"erro: {e}", file=sys.stderr)
         return PROBLEMA_NO_ARQUIVO
 
     attrs = classify(resultado.entities)
-    opts = opcoes_de(args)
     saida.parent.mkdir(parents=True, exist_ok=True)
     contagem = export_dxf(resultado, str(saida), escala, args.unidade, opts,
                           attrs=attrs)
@@ -228,7 +238,14 @@ def _inspecionar(args: argparse.Namespace) -> int:
         return PROBLEMA_NO_ARQUIVO
 
     print(f"{caminho.name}: {n_paginas} página(s)")
-    paginas = [args.pagina] if args.pagina else list(range(1, n_paginas + 1))
+    if args.pagina is None:
+        paginas = list(range(1, n_paginas + 1))
+    else:
+        try:
+            paginas = [ler_inteiro(args.pagina, o_que="a página")]
+        except ValueError as e:
+            print(f"erro: {e}", file=sys.stderr)
+            return ERRO_DE_USO
 
     for pagina in paginas:
         if pagina < 1 or pagina > n_paginas:

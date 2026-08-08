@@ -160,8 +160,89 @@ def _converter(args: argparse.Namespace) -> int:
     return SUCESSO
 
 
+# As combinações que valem a pena mostrar: a de referência, cada uma das duas
+# que mais mudam o tamanho, e as três juntas. Mais do que isso vira parede de
+# números que ninguém lê.
+COMBINACOES: list[tuple[str, ExportOptions]] = [
+    ("sem opções", ExportOptions()),
+    ("dedup", ExportOptions(dedup=True)),
+    ("unir", ExportOptions(join_polylines=True)),
+    ("dedup + unir + arredondar",
+     ExportOptions(dedup=True, join_polylines=True, round_coords=True)),
+]
+
+
+def _mb(bytes_: int) -> str:
+    return f"{bytes_ / 1_000_000:.1f} MB"
+
+
+def _descrever_pagina(resultado, pagina: int) -> None:
+    """Imprime o retrato de uma página já extraída.
+
+    Recebe o resultado pronto, e não o caminho, de propósito: quem chama
+    envolve só a extração num `except ValueError`, e assim uma falha daqui de
+    dentro — de impressão, de cálculo, do que for — estoura de verdade em vez
+    de ser exibida como "esta página não tem desenho vetorial". Foi o que
+    aconteceu quando um `≈` não coube no console do Windows.
+    """
+    attrs = classify(resultado.entities)
+
+    # Só ASCII no que o console engole: o cp1252 do Windows não tem "≈" nem
+    # garante "×", e uma linha de retrato não vale um UnicodeEncodeError.
+    print(f"\npágina {pagina}: {len(resultado.entities)} entidades, "
+          f"folha de {resultado.page_width:.0f} x {resultado.page_height:.0f} pt")
+
+    contagem = resultado.counts()
+    for tipo in sorted(contagem):
+        print(f"  {tipo:<10} {contagem[tipo]:>9}")
+
+    por_layer: dict[str, int] = {}
+    for i in range(len(attrs)):
+        nome = attrs.layers[attrs.layer_id[i]]
+        por_layer[nome] = por_layer.get(nome, 0) + 1
+    print(f"  {len(por_layer)} layers:")
+    for nome in sorted(por_layer, key=lambda n: -por_layer[n]):
+        print(f"    {nome:<24} {por_layer[nome]:>9}")
+
+    print("  estimativa do DXF:")
+    for rotulo, opts in COMBINACOES:
+        mascara = select(attrs, opts)
+        sobrevivem = sum(1 for v in mascara if v)
+        tamanho = estimate_bytes(attrs, mascara, opts)
+        print(f"    {rotulo:<26} {sobrevivem:>9} entidades   ~ {_mb(tamanho)}")
+
+
 def _inspecionar(args: argparse.Namespace) -> int:
-    raise NotImplementedError("tarefa 2")
+    import fitz   # só aqui: inspecionar precisa contar as páginas do documento
+
+    caminho = Path(args.entrada)
+    if not caminho.is_file():
+        print(f"erro: não achei o arquivo: {args.entrada}", file=sys.stderr)
+        return PROBLEMA_NO_ARQUIVO
+
+    try:
+        with fitz.open(str(caminho)) as doc:
+            n_paginas = doc.page_count
+    except Exception as e:
+        print(f"erro: não consegui abrir como PDF: {e}", file=sys.stderr)
+        return PROBLEMA_NO_ARQUIVO
+
+    print(f"{caminho.name}: {n_paginas} página(s)")
+    paginas = [args.pagina] if args.pagina else list(range(1, n_paginas + 1))
+
+    for pagina in paginas:
+        if pagina < 1 or pagina > n_paginas:
+            print(f"erro: o documento tem {n_paginas} página(s)", file=sys.stderr)
+            return PROBLEMA_NO_ARQUIVO
+        try:
+            resultado = _extrair(str(caminho), pagina)
+        except ValueError as e:
+            # Página sem vetores não interrompe o retrato das outras.
+            print(f"\npágina {pagina}: {e}")
+            continue
+        _descrever_pagina(resultado, pagina)
+
+    return SUCESSO
 
 
 def main(argv: list[str] | None = None) -> int:

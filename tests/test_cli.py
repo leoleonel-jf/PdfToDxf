@@ -145,6 +145,72 @@ def test_excluir_layer_morde():
     print("OK: --excluir-layer some com o layer no arquivo gerado")
 
 
+def test_inspecionar_descreve_a_planta_sem_gravar():
+    """Imprime o retrato e não deixa arquivo para trás."""
+    import io
+    from contextlib import redirect_stdout
+
+    entrada = pdf_de_teste()
+    pasta = os.path.dirname(entrada)
+    antes = set(os.listdir(pasta))
+
+    saida = io.StringIO()
+    with redirect_stdout(saida):
+        codigo = cli.main(["inspecionar", entrada])
+    assert codigo == 0, codigo
+
+    texto = saida.getvalue()
+    assert "TEXTO" in texto, texto           # um layer do PDF de teste
+    assert "Segment" in texto, texto         # a contagem por tipo
+    assert "dedup" in texto, texto           # uma das combinações
+    assert set(os.listdir(pasta)) == antes, "inspecionar gravou alguma coisa"
+    print("OK: inspecionar descreve a planta e não grava nada")
+
+
+def test_inspecionar_pagina_inexistente():
+    entrada = pdf_de_teste()
+    assert cli.main(["inspecionar", entrada, "--pagina", "99"]) == 2
+    print("OK: inspecionar em página inexistente devolve 2")
+
+
+def test_cli_so_toca_a_superficie_publica_do_nucleo():
+    """A CLI é o terceiro consumidor do núcleo e enxerga só o que é público.
+
+    É esta amarra que faz dela um teste da fronteira, e não só uma
+    conveniência: se alguém precisar puxar um detalhe interno para a CLI
+    funcionar, isso é defeito do núcleo, e este teste força a conversa em vez
+    de deixar o atalho passar.
+
+    O `fitz` está na lista como exceção **conhecida e registrada**: contar as
+    páginas de um documento não tem função pública no núcleo, e hoje tanto a
+    CLI quanto `web/api/main.py` abrem o PyMuPDF na mão. Está na dívida do
+    handoff. Se aparecer uma segunda exceção, é sinal de que a fronteira está
+    vazando de verdade.
+    """
+    import ast
+    import pathlib
+
+    permitidos = {
+        ".calibration", ".dxf_writer", ".extractor", ".optimize",
+        "argparse", "sys", "pathlib", "__future__",
+        "fitz",   # exceção registrada: contar páginas não é público no núcleo
+    }
+
+    fonte = pathlib.Path(cli.__file__).read_text(encoding="utf-8")
+    usados = set()
+    for no in ast.walk(ast.parse(fonte)):
+        if isinstance(no, ast.Import):
+            usados.update(a.name.split(".")[0] for a in no.names)
+        elif isinstance(no, ast.ImportFrom):
+            usados.add("." * no.level + (no.module or ""))
+
+    intrusos = usados - permitidos
+    assert not intrusos, (
+        f"a CLI importa {intrusos}, fora da superfície pública do núcleo. "
+        "Se ela precisa disso, o núcleo é que está incompleto.")
+    print("OK: a CLI só toca a superfície pública do núcleo")
+
+
 if __name__ == "__main__":
     test_flags_cobrem_todos_os_campos_de_exportoptions()
     test_converte_e_gera_dxf_valido()
@@ -154,4 +220,7 @@ if __name__ == "__main__":
     test_escala_ausente_ou_duplicada_e_erro_de_uso()
     test_pagina_inexistente_e_problema_de_arquivo()
     test_excluir_layer_morde()
+    test_inspecionar_descreve_a_planta_sem_gravar()
+    test_inspecionar_pagina_inexistente()
+    test_cli_so_toca_a_superficie_publica_do_nucleo()
     print("Todos os testes da linha de comando passaram.")

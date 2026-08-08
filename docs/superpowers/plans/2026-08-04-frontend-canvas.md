@@ -3474,6 +3474,12 @@ git commit -m "Calibracao por dois pontos na tela, com a lupa fugindo do dedo"
 - Consome: a aplicação inteira
 - Produz: `npm run e2e`
 
+**Atenção antes de começar:** `*.pdf` está no `.gitignore` deste repositório, e
+com razão — plantas de cliente não vão para o GitHub. Então o PDF que o teste
+envia **não é versionado**: ele é gerado a cada execução, por um `globalSetup`
+do Playwright. Versioná-lo com `git add -f` funcionaria e seria errado: abriria
+exceção na regra que protege os arquivos dos seus clientes.
+
 - [ ] **Passo 1: gerar o PDF que o teste envia, `tests/gerar_pdf_de_teste.py`**
 
 ```python
@@ -3495,6 +3501,8 @@ if __name__ == "__main__":
     print(f"PDF de teste gravado em {DESTINO}")
 ```
 
+Confira que ele roda:
+
 ```bash
 ./.venv/Scripts/python.exe tests/gerar_pdf_de_teste.py
 ```
@@ -3514,6 +3522,11 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  // O PDF de teste é gerado a cada execução, não versionado: `*.pdf` está no
+  // .gitignore para que planta de cliente nunca vá ao GitHub, e abrir exceção
+  // com `git add -f` enfraqueceria justamente a regra que protege os arquivos
+  // do usuário.
+  globalSetup: "./e2e/preparar.ts",
   // Sem repetição automática: um teste que só passa na segunda tentativa está
   // escondendo um defeito. A etapa 2 já mostrou o preço disso.
   retries: 0,
@@ -3547,7 +3560,28 @@ só começa quando o endereço responde. Nada de `sleep`.
     "e2e": "playwright test",
 ```
 
-- [ ] **Passo 5: escrever o teste, `web/frontend/e2e/conversao.spec.ts`**
+- [ ] **Passo 5: o preparo, `web/frontend/e2e/preparar.ts`**
+
+```ts
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+/**
+ * Gera o PDF sintético antes da suíte.
+ *
+ * Ele não é versionado: `*.pdf` está no .gitignore para impedir que planta de
+ * cliente vá parar no GitHub, e forçar exceção para este arquivo enfraqueceria
+ * a regra inteira. Gerar custa milissegundos.
+ */
+export default function preparar(): void {
+  const raiz = fileURLToPath(new URL("../../..", import.meta.url));
+  execFileSync(".venv/Scripts/python.exe",
+               ["tests/gerar_pdf_de_teste.py"],
+               { cwd: raiz, stdio: "inherit" });
+}
+```
+
+- [ ] **Passo 6: escrever o teste, `web/frontend/e2e/conversao.spec.ts`**
 
 ```ts
 import { expect, test } from "@playwright/test";
@@ -3609,15 +3643,26 @@ test("o desenho aparece no canvas", async ({ page }) => {
 });
 ```
 
-- [ ] **Passo 6: rodar**
+- [ ] **Passo 7: rodar**
 
 ```bash
 cd web/frontend && npm run e2e
 ```
 
-Esperado: dois testes verdes.
+Esperado: dois testes verdes. O `globalSetup` gera o PDF antes de começar.
 
-- [ ] **Passo 7: rodar três vezes seguidas**
+- [ ] **Passo 8: apagar o PDF gerado e rodar de novo**
+
+```bash
+rm tests/fixtures/planta_de_teste.pdf
+cd web/frontend && npm run e2e
+```
+
+Tem de passar igual. É assim que se confirma que a suíte não depende de um
+arquivo que só existe na sua máquina — que era exatamente o defeito de
+versionar o PDF num repositório que ignora `*.pdf`.
+
+- [ ] **Passo 9: rodar três vezes seguidas**
 
 ```bash
 cd web/frontend && npm run e2e && npm run e2e && npm run e2e
@@ -3627,12 +3672,14 @@ As três têm de passar. Uma falha em três é teste intermitente, não azar —
 intermitência não entra no repositório. Se falhar, o conserto é substituir a
 espera por uma condição melhor, nunca aumentar o tempo limite.
 
-- [ ] **Passo 8: commit**
+- [ ] **Passo 10: commit**
+
+O PDF gerado **não** entra: `*.pdf` está no `.gitignore`, e é assim que fica.
 
 ```bash
 git add web/frontend/playwright.config.ts web/frontend/e2e/ \
         web/frontend/package.json web/frontend/package-lock.json \
-        tests/gerar_pdf_de_teste.py tests/fixtures/planta_de_teste.pdf
+        tests/gerar_pdf_de_teste.py
 git commit -m "Teste de ponta a ponta no Playwright, esperando por condicao"
 ```
 

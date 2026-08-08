@@ -58,10 +58,18 @@ Daí duas coisas que parecem óbvias e estão erradas:
 - **Concatenar esqueleto e detalhe.** A concatenação não é ordem original: é
   "longos, depois curtos". O sobrevivente eleito seria outro.
 
-**Portanto:** o worker intercala as duas partes de volta em ordem de índice
-antes de decidir qualquer coisa. As duas já chegam ordenadas — o `dividir()` da
-etapa 2 preserva a ordem original em cada lista —, então é uma intercalação de
-uma passada só. É para isto que a seção `idx` do formato binário existe.
+**Portanto:** as duas partes são intercaladas de volta em ordem de índice antes
+de qualquer decisão. As duas já chegam ordenadas — o `dividir()` da etapa 2
+preserva a ordem original em cada lista —, então é uma intercalação de uma
+passada só. É para isto que a seção `idx` do formato binário existe.
+
+**Quem intercala é a thread principal, não o worker.** O worker precisa dos
+atributos de decisão; o canvas precisa das coordenadas. Transferir o buffer ao
+worker deixaria a thread principal sem o que desenhar, e copiar tudo para os
+dois lados custaria dezenas de megabytes à toa. Então a intercalação é função
+pura no `formato.ts`, chamada uma vez pela thread principal, que fica com as
+coordenadas e manda ao worker uma cópia apenas dos seis arrays que o `select()`
+lê: `kind`, `layer_id`, `is_fill`, `length_um`, `dup_group` e `byte_cost`.
 
 **Consequência para a interface:** enquanto o detalhe não chegou, a prévia é
 provisória **no desenho**, não só na estimativa. Com dedup ligado, o esqueleto
@@ -104,19 +112,24 @@ Em `web/frontend/src/`:
 | Arquivo | Responsabilidade |
 |---|---|
 | `api.ts` | Cliente HTTP: envio, consulta de estado, `meta.json`, `geometry.bin`, exportação |
-| `formato.ts` | Leitor do binário: confere a magia, lê a tabela de seções, monta as `TypedArray` sobre o buffer sem copiar |
+| `formato.ts` | Leitor do binário: confere a magia, lê a tabela de seções, monta as `TypedArray` sobre o buffer sem copiar. Também a **intercalação** das duas partes em ordem de índice, como função pura |
 | `select.ts` | Espelho de `optimize.select()`, sobre arrays numéricos. Função pura |
 | `estimativa.ts` | Espelho de `optimize.estimate_bytes`. Função pura |
-| `worker.ts` | Guarda a geometria; ao chegar o detalhe, intercala e passa a manter **um conjunto único em ordem original**; chama `select` e `estimativa`; devolve máscara e bytes |
-| `canvas.ts` | `Path2D` agrupado por (layer, cor); pan e zoom por matriz; canvas pré-renderizado durante o gesto; mouse e toque |
+| `worker.ts` | Guarda os arrays **de decisão** já intercalados; chama `select` e `estimativa`; devolve máscara e bytes |
+| `canvas.ts` | `Path2D` agrupado por (layer, cor); a transformação papel↔tela; pintura |
+| `gestos.ts` | A aritmética de pan e zoom, como função pura sobre a transformação |
 | `calibrate.ts` | Calibração por dois pontos, com lupa no toque |
 | `toolbar.ts` | As duas faixas do cabeçalho |
 | `estados.ts` | Mensagens de espera e de erro |
 | `main.ts` | Composição da tela e o estado |
 | `estilo.css` | Variáveis de cor e os poucos componentes, escrito à mão |
 
-Dois arquivos a mais do que a lista da spec geral: `formato.ts`, para separar a
-leitura do binário de quem o consome, e `estimativa.ts`.
+Três arquivos a mais do que a lista da spec geral: `formato.ts`, para separar a
+leitura do binário de quem o consome; `estimativa.ts`; e `gestos.ts`, que tira a
+aritmética do gesto de dentro do renderizador. Essa última separação é o que
+permite **provar** que o zoom mantém parado o ponto sob o dedo — função pura se
+testa sem navegador, e o que sobra para a conferência manual é o tato, não a
+conta.
 
 O `select.ts` e o `estimativa.ts` são conferidos pelo **mesmo** teste de
 paridade, porque o contrato congela a máscara e o `bytes_esperado` lado a lado

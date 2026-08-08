@@ -3172,7 +3172,7 @@ Noutro:
 cd web/frontend && npm run dev
 ```
 
-Abra `http://localhost:5173`, envie `Input/LAY-1028.26.00_REV 02-31-07-2026.pdf`
+Abra `http://localhost:5173`, envie a planta que estiver em `Input/`
 e confira: a planta aparece; a roda dá zoom no ponto sob o cursor; arrastar move;
 duplo clique enquadra; ligar e desligar opções muda a estimativa e o desenho;
 desligar um layer some com ele; **Exportar DXF** baixa um arquivo que abre no CAD.

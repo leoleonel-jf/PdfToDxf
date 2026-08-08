@@ -1,6 +1,12 @@
 # Handoff — versão web do PdfToDxf
 
-Estado em 2026-08-03. Leia isto primeiro ao retomar em sessão nova.
+Estado em 2026-08-04. Leia isto primeiro ao retomar em sessão nova.
+
+> **Se o pedido foi só "continuar":** execute o plano da etapa 2.5,
+> `docs/superpowers/plans/2026-08-04-cli.md` — quatro tarefas, sessão curta.
+> Ele é o próximo trabalho que uma sessão consegue fazer sozinha. Os itens 1 a 4
+> da lista "O que falta" **dependem de você, humano**, e não são pré-requisito
+> para a 2.5: não fique bloqueado neles nem os execute por conta própria.
 
 ## O projeto em uma frase
 
@@ -117,7 +123,13 @@ importa: até a correção do commit `1687cef` ela era intermitente — uma pág
 ficava presa em `na_fila` e a espera estourava os 60 s. Se voltar a acontecer,
 o suspeito é a troca atômica da ficha, não lentidão: a extração leva 0,5 s.
 
-## O que falta — em ordem
+## O que falta
+
+Os quatro primeiros itens **dependem do humano** — conferir na tela, decidir,
+mesclar, ou trazer um revisor de fora. Os dois últimos são trabalho de sessão, e
+não esperam pelos primeiros.
+
+### Depende de você
 
 1. **Conferência manual do app desktop.** Só um humano pode fazer. A etapa 1
    mexeu em `pdftodxf/gui.py` e nenhum teste exercita a integração do painel de
@@ -146,6 +158,8 @@ o suspeito é a troca atômica da ficha, não lentidão: a extração leva 0,5 s
 
 4. **Mesclar as etapas 1 e 2** quando a conferência manual passar. `main` →
    `nucleo-classify-select` → `api-de-conversao`, nessa ordem.
+
+### Trabalho de sessão
 
 5. **Executar o plano da etapa 2.5**, `docs/superpowers/plans/2026-08-04-cli.md`
    — quatro tarefas, sessão curta. Ela entrega uma CLI (`python -m pdftodxf`)

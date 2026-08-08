@@ -15,14 +15,18 @@ Documentos que governam o trabalho:
 - **Desenho da etapa 3:** `docs/superpowers/specs/2026-08-04-frontend-canvas-design.md`
 - **Plano da etapa 1:** `docs/superpowers/plans/2026-08-01-nucleo-classify-select.md`
 - **Plano da etapa 2:** `docs/superpowers/plans/2026-08-03-api-de-conversao.md`
+- **Desenho da etapa 2.5:** `docs/superpowers/specs/2026-08-04-cli-design.md`
+- **Plano da etapa 2.5:** `docs/superpowers/plans/2026-08-04-cli.md`
 - **Plano da etapa 3:** `docs/superpowers/plans/2026-08-04-frontend-canvas.md`
 
 O projeto está dividido em 5 etapas: **1** núcleo, **2** API de conversão,
-**3** frontend, **4** contas/cotas/registros, **5** deploy. As etapas 1 e 2
-estão planejadas e implementadas. A etapa 3 tem **desenho e plano prontos**, e
-nenhuma linha de código escrita — executar o plano é o próximo passo. Os dois
-documentos foram escritos para bastar por si: não é preciso resgatar a conversa
-que os originou.
+**3** frontend, **4** contas/cotas/registros, **5** deploy, mais uma **2.5**
+curta que entrou depois: a linha de comando.
+
+As etapas 1 e 2 estão planejadas e implementadas. A **2.5** e a **3** têm
+desenho e plano prontos, e nenhuma linha de código escrita — a 2.5 vem primeiro,
+por decisão de 2026-08-04. Todos os documentos foram escritos para bastar por
+si: não é preciso resgatar a conversa que os originou.
 
 ## Onde o código está
 
@@ -143,14 +147,23 @@ o suspeito é a troca atômica da ficha, não lentidão: a extração leva 0,5 s
 4. **Mesclar as etapas 1 e 2** quando a conferência manual passar. `main` →
    `nucleo-classify-select` → `api-de-conversao`, nessa ordem.
 
-5. **Executar o plano da etapa 3**, `docs/superpowers/plans/2026-08-04-frontend-canvas.md`
+5. **Executar o plano da etapa 2.5**, `docs/superpowers/plans/2026-08-04-cli.md`
+   — quatro tarefas, sessão curta. Ela entrega uma CLI (`python -m pdftodxf`)
+   com `converter` e `inspecionar`, e existe por duas razões: permitir jogar
+   plantas reais contra o sistema sem tela — inclusive na VPS, antes de o
+   frontend existir — e ser o terceiro consumidor do núcleo, que só enxerga a
+   superfície pública e por isso testa se a fronteira é real ou só discurso.
+   O `inspecionar` de uma planta sua diz se os tetos da etapa 2 (3 milhões de
+   entidades, 6 GB no worker) servem para o seu acervo.
+
+6. **Executar o plano da etapa 3**, `docs/superpowers/plans/2026-08-04-frontend-canvas.md`
    — 15 tarefas. Comece pela tarefa 1, que **não é código**: é uma medição no
    navegador do custo do `select()` e da reconstrução dos `Path2D` em 3 milhões
    de entidades. A escolha pelo Web Worker é hipótese fundamentada, não número
    medido, e o plano diz em que resultado parar e reabrir a arquitetura antes de
    seguir. Não pule essa tarefa: as tarefas 5 e 6 dependem do que ela decidir.
 
-6. **Planejar as etapas 4 e 5.**
+7. **Planejar as etapas 4 e 5.**
 
 O que as revisões e a execução da etapa 2 pegaram, para não se perder: o PDF
 original era apagado assim que a fila esvaziava, o que tornava impossível

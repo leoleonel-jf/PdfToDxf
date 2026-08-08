@@ -5,7 +5,7 @@ Estado em 2026-08-08. Leia isto primeiro ao retomar em sessão nova.
 > **Se o pedido foi só "continuar":** execute o plano da etapa 3,
 > `docs/superpowers/plans/2026-08-04-frontend-canvas.md` — 15 tarefas, e a
 > primeira **não é código**: é a medição no navegador que decide a arquitetura.
-> Ele é o próximo trabalho que uma sessão consegue fazer sozinha. Os itens 1 a 4
+> Ele é o próximo trabalho que uma sessão consegue fazer sozinha. Os itens 1 a 5
 > da lista "O que falta" **dependem de você, humano**, e não são pré-requisito
 > para a etapa 3: não fique bloqueado neles nem os execute por conta própria.
 
@@ -40,17 +40,25 @@ escritos para bastar por si: não é preciso resgatar a conversa que os originou
 
 ## Onde o código está
 
+**Tudo está na `main` desde 2026-08-08.** As etapas 1, 2 e 2.5 e a validação de
+entradas foram mescladas em cascata, e a bateria dos treze arquivos de teste foi
+conferida no resultado. Os branches de etapa foram **preservados**, a pedido do
+usuário, para o caso de a revisão pendente da etapa 2 exigir olhar um ponto da
+história isolado:
+
 | Branch | Conteúdo | Situação |
 |---|---|---|
-| `main` | até o plano da etapa 1 | base |
-| `nucleo-classify-select` | etapa 1 inteira + plano da etapa 2 | **pronta, não mesclada** |
-| `api-de-conversao` | etapa 2 inteira | **pronta, não mesclada** |
-| `linha-de-comando` | etapa 2.5 inteira | **pronta, não mesclada** |
+| `main` | tudo | **em dia** |
+| `nucleo-classify-select` | etapa 1 | mesclada, branch guardado |
+| `api-de-conversao` | etapa 2 | mesclada, branch guardado |
+| `linha-de-comando` | etapa 2.5 (PR #1) | mesclada, branch guardado |
+| `entradas-tolerantes` | validação de entradas (PR #2) | mesclada, branch guardado |
 
-`linha-de-comando` sai de `api-de-conversao`, que sai de `nucleo-classify-select`,
-que sai de `main`. Nada foi mesclado ainda. A 2.5 saiu da 2, e não do núcleo,
-porque a definição de pronto dela exige a bateria inteira passando — e os testes
-da API só existem no branch da etapa 2.
+> **Atenção, e foi decisão consciente:** a mesclagem aconteceu **sem** a revisão
+> independente das tarefas 4 a 7 da etapa 2, que continua pendente (item 2 de "O
+> que falta"). O código do formato binário está na `main` sem ter passado por um
+> olhar de fora. Isso não some por estar mesclado — a etapa 3 vai escrever o
+> leitor TypeScript em cima daquele formato, e é lá que um erro custa caro.
 
 ## O que está pronto
 
@@ -150,7 +158,12 @@ Rodados em 2026-08-08, todos passando com saída limpa:
 ./.venv/Scripts/python.exe tests/test_api_export.py
 ./.venv/Scripts/python.exe tests/test_storage.py
 ./.venv/Scripts/python.exe tests/test_cli.py
+./.venv/Scripts/python.exe tests/test_numeros.py
+./.venv/Scripts/python.exe tests/test_entradas_gui.py
 ```
+
+Os treze foram rodados de novo **sobre a `main` já mesclada**, e passam. Mesclar
+sem conferir o resultado não prova nada: cada branch passava sozinho.
 
 A bateria inteira foi rodada três vezes seguidas, sem falha nenhuma. Isso
 importa: até a correção do commit `1687cef` ela era intermitente — uma página
@@ -185,9 +198,9 @@ acima são o que sobrou dela, e são o que interessa.
 
 ## O que falta
 
-Os seis primeiros itens **dependem do humano** — conferir na tela, decidir,
-mesclar, ou trazer um revisor de fora. Os dois últimos são trabalho de sessão, e
-não esperam pelos primeiros.
+Os cinco primeiros itens **dependem do humano** — conferir na tela, decidir, ou
+trazer um revisor de fora. Os dois últimos são trabalho de sessão, e não esperam
+pelos primeiros.
 
 ### Depende de você
 
@@ -221,25 +234,21 @@ não esperam pelos primeiros.
    está gerado, em `output/teste.dxf` — planta `LAY-1031.26.00_REV 00`,
    plotagem 1:50, unidade metro, 18.860 entidades.
 
-5. **Mesclar as etapas 1, 2 e 2.5** quando a conferência manual passar.
-   `main` → `nucleo-classify-select` → `api-de-conversao` →
-   `linha-de-comando`, nessa ordem.
-
-6. **Decidir o que fazer com o teto de 3 milhões de entidades**, agora que se
+5. **Decidir o que fazer com o teto de 3 milhões de entidades**, agora que se
    sabe que uma planta comum do acervo chega a 2,33 milhões (ver a seção acima).
 
 ### Trabalho de sessão
 
-7. **Executar o plano da etapa 3**, `docs/superpowers/plans/2026-08-04-frontend-canvas.md`
+6. **Executar o plano da etapa 3**, `docs/superpowers/plans/2026-08-04-frontend-canvas.md`
    — 15 tarefas. Comece pela tarefa 1, que **não é código**: é uma medição no
    navegador do custo do `select()` e da reconstrução dos `Path2D` em 3 milhões
    de entidades. A escolha pelo Web Worker é hipótese fundamentada, não número
    medido, e o plano diz em que resultado parar e reabrir a arquitetura antes de
    seguir. Não pule essa tarefa: as tarefas 5 e 6 dependem do que ela decidir.
 
-8. **Planejar as etapas 4 e 5.**
+7. **Planejar as etapas 4 e 5.**
 
-9. **Auto-escala e ferramentas de medição**, nessa ordem, **depois da etapa 3** —
+8. **Auto-escala e ferramentas de medição**, nessa ordem, **depois da etapa 3** —
    decisão de 2026-08-08. Os achados e as decisões já tomadas estão em
    `docs/superpowers/specs/2026-08-08-auto-escala-e-medicao-achados.md`. Comece
    por ele: a ideia original era deduzir a escala medindo uma cota, e a sondagem

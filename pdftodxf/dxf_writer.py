@@ -135,12 +135,3 @@ def export_dxf(result: ExtractionResult, output_path: str, scale: float,
     decimals = 4 if opts.round_coords else None
     return write_dxf(result, output_path, scale=scale, unit=unit,
                      entities=entities, round_decimals=decimals)
-
-
-def convert(pdf_path: str, output_path: str, scale: float, unit: str = "m",
-            page_number: int = 0) -> dict[str, int]:
-    """Conveniência: extrai a página e grava o DXF em um passo."""
-    from .extractor import extract_page
-
-    result = extract_page(pdf_path, page_number=page_number)
-    return write_dxf(result, output_path, scale=scale, unit=unit)

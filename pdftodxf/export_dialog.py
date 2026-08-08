@@ -6,11 +6,12 @@ from __future__ import annotations
 import math
 import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 from PIL import Image, ImageDraw, ImageTk
 
 from .geometry import Arc, Bezier, Polyline, Segment, TextItem, bezier_point
+from .numeros import ler_numero
 from .optimize import ExportOptions, classify, estimate_bytes, select
 
 PREVIEW_DEBOUNCE_MS = 350
@@ -140,7 +141,7 @@ class ExportDialog(tk.Toplevel):
         bf.pack(fill=tk.X, pady=(12, 0))
         self.btn_export = ttk.Button(bf, text="Exportar…", command=self._export)
         self.btn_export.pack(side=tk.RIGHT, padx=2)
-        ttk.Button(bf, text="Fechar", command=self._close).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(bf, text="Cancelar", command=self._close).pack(side=tk.RIGHT, padx=2)
 
     def _set_all_layers(self, value: bool):
         for var in self.layer_vars.values():
@@ -148,9 +149,28 @@ class ExportDialog(tk.Toplevel):
         self._on_change()
 
     # ------------------------------------------------------------- opções
+    def erro_no_minimo(self) -> str | None:
+        """A queixa sobre o campo "menores que", ou None se ele estiver bom.
+
+        Só é consultada na hora de exportar, por escolha de desenho: o campo
+        recalcula a estimativa a cada tecla, e um alerta por tecla digitada
+        seria insuportável. Enquanto o texto não presta, a estimativa mostra o
+        desenho sem esse filtro — e o Exportar é que segura.
+        """
+        if not self.var_micro.get():
+            return None
+        try:
+            valor = ler_numero(self.var_micro_mm.get(),
+                               o_que="o tamanho mínimo do segmento")
+        except ValueError as e:
+            return str(e)
+        if valor < 0:
+            return "O tamanho mínimo do segmento não pode ser negativo."
+        return None
+
     def current_options(self) -> ExportOptions:
         try:
-            micro = float(self.var_micro_mm.get().replace(",", "."))
+            micro = ler_numero(self.var_micro_mm.get())
         except ValueError:
             micro = 0.0
         return ExportOptions(
@@ -198,9 +218,18 @@ class ExportDialog(tk.Toplevel):
 
     # ------------------------------------------------------------- ações
     def _export(self):
+        queixa = self.erro_no_minimo()
+        if queixa:
+            messagebox.showerror("Valor inválido", queixa, parent=self)
+            return
         self.on_export(self.current_options())
 
     def _close(self):
+        if self._debounce_job:
+            # Sem isto, o recálculo agendado dispara sobre a janela já
+            # destruída e o Tk reclama no console de um comando que sumiu.
+            self.after_cancel(self._debounce_job)
+            self._debounce_job = None
         self._render_token += 1
         self.app.set_preview(None)
         self.destroy()

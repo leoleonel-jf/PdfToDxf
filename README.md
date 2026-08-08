@@ -8,6 +8,12 @@ Converte plantas em **PDF vetorial** (plotadas/exportadas do AutoCAD) de volta p
 
 ## Como usar
 
+Dois cliques em **`PdfToDxf.bat`**, na pasta do projeto. Arrastar um PDF sobre
+ele abre o programa já com a planta carregada. Para ter na área de trabalho,
+clique com o botão direito no `.bat` → *Enviar para* → *Área de trabalho*.
+
+Pela linha de comando dá no mesmo:
+
 ```powershell
 python main.py
 ```
@@ -23,6 +29,29 @@ python main.py
    já em escala 1:1 na unidade escolhida (m, cm ou mm), com `$INSUNITS` correto.
 
 Também dá para abrir direto: `python main.py planta.pdf`
+
+## Linha de comando
+
+Sem janela e sem servidor, usando o mesmo núcleo:
+
+```powershell
+# o que tem dentro da planta, sem gravar nada
+./.venv/Scripts/python.exe -m pdftodxf inspecionar planta.pdf
+
+# converter, com escala de plotagem 1:50 em metros
+./.venv/Scripts/python.exe -m pdftodxf converter planta.pdf --plotagem 50 --unidade m
+
+# ou com o fator direto, escolhendo as opções de compactação
+./.venv/Scripts/python.exe -m pdftodxf converter planta.pdf --escala 0.01 `
+    --dedup --unir --excluir-layer TEXTO -o saida.dxf
+```
+
+`inspecionar` mostra páginas, contagem por tipo, layers e a estimativa de
+tamanho do DXF para as combinações de opções que mais mudam o resultado — é o
+jeito rápido de decidir quais flags usar antes de converter.
+
+Sem `-o`, o DXF é gravado ao lado do original. Um arquivo existente só é
+sobrescrito com `--forcar`.
 
 ## Painel de exportação (compactação)
 

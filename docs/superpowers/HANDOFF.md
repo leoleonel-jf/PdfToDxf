@@ -1,12 +1,13 @@
 # Handoff — versão web do PdfToDxf
 
-Estado em 2026-08-04. Leia isto primeiro ao retomar em sessão nova.
+Estado em 2026-08-08. Leia isto primeiro ao retomar em sessão nova.
 
-> **Se o pedido foi só "continuar":** execute o plano da etapa 2.5,
-> `docs/superpowers/plans/2026-08-04-cli.md` — quatro tarefas, sessão curta.
+> **Se o pedido foi só "continuar":** execute o plano da etapa 3,
+> `docs/superpowers/plans/2026-08-04-frontend-canvas.md` — 15 tarefas, e a
+> primeira **não é código**: é a medição no navegador que decide a arquitetura.
 > Ele é o próximo trabalho que uma sessão consegue fazer sozinha. Os itens 1 a 4
 > da lista "O que falta" **dependem de você, humano**, e não são pré-requisito
-> para a 2.5: não fique bloqueado neles nem os execute por conta própria.
+> para a etapa 3: não fique bloqueado neles nem os execute por conta própria.
 
 ## O projeto em uma frase
 
@@ -24,15 +25,18 @@ Documentos que governam o trabalho:
 - **Desenho da etapa 2.5:** `docs/superpowers/specs/2026-08-04-cli-design.md`
 - **Plano da etapa 2.5:** `docs/superpowers/plans/2026-08-04-cli.md`
 - **Plano da etapa 3:** `docs/superpowers/plans/2026-08-04-frontend-canvas.md`
+- **Achados sobre auto-escala e medição:**
+  `docs/superpowers/specs/2026-08-08-auto-escala-e-medicao-achados.md` — duas
+  features futuras, decididas para **depois** da etapa 3. Não é spec; é o que se
+  descobriu sondando uma planta real, e derruba premissas que parecem óbvias.
 
 O projeto está dividido em 5 etapas: **1** núcleo, **2** API de conversão,
 **3** frontend, **4** contas/cotas/registros, **5** deploy, mais uma **2.5**
 curta que entrou depois: a linha de comando.
 
-As etapas 1 e 2 estão planejadas e implementadas. A **2.5** e a **3** têm
-desenho e plano prontos, e nenhuma linha de código escrita — a 2.5 vem primeiro,
-por decisão de 2026-08-04. Todos os documentos foram escritos para bastar por
-si: não é preciso resgatar a conversa que os originou.
+As etapas 1, 2 e 2.5 estão planejadas e implementadas. A **3** tem desenho e
+plano prontos e nenhuma linha de código escrita. Todos os documentos foram
+escritos para bastar por si: não é preciso resgatar a conversa que os originou.
 
 ## Onde o código está
 
@@ -41,9 +45,12 @@ si: não é preciso resgatar a conversa que os originou.
 | `main` | até o plano da etapa 1 | base |
 | `nucleo-classify-select` | etapa 1 inteira + plano da etapa 2 | **pronta, não mesclada** |
 | `api-de-conversao` | etapa 2 inteira | **pronta, não mesclada** |
+| `linha-de-comando` | etapa 2.5 inteira | **pronta, não mesclada** |
 
-`api-de-conversao` sai de `nucleo-classify-select`, que sai de `main`. Nada foi
-mesclado ainda.
+`linha-de-comando` sai de `api-de-conversao`, que sai de `nucleo-classify-select`,
+que sai de `main`. Nada foi mesclado ainda. A 2.5 saiu da 2, e não do núcleo,
+porque a definição de pronto dela exige a bateria inteira passando — e os testes
+da API só existem no branch da etapa 2.
 
 ## O que está pronto
 
@@ -101,9 +108,35 @@ detalhe de gosto: `kind` e `is_fill` são uint8 e ocupam `n` bytes, então sem o
 enchimento o `Uint32Array` da etapa 3 levantaria `RangeError` em qualquer página
 cuja contagem fuja da tabuada do 4. A regra está no plano, junto da tabela.
 
+### Etapa 2.5 — linha de comando (branch `linha-de-comando`)
+
+Quatro tarefas, todas implementadas. `python -m pdftodxf` com dois comandos:
+`converter` (grava o DXF) e `inspecionar` (descreve a planta sem gravar nada).
+Arquivos novos: `pdftodxf/cli.py`, `pdftodxf/__main__.py`, `tests/test_cli.py`.
+
+O que a etapa amarrou, além da conveniência:
+
+- **As flags de compactação são exatamente os campos de `ExportOptions`**, e um
+  teste falha se alguém acrescentar um campo sem a flag. A CLI é o terceiro
+  lugar que nomeia as mesmas opções; sem essa amarra a divergência entraria em
+  silêncio.
+- **`dxf_writer.convert()` não existe mais.** Era a única função que gravava DXF
+  sem passar por `classify`/`select`, ninguém a chamava, e um teste impede a
+  volta dela.
+- **A CLI só importa a superfície pública do núcleo**, verificado por um teste
+  que lê o próprio `cli.py` com `ast`. A única exceção é o `fitz` para contar
+  páginas — registrada na dívida abaixo, não escondida.
+
+Dois defeitos apareceram ao rodar contra planta real, e foram corrigidos: o `≈`
+da tabela de estimativa não cabe no cp1252 do console do Windows, e o
+`except ValueError` que protegia páginas sem vetores engolia o
+`UnicodeEncodeError` — que é subclasse de `ValueError` — e o exibia como "esta
+página não tem desenho vetorial", com código de saída 0. Hoje só a extração fica
+dentro do `try`, e o retrato roda fora dele.
+
 ## O que está verificado
 
-Rodados em 2026-08-03, todos passando com saída limpa:
+Rodados em 2026-08-08, todos passando com saída limpa:
 
 ```
 ./.venv/Scripts/python.exe tests/test_optimize.py
@@ -116,6 +149,7 @@ Rodados em 2026-08-03, todos passando com saída limpa:
 ./.venv/Scripts/python.exe tests/test_api_geometria.py
 ./.venv/Scripts/python.exe tests/test_api_export.py
 ./.venv/Scripts/python.exe tests/test_storage.py
+./.venv/Scripts/python.exe tests/test_cli.py
 ```
 
 A bateria inteira foi rodada três vezes seguidas, sem falha nenhuma. Isso
@@ -123,9 +157,35 @@ importa: até a correção do commit `1687cef` ela era intermitente — uma pág
 ficava presa em `na_fila` e a espera estourava os 60 s. Se voltar a acontecer,
 o suspeito é a troca atômica da ficha, não lentidão: a extração leva 0,5 s.
 
+## O que a planta real disse sobre os tetos
+
+Medido em 2026-08-08 com `inspecionar`, que é para isso que ele existe.
+
+A planta grande (`LAY-1028.26.00_REV 02`, 13,8 MB de PDF, A3) tem **2.332.566
+entidades** numa página só — **78% do teto de 3 milhões da etapa 2**. Não é
+folga: é uma planta comum do acervo, não um caso extremo inventado. Antes do
+deploy, ou o teto sobe, ou a mensagem de recusa precisa ser honesta sobre o que
+significa.
+
+| Combinação | Entidades | DXF estimado |
+|---|---|---|
+| sem opções | 2.332.566 | ~496 MB |
+| dedup | 933.715 | ~202 MB |
+| unir | 2.332.566 | ~219 MB |
+| dedup + unir + arredondar | 933.715 | ~80 MB |
+
+Dois números que importam para a etapa 3: **60% das entidades são duplicatas**
+(2,33 M caem para 934 mil com `dedup`), e a estimativa acertou o tamanho real
+com 2% de erro — o DXF sem opções saiu com 508 MB contra os 496 MB previstos.
+
+A planta pequena (`LAY-1031.26.00_REV 00`, 750 KB, a que está em `Input/` hoje)
+tem 18.860 entidades e converte em segundos; é a que serve para as passagens
+manuais. A grande foi apagada a pedido do usuário depois da medição — os números
+acima são o que sobrou dela, e são o que interessa.
+
 ## O que falta
 
-Os quatro primeiros itens **dependem do humano** — conferir na tela, decidir,
+Os seis primeiros itens **dependem do humano** — conferir na tela, decidir,
 mesclar, ou trazer um revisor de fora. Os dois últimos são trabalho de sessão, e
 não esperam pelos primeiros.
 
@@ -136,7 +196,7 @@ não esperam pelos primeiros.
    exportação com o canvas.
 
    ```
-   ./.venv/Scripts/python.exe main.py "Input/LAY-1028.26.00_REV 02-31-07-2026.pdf"
+   ./.venv/Scripts/python.exe main.py "Input/LAY-1031.26.00_REV 00.pdf"
    ```
 
    Conferir: a planta aparece; **Calibrar (2 pontos)** mostra a escala na barra;
@@ -156,28 +216,35 @@ não esperam pelos primeiros.
 3. **Decidir sobre a exportação no processo do site** (ver dívida abaixo). É
    decisão de projeto, não conserto — muda o contrato da rota.
 
-4. **Mesclar as etapas 1 e 2** quando a conferência manual passar. `main` →
-   `nucleo-classify-select` → `api-de-conversao`, nessa ordem.
+4. **Abrir no CAD um DXF gerado pela CLI** e conferir as medidas. É o único
+   passo da etapa 2.5 que uma sessão não consegue fazer sozinha. O arquivo já
+   está gerado, em `output/teste.dxf` — planta `LAY-1031.26.00_REV 00`,
+   plotagem 1:50, unidade metro, 18.860 entidades.
+
+5. **Mesclar as etapas 1, 2 e 2.5** quando a conferência manual passar.
+   `main` → `nucleo-classify-select` → `api-de-conversao` →
+   `linha-de-comando`, nessa ordem.
+
+6. **Decidir o que fazer com o teto de 3 milhões de entidades**, agora que se
+   sabe que uma planta comum do acervo chega a 2,33 milhões (ver a seção acima).
 
 ### Trabalho de sessão
 
-5. **Executar o plano da etapa 2.5**, `docs/superpowers/plans/2026-08-04-cli.md`
-   — quatro tarefas, sessão curta. Ela entrega uma CLI (`python -m pdftodxf`)
-   com `converter` e `inspecionar`, e existe por duas razões: permitir jogar
-   plantas reais contra o sistema sem tela — inclusive na VPS, antes de o
-   frontend existir — e ser o terceiro consumidor do núcleo, que só enxerga a
-   superfície pública e por isso testa se a fronteira é real ou só discurso.
-   O `inspecionar` de uma planta sua diz se os tetos da etapa 2 (3 milhões de
-   entidades, 6 GB no worker) servem para o seu acervo.
-
-6. **Executar o plano da etapa 3**, `docs/superpowers/plans/2026-08-04-frontend-canvas.md`
+7. **Executar o plano da etapa 3**, `docs/superpowers/plans/2026-08-04-frontend-canvas.md`
    — 15 tarefas. Comece pela tarefa 1, que **não é código**: é uma medição no
    navegador do custo do `select()` e da reconstrução dos `Path2D` em 3 milhões
    de entidades. A escolha pelo Web Worker é hipótese fundamentada, não número
    medido, e o plano diz em que resultado parar e reabrir a arquitetura antes de
    seguir. Não pule essa tarefa: as tarefas 5 e 6 dependem do que ela decidir.
 
-7. **Planejar as etapas 4 e 5.**
+8. **Planejar as etapas 4 e 5.**
+
+9. **Auto-escala e ferramentas de medição**, nessa ordem, **depois da etapa 3** —
+   decisão de 2026-08-08. Os achados e as decisões já tomadas estão em
+   `docs/superpowers/specs/2026-08-08-auto-escala-e-medicao-achados.md`. Comece
+   por ele: a ideia original era deduzir a escala medindo uma cota, e a sondagem
+   mostrou que nas plantas deste acervo a escala está escrita no carimbo e as
+   cotas viraram desenho, sem texto para ler.
 
 O que as revisões e a execução da etapa 2 pegaram, para não se perder: o PDF
 original era apagado assim que a fila esvaziava, o que tornava impossível
@@ -207,6 +274,17 @@ pontos, porque quem especificou errado foi o plano. Detalhe em
 ## Dívida conhecida
 
 Nada disso bloqueia; está registrado para não se perder.
+
+- **Contar páginas de um PDF não tem função pública no núcleo.** A CLI
+  (`_inspecionar`) e `web/api/main.py` abrem o `fitz` na mão para isso, cada uma
+  do seu jeito. Um `extractor.contar_paginas(caminho)` acabaria com a
+  duplicação. Achado da etapa 2.5, quando a CLI virou o terceiro consumidor do
+  núcleo e foi a única coisa que ela precisou de fora da superfície pública.
+- **A saída da CLI supõe um console que aceita UTF-8, e o do Windows não
+  aceita.** As linhas de retrato foram passadas para ASCII depois de o `≈`
+  quebrar em cp1252, mas nada impede a próxima mensagem de reintroduzir o
+  problema — não há teste que rode a CLI com um stdout de codificação estreita.
+  Nomes de layer com acento vêm do PDF e continuam saindo por esse mesmo caminho.
 
 - **O contrato congela o `select()`, não o `classify()`.** As tabelas do JSON são
   dado congelado, então mudar o `classify()` não quebra teste nenhum — muda

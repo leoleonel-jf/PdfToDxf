@@ -18,6 +18,7 @@ from .calibration import scale_from_plot_scale, scale_from_two_points
 from .dxf_writer import export_dxf as run_export
 from .export_dialog import ExportDialog, PreviewRenderer
 from .extractor import extract_page
+from .numeros import ler_numero
 
 ZOOM_STEP = 1.2
 ZOOM_MIN = 0.05
@@ -161,7 +162,13 @@ class App(tk.Tk):
     def _on_page_change(self) -> None:
         if not self.doc:
             return
-        idx = self.page_var.get() - 1
+        try:
+            # O Spinbox é editável: digitar letra ali faz o IntVar levantar
+            # TclError, que não é ValueError e passava direto pelo tratamento.
+            idx = self.page_var.get() - 1
+        except tk.TclError:
+            self.set_status("Página inválida — digite o número da folha.")
+            return
         if 0 <= idx < len(self.doc) and idx != self.page_index:
             self.page_index = idx
             self.cal_points.clear()
@@ -383,14 +390,14 @@ class App(tk.Tk):
                      width=5, state="readonly").grid(row=1, column=1, sticky="w")
 
         def ok(_ev=None):
-            raw = val_var.get().strip().replace(",", ".")
             try:
-                dist = float(raw)
+                dist = ler_numero(val_var.get(), o_que="a medida real")
                 scale = scale_from_two_points(self.cal_points[0],
                                               self.cal_points[1], dist)
             except ValueError as e:
-                messagebox.showerror("Valor inválido", str(e) if str(e) else
-                                     f"Não entendi a medida: {raw!r}", parent=dlg)
+                messagebox.showerror("Valor inválido", str(e), parent=dlg)
+                ent.focus_set()
+                ent.select_range(0, tk.END)
                 return
             self.scale = scale
             self.unit = unit_var.get()
@@ -438,10 +445,12 @@ class App(tk.Tk):
 
         def ok(_ev=None):
             try:
-                ratio = float(n_var.get().strip().replace(",", "."))
+                ratio = ler_numero(n_var.get(), o_que="a escala de plotagem")
                 scale = scale_from_plot_scale(ratio, unit_var.get())
             except ValueError as e:
                 messagebox.showerror("Valor inválido", str(e), parent=dlg)
+                ent.focus_set()
+                ent.select_range(0, tk.END)
                 return
             self.scale = scale
             self.unit = unit_var.get()

@@ -191,7 +191,7 @@ def test_cli_so_toca_a_superficie_publica_do_nucleo():
     import pathlib
 
     permitidos = {
-        ".calibration", ".dxf_writer", ".extractor", ".optimize",
+        ".calibration", ".dxf_writer", ".extractor", ".numeros", ".optimize",
         "argparse", "sys", "pathlib", "__future__",
         "fitz",   # exceção registrada: contar páginas não é público no núcleo
     }
@@ -209,6 +209,37 @@ def test_cli_so_toca_a_superficie_publica_do_nucleo():
         f"a CLI importa {intrusos}, fora da superfície pública do núcleo. "
         "Se ela precisa disso, o núcleo é que está incompleto.")
     print("OK: a CLI só toca a superfície pública do núcleo")
+
+
+def test_aceita_virgula_decimal_na_linha_de_comando():
+    """`--escala 0,01` tem de funcionar: quem digita aqui é o mesmo usuário.
+
+    O `type=float` do argparse recusa vírgula, e a mensagem que ele dá —
+    "invalid float value" — não ajuda ninguém.
+    """
+    entrada = pdf_de_teste()
+    pasta = tempfile.mkdtemp()
+    com_virgula = os.path.join(pasta, "virgula.dxf")
+    com_ponto = os.path.join(pasta, "ponto.dxf")
+
+    assert cli.main(["converter", entrada, "--escala", "0,01",
+                     "-o", com_virgula]) == 0
+    assert cli.main(["converter", entrada, "--escala", "0.01",
+                     "-o", com_ponto]) == 0
+    assert cli.main(["converter", entrada, "--plotagem", "1:50".split(":")[1],
+                     "--min-mm", "0,10", "-o", com_ponto, "--forcar"]) == 0
+    print("OK: a linha de comando aceita vírgula decimal")
+
+
+def test_recusa_escala_que_nao_e_numero():
+    """`--escala nan` chegava até o DXF: o float() aceita, e nan <= 0 é falso."""
+    entrada = pdf_de_teste()
+    saida = os.path.join(tempfile.mkdtemp(), "nao-deve-existir.dxf")
+    for ruim in ("nan", "inf", "abc", "0"):
+        assert cli.main(["converter", entrada, "--escala", ruim,
+                         "-o", saida]) != 0, ruim
+        assert not os.path.exists(saida), f"gravou DXF com --escala {ruim}"
+    print("OK: escala que não é número não gera arquivo")
 
 
 def test_nao_existe_caminho_que_pule_o_julgamento():
@@ -236,5 +267,7 @@ if __name__ == "__main__":
     test_inspecionar_descreve_a_planta_sem_gravar()
     test_inspecionar_pagina_inexistente()
     test_cli_so_toca_a_superficie_publica_do_nucleo()
+    test_aceita_virgula_decimal_na_linha_de_comando()
+    test_recusa_escala_que_nao_e_numero()
     test_nao_existe_caminho_que_pule_o_julgamento()
     print("Todos os testes da linha de comando passaram.")

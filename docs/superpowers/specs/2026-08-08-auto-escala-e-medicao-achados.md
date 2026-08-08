@@ -21,7 +21,7 @@ custaram sondagem e derrubam premissas que parecem óbvias.
 
 | Decisão | Escolha |
 |---|---|
-| Fonte da escala | Carimbo **e** cota, comparando os dois |
+| Fonte da escala | Carimbo **e** cota, comparando os dois — com a cota como estratégia principal, porque a maioria das plantas não tem carimbo |
 | Cota sem texto legível | Ler o texto quando houver; medir a geometria e perguntar o valor quando não |
 | Onde o código mora | **Núcleo**, como função pura; cada interface só desenha o resultado |
 | Ordem | **Etapa 3 primeiro.** Estas duas vêm depois |
@@ -43,8 +43,25 @@ deslocado de +4,7 pt em X e −12,4 pt em Y. É o **único** texto da folha que 
 com o padrão `1:N`. O carimbo também traz `ÁREA: 29,56m²`, `PÉ DIREITO: 2,41m` e
 `FOR. FOLHA: A2`.
 
-Ler o carimbo é, disparado, o caminho mais barato e mais confiável para esta
-família de plantas.
+Ler o carimbo é o caminho mais barato e confiável **para esta família de
+plantas**. Veja a ressalva logo abaixo antes de tratá-lo como estratégia
+principal — ele não é.
+
+### A maioria do acervo não tem carimbo padronizado
+
+Informado pelo usuário em 2026-08-08, e é a informação que mais muda o desenho:
+**a maior parte das plantas e desenhos técnicos que ele recebe não segue esse
+padrão de folha com identificação e escala declarada.** A `LAY-1031` é da
+família padronizada da casa; ela é a exceção, não a regra.
+
+Consequência direta: a leitura do carimbo é a estratégia **secundária**, um
+atalho ótimo quando existe. A detecção por cota é a **principal**, porque é a
+única que funciona em desenho sem carimbo. Isso inverte a recomendação que se
+faria olhando só a planta de exemplo — e é o tipo de erro de amostra que uma
+sondagem em um arquivo só produz com facilidade.
+
+Segunda consequência: em acervo heterogêneo, heurística rígida quebra mais. É o
+cenário em que um modelo de linguagem tem mais valor — ver a seção sobre IA.
 
 ### A folha é A2 exata, e isso é um teste de sanidade de graça
 
@@ -101,6 +118,71 @@ Uma circunferência vira **quatro arcos de 90°**. Cada `Arc` carrega `center` e
 `radius`, então medir raio e diâmetro funciona clicando em qualquer pedaço — mas
 afirmar "isto é um círculo inteiro" exige juntar os quatro arcos concêntricos.
 Vale para o *snap* de centro e de quadrante também.
+
+### Um indício de que o carimbo pode mentir por pouco
+
+Há um segmento horizontal de 504,5 pt que, com o `1:40` do carimbo, daria
+**7,119 m** — enquanto o print da cota mostra **7.06**. Se esse segmento for
+mesmo aquela cota, a escala real do papel é ~1:39,7, e o carimbo está 0,8%
+otimista: 5,6 cm de erro em 7 metros.
+
+**Não está confirmado** que aquele segmento é a cota do print. Trate como
+indício, não como fato. Mas é exatamente o tipo de desvio que só a comparação
+entre carimbo e cota revela, e é um argumento concreto a favor de fazer as duas
+leituras e compará-las, como foi decidido.
+
+## Como ler um número que virou desenho
+
+Três caminhos, do mais adequado ao menos:
+
+1. **Casamento de forma vetorial.** Os glifos são desenhados pelo AutoCAD sempre
+   iguais, apenas escalados. Agrupar os traços em caixas do tamanho de um
+   dígito, normalizar e comparar com moldes. Determinístico, sem dependência
+   nova, e mais preciso que OCR — porque trabalha sobre a forma exata em vez de
+   sobre pixels. Dá trabalho, e é o caminho tecnicamente correto.
+2. **OCR sobre recorte rasterizado.** Rasteriza o que já se tem em vetor para
+   depois adivinhar o que era: perde informação de propósito. Vale como voto
+   adicional independente, não como fonte única.
+3. **Modelo de linguagem multimodal.** Ver a seção seguinte.
+
+Os números da cota **não** estão em imagem: a página tem 53 imagens
+rasterizadas, quase todas de 13 × 42 pt, cobrindo 1,3% da folha — são símbolos,
+não o desenho. O que existe é geometria.
+
+## Sobre usar IA neste projeto
+
+Ideia do usuário, discutida em 2026-08-08. Vale, com limites que precisam estar
+escritos.
+
+**Onde ajuda de verdade:** desenho heterogêneo, que é a maior parte do acervo.
+Carimbo de layout imprevisto, layer com nome bagunçado, texto livre. Situações em
+que a heurística rígida quebra e em que errar custa pouco porque revisar é fácil.
+
+**Onde não serve:** como fonte da medida. Escala é medida de engenharia, e
+modelo de linguagem não é determinístico — a mesma planta pode dar respostas
+diferentes. Ler 7.05 onde estava 7.06 não dispara alarme nenhum, e é a definição
+do pior resultado possível: errar em silêncio. Como **voto adicional** ao lado
+do carimbo e da geometria, ótimo. Como decisor, não.
+
+**A restrição que derruba a premissa de custo zero:** assinaturas como ChatGPT
+Plus/Pro (Codex CLI) e Claude Max dão acesso pessoal e interativo às
+ferramentas. Usá-las como motor de um aplicativo — ainda mais um serviço web
+público em VPS, servindo terceiros — está fora do que essas assinaturas
+permitem, nos dois casos, e arrisca a suspensão da conta pessoal. O caminho
+legítimo é API com chave própria, paga por uso. Para este caso o custo é baixo:
+manda-se um recorte de cota, não a planta inteira.
+
+**Guarda de segredo** — a proposta original era senha em `.md` dentro de
+`secrets/`. Três correções:
+
+- Nada de segredo em arquivo dentro do projeto: um `git add -A` distraído
+  publica a chave. O `.gitignore` de hoje **não** cobre `secrets/`.
+- A senha do painel vai guardada como **hash**, nunca em claro.
+- A chave da API vive em variável de ambiente na VPS, fora do repositório e
+  fora do backup do projeto.
+
+O fluxo guiado para obter e colar a chave, com link para a página de origem e
+campo de colagem, é bom desenho de interface e não tem objeção.
 
 ## O que ainda não se sabe
 

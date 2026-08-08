@@ -25,6 +25,10 @@ Documentos que governam o trabalho:
 - **Desenho da etapa 2.5:** `docs/superpowers/specs/2026-08-04-cli-design.md`
 - **Plano da etapa 2.5:** `docs/superpowers/plans/2026-08-04-cli.md`
 - **Plano da etapa 3:** `docs/superpowers/plans/2026-08-04-frontend-canvas.md`
+- **Achados sobre auto-escala e medição:**
+  `docs/superpowers/specs/2026-08-08-auto-escala-e-medicao-achados.md` — duas
+  features futuras, decididas para **depois** da etapa 3. Não é spec; é o que se
+  descobriu sondando uma planta real, e derruba premissas que parecem óbvias.
 
 O projeto está dividido em 5 etapas: **1** núcleo, **2** API de conversão,
 **3** frontend, **4** contas/cotas/registros, **5** deploy, mais uma **2.5**
@@ -234,6 +238,13 @@ não esperam pelos primeiros.
    seguir. Não pule essa tarefa: as tarefas 5 e 6 dependem do que ela decidir.
 
 8. **Planejar as etapas 4 e 5.**
+
+9. **Auto-escala e ferramentas de medição**, nessa ordem, **depois da etapa 3** —
+   decisão de 2026-08-08. Os achados e as decisões já tomadas estão em
+   `docs/superpowers/specs/2026-08-08-auto-escala-e-medicao-achados.md`. Comece
+   por ele: a ideia original era deduzir a escala medindo uma cota, e a sondagem
+   mostrou que nas plantas deste acervo a escala está escrita no carimbo e as
+   cotas viraram desenho, sem texto para ler.
 
 O que as revisões e a execução da etapa 2 pegaram, para não se perder: o PDF
 original era apagado assim que a fila esvaziava, o que tornava impossível

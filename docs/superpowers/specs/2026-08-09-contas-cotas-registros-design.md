@@ -473,6 +473,12 @@ Registros primeiro, porque não dependem de conta nem de cota e fecham sozinhos:
 | 11 | Tela: canto da conta, caixas de entrar e cadastrar, cota restante |
 | 12 | Tela: as cinco linhas de erro, `privacidade.html`, `impressao.ts` |
 
+> **As tarefas 11 e 12 dependem da etapa 3.5**, decidida em 2026-08-09 e
+> descrita em `2026-08-09-interface-redesenho-design.md`. Elas encaixam no canto
+> direito da barra superior nova, e não no cabeçalho de duas faixas da etapa 3 —
+> construir sobre o cabeçalho velho seria refazer o trabalho na semana seguinte.
+> As dez primeiras tarefas são de Python e não dependem dela.
+
 ## Fora de escopo
 
 - Entrada pelo Google (etapa 5, com o domínio)

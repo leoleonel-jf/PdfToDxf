@@ -20,9 +20,12 @@ describe("calibrate.ts espelha calibration.py", () => {
   });
 
   it("escala de plotagem 1:50 em metros", () => {
-    // 1 pt = 25.4/72 mm de papel = 0.352777… mm; ×50 = 17.638… mm reais
-    expect(escalaPorEscalaDePlotagem(50, "m")).toBeCloseTo(0.0176388888, 10);
-    expect(escalaPorEscalaDePlotagem(50, "mm")).toBeCloseTo(17.6388888888, 8);
+    // 1 pt = 25.4/72 mm de papel = 0.352777… mm; ×50 = 17.638… mm reais.
+    // O esperado precisa de dígitos suficientes para a precisão pedida: com
+    // `0.0176388888` e 10 casas o teste falha por 8,9e-11, e o culpado é o
+    // literal truncado, não a conta.
+    expect(escalaPorEscalaDePlotagem(50, "m")).toBeCloseTo(0.0176388888888889, 10);
+    expect(escalaPorEscalaDePlotagem(50, "mm")).toBeCloseTo(17.6388888888889, 8);
   });
 
   it("recusa razão não positiva", () => {

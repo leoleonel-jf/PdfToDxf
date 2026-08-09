@@ -2,14 +2,20 @@
 
 Estado em 2026-08-09. Leia isto primeiro ao retomar em sessão nova.
 
-> **Se o pedido foi só "continuar":** a etapa 3 está em andamento no branch
-> `frontend-canvas`, com as tarefas 1 a 5 prontas — e **parada de propósito**
-> antes da tarefa 6. A medição da tarefa 1 derrubou a arquitetura de duas
-> threads que o plano supunha, e a decisão do que colocar no lugar é do usuário.
-> Comece por `web/frontend/medicao/RESULTADO.md`, que tem os números e o que
-> reabrir; depois a seção "Etapa 3" abaixo. Os itens 1 a 5 da lista "O que
-> falta" **dependem de você, humano**, e não são pré-requisito: não fique
-> bloqueado neles nem os execute por conta própria.
+> **Se o pedido foi só "continuar":** a etapa 3 está no branch
+> `frontend-canvas`, com as tarefas 1 a 5 prontas. O desenho do canvas foi
+> **refeito** depois de três medições e está aprovado seção por seção, escrito
+> e commitado em
+> `docs/superpowers/specs/2026-08-09-canvas-redesenho-design.md`.
+>
+> **O próximo passo é o usuário revisar esse spec escrito.** Depois dele, e só
+> depois, escrever o plano das tarefas restantes pela skill
+> `superpowers:writing-plans`. Leia o spec novo e o
+> `web/frontend/medicao/RESULTADO.md` antes de propor qualquer coisa — os
+> números são o que sustenta o desenho, e três hipóteses razoáveis já morreram
+> neles. Os itens 1 a 5 da lista "O que falta" **dependem de você, humano**, e
+> não são pré-requisito: não fique bloqueado neles nem os execute por conta
+> própria.
 
 ## O projeto em uma frase
 
@@ -147,9 +153,15 @@ dentro do `try`, e o retrato roda fora dele.
 
 ### Etapa 3 — frontend (branch `frontend-canvas`, em andamento)
 
-Cinco das quinze tarefas, em 2026-08-09. **A execução parou na tarefa 6 porque
-a medição da tarefa 1 derrubou a arquitetura do plano** — não é bloqueio
-técnico, é decisão de projeto pendente.
+Cinco das quinze tarefas, em 2026-08-09. A execução parou na tarefa 6 porque a
+medição derrubou a arquitetura do plano; o desenho foi refeito e **as tarefas 6
+a 15 do plano antigo estão canceladas**, à espera de um plano novo.
+
+**Leia `docs/superpowers/specs/2026-08-09-canvas-redesenho-design.md`** — ele
+substitui a seção de arquitetura do desenho de 2026-08-04 e é o que governa
+daqui para a frente. Em uma frase: nada proporcional ao número de entidades
+pode acontecer a cada quadro; a lista de desenho é preparada uma vez, com teto
+por região de papel escolhendo os mais longos, e pan e zoom só re-traçam.
 
 | Tarefa | O que faz | Situação |
 |---|---|---|
@@ -160,7 +172,7 @@ técnico, é decisão de projeto pendente.
 | 5 | `intercalar()` e o achado do dedup | pronta |
 | 6 a 15 | worker, canvas, calibração, tela | **paradas** |
 
-**O que a medição disse, e por que ela manda parar** — detalhe em
+**As três medições, e o que cada uma derrubou** — detalhe em
 `web/frontend/medicao/RESULTADO.md`:
 
 - O `select()` sobre 3 milhões de entidades custa **~12 ms**. Cabe folgado num
@@ -170,6 +182,13 @@ técnico, é decisão de projeto pendente.
   arquitetura de duas threads move para fora os 12 ms e deixa dentro os 800 ms.
   O worker das tarefas 5 e 6 do plano protege a interface de uma pausa que não
   acontece.
+- **Traçar** 3 milhões custa de 750 a 1290 ms **por quadro**, e pan e zoom não
+  reconstroem nada — o custo dominante é por quadro, não por clique. Nem 500
+  mil dão folga: 173 a 341 ms.
+- Traçar 57 mil de uma **lista pronta** custa **15 ms**; selecionar esses mesmos
+  57 mil varrendo 3 milhões a cada quadro custa 500. Vinte vezes, com o mesmo
+  desenho na tela. É esta medida que governa o desenho novo — e ela derrubou
+  também a grade espacial, que chegou a ser construída e medida.
 
 Duas correções na própria medição, ambas registradas no RESULTADO, porque sem
 elas a conclusão sairia invertida: recarregar a página **não** aquece o JIT
@@ -294,18 +313,15 @@ pelos primeiros.
 
 ### Trabalho de sessão
 
-6. **Redesenhar as tarefas 6 a 15 da etapa 3** — é o trabalho imediato, e é
-   também decisão de projeto, então provavelmente começa por uma conversa. O
-   plano `docs/superpowers/plans/2026-08-04-frontend-canvas.md` continua válido
-   nas tarefas 1 a 5, que já estão feitas; da 6 em diante ele supõe um Web
-   Worker que a medição mostrou não resolver o problema real.
+6. **Escrever o plano das tarefas restantes da etapa 3**, pela skill
+   `superpowers:writing-plans`, sobre o desenho novo
+   (`docs/superpowers/specs/2026-08-09-canvas-redesenho-design.md`). **Antes
+   disso o usuário precisa revisar o spec escrito** — foi onde a sessão de
+   2026-08-09 parou.
 
-   O problema real é **não reconstruir todos os caminhos a cada mudança de
-   opção**. Direções que a medição sugere, sem escolher entre elas: manter os
-   `Path2D` montados uma vez e variar só o que é desenhado; recortar por região
-   visível; desenhar em fatias ao longo de vários quadros; ou desistir do
-   `Path2D` agrupado e traçar direto no contexto 2D. Se ainda assim houver
-   worker, ele deve carregar outra coisa que não o `select()`.
+   O plano antigo `docs/superpowers/plans/2026-08-04-frontend-canvas.md`
+   continua valendo nas tarefas 1 a 5, que estão feitas. Da 6 em diante está
+   cancelado: supõe um Web Worker que não resolve o problema real.
 
 7. **Planejar as etapas 4 e 5.**
 

@@ -243,3 +243,17 @@ def baixar(job_id: str, ch: str) -> FileResponse:
             return FileResponse(caminho, media_type="application/dxf",
                                 filename=nome)
     raise HTTPException(status_code=404, detail="Arquivo não encontrado.")
+
+
+from fastapi.staticfiles import StaticFiles
+
+PASTA_ESTATICOS = Path(__file__).resolve().parents[1] / "frontend" / "dist"
+
+# A montagem vem por último de propósito: o FastAPI resolve as rotas na ordem
+# em que foram declaradas, e um `/` montado antes engoliria `/api/...`.
+#
+# O `if` existe porque quem mexe só no Python não compila o frontend, e o
+# serviço tem de subir do mesmo jeito — inclusive nos testes de API.
+if PASTA_ESTATICOS.is_dir():
+    app.mount("/", StaticFiles(directory=PASTA_ESTATICOS, html=True),
+              name="frontend")

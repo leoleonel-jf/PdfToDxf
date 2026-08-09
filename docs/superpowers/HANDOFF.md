@@ -3,17 +3,16 @@
 Estado em 2026-08-09. Leia isto primeiro ao retomar em sessão nova.
 
 > **Se o pedido foi só "continuar":** a etapa 3 está no branch
-> `frontend-canvas`, com as tarefas 1 a 5 prontas. O desenho do canvas foi
-> **refeito** depois de três medições e está aprovado seção por seção, escrito
-> e commitado em
-> `docs/superpowers/specs/2026-08-09-canvas-redesenho-design.md`.
+> `frontend-canvas` e **funciona de ponta a ponta no navegador**. O desenho do
+> canvas foi **refeito** depois de três medições e está aprovado seção por
+> seção, em `docs/superpowers/specs/2026-08-09-canvas-redesenho-design.md`.
 >
-> O spec foi aprovado e o plano
-> `docs/superpowers/plans/2026-08-09-canvas-redesenhado.md` está **em execução:
-> 5 das 12 tarefas prontas** (`ordem.ts`, `canvas.ts`, `lista.ts`, `pintor.ts`,
-> `api.ts`), 2086 testes verdes. **O próximo passo é a tarefa 5 do plano** — o
-> `gestos.ts`, que é a tarefa 10 do plano de 2026-08-04 mais uma emenda. Leia o
-> spec novo e o
+> O plano `docs/superpowers/plans/2026-08-09-canvas-redesenhado.md` está
+> **executado até o fim, com um passo pendente**: a etapa 3 funciona de ponta a
+> ponta no navegador — 2110 testes de unidade, 2 de ponta a ponta rodados três
+> vezes seguidas, e os 15 arquivos de teste Python passando. **Falta construir a
+> imagem Docker**, porque o `docker` não está instalado nesta máquina; tudo o
+> mais da tarefa 12 está feito e conferido. Leia o spec novo e o
 > `web/frontend/medicao/RESULTADO.md` antes de propor qualquer coisa — os
 > números são o que sustenta o desenho, e três hipóteses razoáveis já morreram
 > neles. Os itens 1 a 5 da lista "O que falta" **dependem de você, humano**, e
@@ -45,9 +44,13 @@ O projeto está dividido em 5 etapas: **1** núcleo, **2** API de conversão,
 **3** frontend, **4** contas/cotas/registros, **5** deploy, mais uma **2.5**
 curta que entrou depois: a linha de comando.
 
-As etapas 1, 2 e 2.5 estão planejadas e implementadas. A **3** tem desenho e
-plano prontos e nenhuma linha de código escrita. Todos os documentos foram
-escritos para bastar por si: não é preciso resgatar a conversa que os originou.
+As etapas 1, 2, 2.5 e **3** estão planejadas e implementadas — a 3 com um passo
+pendente, a imagem Docker. Todos os documentos foram escritos para bastar por
+si: não é preciso resgatar a conversa que os originou.
+
+> A etapa 3 é governada por **dois** documentos, e o segundo manda: o desenho de
+> 2026-08-04 e o **redesenho de 2026-08-09**, que substituiu a arquitetura
+> depois de a medição derrubá-la. O mesmo vale para os planos.
 
 ## Onde o código está
 
@@ -60,7 +63,7 @@ história isolado:
 | Branch | Conteúdo | Situação |
 |---|---|---|
 | `main` | tudo, até a etapa 2.5 | **em dia** |
-| `frontend-canvas` | etapa 3, tarefas 1 a 5 | **em andamento**, não mesclado |
+| `frontend-canvas` | etapa 3 inteira | **pronta**, não mesclada, falta o Docker |
 | `nucleo-classify-select` | etapa 1 | mesclada, branch guardado |
 | `api-de-conversao` | etapa 2 | mesclada, branch guardado |
 | `linha-de-comando` | etapa 2.5 (PR #1) | mesclada, branch guardado |
@@ -169,8 +172,30 @@ dele estão prontas**, com 2086 testes verdes:
 | `pintor.ts` | o laço de quadro: orçamento e quando preparar de novo |
 | `api.ts` | cliente HTTP com recuo crescente e aborto por página |
 
-Falta a interface: `gestos.ts`, `calibrate.ts`, `estados.ts`, `estilo.css`,
-`toolbar.ts`, `main.ts`, a calibração na tela, o Playwright e o Docker.
+A interface também está pronta: `gestos.ts`, `calibrate.ts`, `estados.ts`,
+`estilo.css`, `toolbar.ts`, `main.ts`, a calibração com lupa, o Playwright de
+ponta a ponta e os estáticos servidos pelo FastAPI. **Só a imagem Docker não foi
+construída** — falta o `docker` na máquina.
+
+**Três defeitos que só apareceram com planta real na tela**, e que nenhum teste
+de unidade pegaria:
+
+1. **O eixo Y estava sem inverter.** O extractor entrega Y para cima, padrão de
+   CAD; o canvas tem Y para baixo. A prévia saía de cabeça para baixo, com todo
+   texto invertido. A inversão entrou na `Vista` — é o mesmo que a prévia do
+   desktop faz com `(H - p[1])`.
+2. **`Path2D.arc()` liga o ponto atual ao início do arco com uma reta.** Como os
+   caminhos são agrupados por (layer, cor), cada arco ficava amarrado ao fim da
+   entidade anterior: a planta aparecia coberta de linhas atravessando, que
+   mudavam a cada zoom. Hoje o arco é tesselado em segmentos, com o mesmo
+   `sweep = (fim - início) % 360 or 360` do desktop.
+3. **`display: grid` atropela o atributo `hidden`.** O painel de aviso ficava
+   sempre visível e, tendo fundo escuro semitransparente, cobria a planta
+   inteira. Consertado com `[hidden] { display: none !important; }`.
+
+O terceiro foi pego pelo Playwright; os dois primeiros, pelo olho do usuário —
+e é por isso que a conferência com planta real continua valendo mais do que
+qualquer suíte.
 
 **As constantes do desenho foram medidas e mudadas:** região de 8 px, teto 2,
 folga 0,25 — o spec fixava 4 e 4 a partir de um protótipo, e medido com a
@@ -249,6 +274,7 @@ Rodados em 2026-08-08, todos passando com saída limpa:
 ./.venv/Scripts/python.exe tests/test_numeros.py
 ./.venv/Scripts/python.exe tests/test_entradas_gui.py
 ./.venv/Scripts/python.exe tests/test_fixture_geometria.py
+./.venv/Scripts/python.exe tests/test_api_estaticos.py
 ```
 
 Os treze primeiros foram rodados de novo **sobre a `main` já mesclada**, e
@@ -256,12 +282,18 @@ passam. Mesclar sem conferir o resultado não prova nada: cada branch passava
 sozinho. O décimo quarto é da etapa 3 e roda no branch `frontend-canvas`, onde
 os quatorze passam juntos (2026-08-09).
 
-Do lado TypeScript, no mesmo branch, **2058 testes verdes**:
+Do lado TypeScript, no mesmo branch, **2110 testes de unidade e 2 de ponta a
+ponta**, os últimos rodados três vezes seguidas sem falha:
 
 ```
 cd web/frontend && npm test
 cd web/frontend && npm run build
+cd web/frontend && npm run e2e
 ```
+
+**Para abrir a tela à mão, use `http://localhost:5173`, não `127.0.0.1`:** o
+Vite escuta em `localhost` (IPv6) por padrão e recusa a conexão no IPv4. Foi o
+que fez a tela "dar erro" numa conferência.
 
 A bateria inteira foi rodada três vezes seguidas, sem falha nenhuma. Isso
 importa: até a correção do commit `1687cef` ela era intermitente — uma página
@@ -337,15 +369,17 @@ pelos primeiros.
 
 ### Trabalho de sessão
 
-6. **Terminar `docs/superpowers/plans/2026-08-09-canvas-redesenhado.md`** — 5
-   das 12 tarefas prontas; a próxima é a 5, `gestos.ts`. É o trabalho imediato.
+6. **Construir a imagem Docker** — `deploy/Dockerfile` está escrito e o
+   `.dockerignore` também, mas nada foi construído porque o `docker` não existe
+   nesta máquina. É o único item da etapa 3 que sobrou:
 
-   Para não tropeçar: o plano é **um delta** sobre o de 2026-08-04, que continua
-   no repositório como fonte do código das tarefas que não mudaram — a tabela no
-   topo dele diz qual tarefa vem de onde, e **a ordem de execução não é a ordem
-   dos números**.
+   ```
+   docker build -f deploy/Dockerfile -t pdftodxf .
+   docker run --rm -p 8000:8000 pdftodxf
+   ```
 
 7. **Planejar as etapas 4 e 5.**
+
 
 8. **Auto-escala e ferramentas de medição**, nessa ordem, **depois da etapa 3** —
    decisão de 2026-08-08. Os achados e as decisões já tomadas estão em
@@ -399,6 +433,15 @@ Nada disso bloqueia; está registrado para não se perder.
   silenciosamente o que o servidor manda, e prévia e DXF continuam concordando
   entre si, mas com o comportamento anterior. O controle hoje é de processo
   (regerar e conferir o diff), não de teste.
+- **A caixa da calibração é um `window.prompt`.** Feio de propósito: trocá-lo
+  por uma caixa própria é acabamento, e prendê-lo na tarefa teria deixado a
+  revisão grande demais.
+- **O plano de 2026-08-04 tinha quatro testes errados**, todos corrigidos nele e
+  no código ao executar: o literal truncado da escala de plotagem, as asserções
+  do `estados.ts` procurando palavras no campo errado, `1.500.000` bytes dando
+  "1,4 MB" em vez de 1,5, e a configuração do Playwright esperando `/docs` numa
+  API que sobe com `docs_url=None`. Nenhum era de implementação — todos de
+  expectativa escrita à mão sem rodar.
 - **O `npm audit` do frontend acusa 5 vulnerabilidades, todas a mesma raiz.** É
   o aviso do `esbuild` que permite a qualquer site fazer pedido ao servidor de
   desenvolvimento do Vite e ler a resposta. Só afeta `npm run dev`, que escuta

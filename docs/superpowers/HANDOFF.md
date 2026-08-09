@@ -2,22 +2,35 @@
 
 Estado em 2026-08-09. Leia isto primeiro ao retomar em sessão nova.
 
-> **Se o pedido foi só "continuar":** a etapa 3 está no branch
-> `frontend-canvas` e **funciona de ponta a ponta no navegador**. O desenho do
-> canvas foi **refeito** depois de três medições e está aprovado seção por
-> seção, em `docs/superpowers/specs/2026-08-09-canvas-redesenho-design.md`.
+> ## Se o pedido foi só "continuar", faça isto
 >
-> O plano `docs/superpowers/plans/2026-08-09-canvas-redesenhado.md` está
-> **executado até o fim, com um passo pendente**: a etapa 3 funciona de ponta a
-> ponta no navegador — 2110 testes de unidade, 2 de ponta a ponta rodados três
-> vezes seguidas, e os 15 arquivos de teste Python passando. **Falta construir a
-> imagem Docker**, porque o `docker` não está instalado nesta máquina; tudo o
-> mais da tarefa 12 está feito e conferido. Leia o spec novo e o
-> `web/frontend/medicao/RESULTADO.md` antes de propor qualquer coisa — os
-> números são o que sustenta o desenho, e três hipóteses razoáveis já morreram
-> neles. Os itens 1 a 5 da lista "O que falta" **dependem de você, humano**, e
-> não são pré-requisito: não fique bloqueado neles nem os execute por conta
-> própria.
+> **Planeje a etapa 4 — contas, cotas e registros.** Comece pela skill
+> `superpowers:brainstorming`, que vira spec e depois plano. É o trabalho
+> combinado para a próxima sessão; a decisão foi tomada em 2026-08-09 e a razão
+> está no item 8 de "O que falta". **Não peça confirmação para começar** — só
+> pergunte o que o brainstorming precisar saber sobre a etapa 4 em si.
+>
+> Antes de propor qualquer coisa, leia: a **spec geral**
+> (`docs/superpowers/specs/2026-08-01-pdftodxf-web-design.md`), que é quem
+> descreve o escopo da etapa 4, e a seção "O que falta" abaixo.
+>
+> **Três coisas que não são para você fazer nem esperar:**
+>
+> - O **PR #3** (`https://github.com/leoleonel-jf/PdfToDxf/pull/3`) está aberto
+>   com a etapa 3 inteira, esperando a revisão do usuário. **Não mescle por
+>   conta própria** e não fique bloqueado nele — a etapa 4 é planejamento, e
+>   planejar não depende da mescla.
+> - A **imagem Docker** não foi construída porque o `docker` não existe nesta
+>   máquina. Se o usuário instalar, é um comando; até lá, não tente.
+> - Os itens 1 a 7 de "O que falta" **dependem do humano**. Não os execute por
+>   conta própria.
+>
+> A etapa 3 está pronta e conferida: 2110 testes de unidade, 2 de ponta a ponta
+> rodados três vezes, 15 arquivos de teste Python, e uma planta real desenhando
+> certo na tela. O desenho do canvas foi **refeito no meio da etapa**, depois de
+> três medições derrubarem três arquiteturas — se for mexer no canvas, leia
+> `web/frontend/medicao/RESULTADO.md` antes, porque lá está o que já foi tentado
+> e por que não funcionou.
 
 ## O projeto em uma frase
 
@@ -35,6 +48,12 @@ Documentos que governam o trabalho:
 - **Desenho da etapa 2.5:** `docs/superpowers/specs/2026-08-04-cli-design.md`
 - **Plano da etapa 2.5:** `docs/superpowers/plans/2026-08-04-cli.md`
 - **Plano da etapa 3:** `docs/superpowers/plans/2026-08-04-frontend-canvas.md`
+- **Redesenho do canvas (2026-08-09), que substitui a arquitetura do desenho da
+  etapa 3:** `docs/superpowers/specs/2026-08-09-canvas-redesenho-design.md`
+- **Plano do redesenho:** `docs/superpowers/plans/2026-08-09-canvas-redesenhado.md`
+  — é um *delta* sobre o plano de 2026-08-04, e a tabela no topo dele diz qual
+  tarefa vem de qual documento
+- **Medições que governam o canvas:** `web/frontend/medicao/RESULTADO.md`
 - **Achados sobre auto-escala e medição:**
   `docs/superpowers/specs/2026-08-08-auto-escala-e-medicao-achados.md` — duas
   features futuras, decididas para **depois** da etapa 3. Não é spec; é o que se
@@ -328,9 +347,9 @@ acima são o que sobrou dela, e são o que interessa.
 
 ## O que falta
 
-Os cinco primeiros itens **dependem do humano** — conferir na tela, decidir, ou
-trazer um revisor de fora. Os dois últimos são trabalho de sessão, e não esperam
-pelos primeiros.
+Os itens 1 a 7 **dependem do humano** — conferir na tela, decidir, trazer um
+revisor de fora, ou instalar o que falta na máquina. Os itens 8 a 10 são
+trabalho de sessão, e **não esperam pelos primeiros**.
 
 ### Depende de você
 
@@ -367,26 +386,47 @@ pelos primeiros.
 5. **Decidir o que fazer com o teto de 3 milhões de entidades**, agora que se
    sabe que uma planta comum do acervo chega a 2,33 milhões (ver a seção acima).
 
-### Trabalho de sessão
+6. **Revisar e mesclar o PR #3**, que leva a etapa 3 inteira:
+   `https://github.com/leoleonel-jf/PdfToDxf/pull/3` — 62 arquivos, 32 commits.
+   O corpo dele conta a história das três medições e lista o que ficou
+   pendente. A mescla é sua; nenhum trabalho de sessão depende dela.
 
-6. **Construir a imagem Docker** — `deploy/Dockerfile` está escrito e o
-   `.dockerignore` também, mas nada foi construído porque o `docker` não existe
-   nesta máquina. É o único item da etapa 3 que sobrou:
+7. **Construir a imagem Docker**, quando houver `docker` na máquina. É o único
+   item da etapa 3 que sobrou:
 
    ```
    docker build -f deploy/Dockerfile -t pdftodxf .
    docker run --rm -p 8000:8000 pdftodxf
    ```
 
-7. **Planejar as etapas 4 e 5.**
+### Trabalho de sessão
+
+8. **Planejar a etapa 4 — contas, cotas e registros.** É o próximo trabalho, e
+   é o que "continuar" significa.
+
+   **Por que a etapa 4 antes da auto-escala**, decidido em 2026-08-09: as
+   etapas 4 e 5 são o que leva o projeto ao objetivo declarado — versão web
+   pública numa VPS. A auto-escala é melhoria de um conversor que já funciona,
+   e os próprios achados de 2026-08-08 mostram que ela provavelmente precisa de
+   OCR ou IA para ler o carimbo, o que é trabalho maior e mais incerto. Melhor
+   depois de o produto estar no ar.
+
+   O escopo da etapa 4 está na spec geral,
+   `docs/superpowers/specs/2026-08-01-pdftodxf-web-design.md`. O desenho da
+   etapa 3 deixou explicitamente de fora, para cá: o canto da conta na faixa 1,
+   o indicador de cota restante, as cinco linhas de erro sobre cota esgotada, e
+   a `privacidade.html` que o rodapé já referencia e que ainda não existe.
+
+9. **Planejar a etapa 5 — deploy.** Depois da 4.
 
 
-8. **Auto-escala e ferramentas de medição**, nessa ordem, **depois da etapa 3** —
-   decisão de 2026-08-08. Os achados e as decisões já tomadas estão em
-   `docs/superpowers/specs/2026-08-08-auto-escala-e-medicao-achados.md`. Comece
-   por ele: a ideia original era deduzir a escala medindo uma cota, e a sondagem
-   mostrou que nas plantas deste acervo a escala está escrita no carimbo e as
-   cotas viraram desenho, sem texto para ler.
+10. **Auto-escala e ferramentas de medição**, nessa ordem. A decisão de
+    2026-08-08 dizia "depois da etapa 3"; em 2026-08-09 ficou **depois também
+    das etapas 4 e 5**, pela razão do item 8. Os achados estão em
+    `docs/superpowers/specs/2026-08-08-auto-escala-e-medicao-achados.md`.
+    Comece por ele: a ideia original era deduzir a escala medindo uma cota, e a
+    sondagem mostrou que nas plantas deste acervo a escala está escrita no
+    carimbo e as cotas viraram desenho, sem texto para ler.
 
 O que as revisões e a execução da etapa 2 pegaram, para não se perder: o PDF
 original era apagado assim que a fila esvaziava, o que tornava impossível

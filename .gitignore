@@ -18,6 +18,10 @@ venv/
 *.egg-info/
 .pytest_cache/
 
+# Node / frontend
+node_modules/
+web/frontend/dist/
+
 # Editores / SO
 .vscode/
 .idea/

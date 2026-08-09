@@ -21,6 +21,10 @@ import {
   PAUSA_DO_GESTO_MS,
 } from "./gestos.js";
 import { avisoDaSituacao, avisoDoErro, type Aviso } from "./estados.js";
+import {
+  escalaPorDoisPontos, iniciarCalibragem, marcarPonto, posicaoDaLupa,
+  type Calibragem,
+} from "./calibrate.js";
 import { ordenarPorComprimento } from "./ordem.js";
 import { criarPintor, passo, type Cena } from "./pintor.js";
 import { selecionar } from "./select.js";
@@ -63,6 +67,15 @@ let ordem: Uint32Array = new Uint32Array(0);
 let vista: Vista = { escala: 1, dx: 0, dy: 0 };
 let geracao = 0;
 let controle = new AbortController();
+let calibragem: Calibragem | null = null;
+
+const lupa = document.createElement("canvas");
+lupa.className = "lupa";
+lupa.width = 120;
+lupa.height = 120;
+lupa.hidden = true;
+document.querySelector(".area-do-desenho")!.append(lupa);
+const AUMENTO_DA_LUPA = 3;
 
 const pintor = criarPintor();
 
@@ -274,6 +287,22 @@ function montarFaixaPrincipal(): void {
   estimativa.textContent = textoDaEstimativa(estado.bytes, estado.parcial);
   faixaPrincipal.append(estimativa);
 
+  const calibrar = document.createElement("button");
+  calibrar.className = "botao";
+  calibrar.id = "calibrar";
+  calibrar.type = "button";
+  calibrar.textContent = "Calibrar (2 pontos)";
+  calibrar.disabled = !geometria;
+  calibrar.setAttribute("aria-pressed", String(Boolean(calibragem?.ativa)));
+  calibrar.addEventListener("click", () => {
+    calibragem = iniciarCalibragem();
+    mostrarAviso({ titulo: "Calibração", podeTentarDeNovo: false,
+                   detalhe: "Toque nas duas extremidades de uma medida " +
+                            "conhecida da planta." });
+    montarFaixaPrincipal();
+  });
+  faixaPrincipal.append(calibrar);
+
   const exportarBotao = document.createElement("button");
   exportarBotao.className = "botao principal";
   exportarBotao.id = "exportar";
@@ -324,6 +353,67 @@ function aoMexer(nova: Vista): void {
   paradaDoGesto = window.setTimeout(agendar, PAUSA_DO_GESTO_MS);
 }
 
+/**
+ * A lupa do toque.
+ *
+ * Recorta um pedaço do próprio canvas e o amplia: não redesenha nada, então
+ * custa o mesmo em qualquer planta. No celular o dedo cobre exatamente a
+ * extremidade que precisa ser mirada, e sem ela ninguém acerta a cota.
+ */
+function moverLupa(clienteX: number, clienteY: number): void {
+  if (!calibragem?.ativa) { lupa.hidden = true; return; }
+  const caixa = tela.getBoundingClientRect();
+  const proporcao = window.devicePixelRatio || 1;
+  const x = (clienteX - caixa.left) * proporcao;
+  const y = (clienteY - caixa.top) * proporcao;
+
+  const ctxLupa = lupa.getContext("2d")!;
+  const lado = lupa.width / AUMENTO_DA_LUPA;
+  ctxLupa.clearRect(0, 0, lupa.width, lupa.height);
+  ctxLupa.drawImage(tela, x - lado / 2, y - lado / 2, lado, lado,
+                    0, 0, lupa.width, lupa.height);
+  // Cruz no centro, para mirar o que o dedo esconde.
+  ctxLupa.strokeStyle = "#3d7eff";
+  ctxLupa.beginPath();
+  ctxLupa.moveTo(lupa.width / 2, 0);
+  ctxLupa.lineTo(lupa.width / 2, lupa.height);
+  ctxLupa.moveTo(0, lupa.height / 2);
+  ctxLupa.lineTo(lupa.width, lupa.height / 2);
+  ctxLupa.stroke();
+
+  const onde = posicaoDaLupa(clienteX - caixa.left, clienteY - caixa.top,
+                             caixa.width, caixa.height, lupa.width);
+  lupa.style.left = `${onde.x}px`;
+  lupa.style.top = `${onde.y}px`;
+  lupa.hidden = false;
+}
+
+tela.addEventListener("click", (e) => {
+  if (!calibragem?.ativa) return;
+  const proporcao = window.devicePixelRatio || 1;
+  const caixa = tela.getBoundingClientRect();
+  calibragem = marcarPonto(calibragem, vista,
+                           (e.clientX - caixa.left) * proporcao,
+                           (e.clientY - caixa.top) * proporcao);
+  if (calibragem.ativa) return;
+
+  // Provisório e feio de propósito: uma caixa própria é trabalho de acabamento,
+  // e está registrado como dívida no fim da etapa.
+  const medida = window.prompt(
+    `Quanto mede essa distância na planta, em ${estado.unidade}?`, "1");
+  if (medida === null) { calibragem = null; mostrarAviso(null); return; }
+  try {
+    estado.escala = escalaPorDoisPontos(calibragem.pontos[0]!,
+                                        calibragem.pontos[1]!, Number(medida));
+    mostrarAviso(null);
+  } catch (erro) {
+    mostrarAviso({ titulo: "Não deu para calibrar", podeTentarDeNovo: true,
+                   detalhe: erro instanceof Error ? erro.message : "" });
+  }
+  calibragem = null;
+  montarFaixaPrincipal();
+});
+
 tela.addEventListener("pointerdown", (e) => {
   arrastando = true;
   ultimoX = e.clientX;
@@ -331,14 +421,20 @@ tela.addEventListener("pointerdown", (e) => {
   tela.setPointerCapture(e.pointerId);
 });
 tela.addEventListener("pointermove", (e) => {
-  if (!arrastando) return;
+  if (e.pointerType === "touch") moverLupa(e.clientX, e.clientY);
+  // Durante a calibração o arrasto não move a planta: o dedo está mirando um
+  // ponto, e mover o desenho embaixo dele erraria a medida.
+  if (!arrastando || calibragem?.ativa) return;
   const proporcao = window.devicePixelRatio || 1;
   aoMexer(aplicarArrasto(vista, (e.clientX - ultimoX) * proporcao,
                          (e.clientY - ultimoY) * proporcao));
   ultimoX = e.clientX;
   ultimoY = e.clientY;
 });
-tela.addEventListener("pointerup", () => { arrastando = false; });
+tela.addEventListener("pointerup", () => {
+  arrastando = false;
+  lupa.hidden = true;
+});
 tela.addEventListener("pointercancel", () => { arrastando = false; });
 
 tela.addEventListener("wheel", (e) => {

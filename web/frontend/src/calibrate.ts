@@ -5,6 +5,7 @@
  * decide se a planta sai com as medidas certas no CAD — por isso vive num
  * arquivo próprio, com teste próprio, em vez de espalhada pela interface.
  */
+import { pontoDoPapel, type Vista } from "./canvas.js";
 
 export const PT_PARA_MM = 25.4 / 72.0;
 
@@ -29,4 +30,45 @@ export function escalaPorEscalaDePlotagem(razao: number,
                                           unidade: Unidade = "m"): number {
   if (razao <= 0) throw new Error("A escala deve ser positiva (ex.: 50 para 1:50).");
   return (PT_PARA_MM * razao) / MM_POR_UNIDADE[unidade];
+}
+
+// --- o gesto ----------------------------------------------------------------
+
+export type Calibragem = {
+  pontos: Array<[number, number]>;
+  ativa: boolean;
+};
+
+export function iniciarCalibragem(): Calibragem {
+  return { pontos: [], ativa: true };
+}
+
+/** Guarda o ponto em coordenadas de papel — nunca de tela, que muda com o zoom. */
+export function marcarPonto(c: Calibragem, v: Vista,
+                            telaX: number, telaY: number): Calibragem {
+  if (!c.ativa || c.pontos.length >= 2) return c;
+  const p = pontoDoPapel(v, telaX, telaY);
+  const pontos: Array<[number, number]> = [...c.pontos, [p.x, p.y]];
+  return { pontos, ativa: pontos.length < 2 };
+}
+
+const FOLGA_DA_LUPA = 24;
+
+/**
+ * Onde desenhar a lupa, dado onde está o dedo.
+ *
+ * No toque o dedo cobre exatamente o que precisa ser mirado — a extremidade de
+ * uma cota — e sem a lupa ninguém acerta. Ela fica ao lado do dedo, e vira para
+ * o outro lado quando esbarraria na borda.
+ */
+export function posicaoDaLupa(telaX: number, telaY: number,
+                              larguraTela: number, alturaTela: number,
+                              lado: number): { x: number; y: number } {
+  let x = telaX + FOLGA_DA_LUPA;
+  let y = telaY - lado - FOLGA_DA_LUPA;
+  if (x + lado > larguraTela) x = telaX - lado - FOLGA_DA_LUPA;
+  if (y < 0) y = telaY + FOLGA_DA_LUPA;
+  x = Math.max(0, Math.min(x, larguraTela - lado));
+  y = Math.max(0, Math.min(y, alturaTela - lado));
+  return { x, y };
 }

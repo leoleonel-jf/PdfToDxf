@@ -1508,12 +1508,13 @@ test("converte uma planta de ponta a ponta", async ({ page }) => {
   const estimativa = t(page, "estimativa-valor");
   await expect(estimativa).not.toHaveText("");
 
-  // Ligar "unir em polilinhas" mexe na estimativa.
+  // "Unir em polilinhas" abre ligada; desligá-la mexe na estimativa.
+  const opcao = t(page, "opcao-join_polylines");
+  await expect(opcao).toHaveAttribute("aria-pressed", "true");
   const antes = await estimativa.textContent();
-  await t(page, "opcao-join_polylines").click();
+  await opcao.click();
+  await expect(opcao).toHaveAttribute("aria-pressed", "false");
   await expect(estimativa).not.toHaveText(antes!);
-  await expect(t(page, "opcao-join_polylines"))
-    .toHaveAttribute("aria-pressed", "true");
 
   // Exporta e o download acontece.
   const download = page.waitForEvent("download");
@@ -1874,7 +1875,30 @@ function iniciarCalibracao(): void {
 }
 ```
 
-7. No `resize`, reaja ao limiar da gaveta:
+7. **Ligue três opções por padrão.** Em `web/frontend/src/main.ts:44-47`, troque
+   o literal `opcoes` do objeto `estado` por:
+
+```ts
+  // Três ligadas de saída: as que só tiram redundância. `dedup` descarta traços
+  // exatamente sobrepostos, `join_polylines` troca segmentos encadeados por uma
+  // polilinha com os mesmos vértices, e `round_coords` arredonda a 4 casas
+  // (dxf_writer.py:135) — com a unidade em metros, 0,1 mm de resolução, muito
+  // abaixo de qualquer tolerância de projeto.
+  //
+  // `drop_fills` fica desligada de propósito: ela apaga desenho de verdade,
+  // hachura e área pintada somem da prancha. Ninguém deve descobrir isso por
+  // acidente.
+  opcoes: {
+    excluded_layers: [], drop_fills: false, min_len_mm: 0,
+    dedup: true, join_polylines: true, round_coords: true,
+  },
+```
+
+Repare no efeito na barra: como a linha de base é a página **sem** compactação,
+a estimativa já abre mostrando `12,3 MB → 4,1 MB · −67%` em vez de um número
+solto. É o comportamento desejado, não acidente.
+
+8. No `resize`, reaja ao limiar da gaveta:
 
 ```ts
 window.addEventListener("resize", () => {
@@ -1885,7 +1909,7 @@ window.addEventListener("resize", () => {
 });
 ```
 
-8. Troque a última linha do arquivo, `montarFaixaPrincipal();`, por
+9. Troque a última linha do arquivo, `montarFaixaPrincipal();`, por
    `montarTudo();`. E troque as demais chamadas remanescentes de `montarTopo()`
    por `montarTudo()`.
 
@@ -2137,13 +2161,26 @@ test("a estimativa mostra o tamanho sem compactação ao lado do atual", async (
   await abrirPlanta(page);
   const estimativa = t(page, "estimativa-valor");
 
-  // Sem nada marcado, base e atual coincidem: um número só.
-  await expect(estimativa).not.toContainText("→");
-
-  // Com "remover duplicados" ligado, aparecem os dois e a redução.
-  await t(page, "opcao-dedup").click();
+  // Três opções abrem ligadas, então a comparação aparece de saída.
   await expect(estimativa).toContainText("→");
   await expect(estimativa).toContainText("−");
+
+  // Desligando as três, base e atual coincidem: volta a ser um número só.
+  await t(page, "opcao-join_polylines").click();
+  await t(page, "opcao-round_coords").click();
+  await t(page, "opcao-dedup").click();
+  await expect(estimativa).not.toContainText("→");
+});
+
+test("as três opções que só tiram redundância abrem ligadas", async ({ page }) => {
+  await abrirPlanta(page);
+  for (const chave of ["join_polylines", "round_coords", "dedup"]) {
+    await expect(t(page, `opcao-${chave}`), chave)
+      .toHaveAttribute("aria-pressed", "true");
+  }
+  // Esta apaga desenho de verdade: nunca por padrão.
+  await expect(t(page, "opcao-drop_fills"))
+    .toHaveAttribute("aria-pressed", "false");
 });
 ```
 
@@ -2198,7 +2235,7 @@ git commit -m "Secao de camadas com cor e contagem, e a estimativa comparada"
 - [ ] `npm test` verde, com os arquivos novos: `camadas.test.ts`,
       `painel.test.ts`, `icones.test.ts`, e `toolbar.test.ts` ampliado
 - [ ] `npm run build` limpo (o `tsc --noEmit` faz parte dele)
-- [ ] `npm run e2e` verde **três vezes seguidas**, com os seis testes
+- [ ] `npm run e2e` verde **três vezes seguidas**, com os sete testes
 - [ ] Os quinze arquivos de teste Python continuam passando — nada de Python
       mudou, mas conferir custa um comando e prova que não mudou mesmo
 - [ ] `web/frontend/package.json` sem dependência nova; `git diff` das

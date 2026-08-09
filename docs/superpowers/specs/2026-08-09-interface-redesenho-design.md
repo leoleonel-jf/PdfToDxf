@@ -104,6 +104,23 @@ Os cinco controles, cada um com o nome e **uma linha explicando o efeito**:
 Os quatro booleanos são **interruptores**, não botões — a forma já diz que têm
 dois estados. O campo de mm é campo, com rótulo à esquerda e `mm` à direita.
 
+**Três vêm ligadas por padrão:** unir em polilinhas, arredondar coordenadas e
+remover duplicados. Remover preenchimentos vem desligada, e o corte por
+comprimento fica em 0.
+
+O motivo é que os três só tiram redundância: duplicados são traços exatamente
+sobrepostos, unir troca N segmentos encadeados por uma polilinha com os mesmos
+vértices, e o arredondamento vai a 4 casas decimais (`dxf_writer.py:135`), o que
+com a unidade padrão em metros dá resolução de 0,1 mm — muito abaixo de qualquer
+tolerância de projeto. Numa planta do acervo os três juntos derrubam o DXF de
+496 MB para algo em torno de 80 MB, sem o usuário precisar descobrir nada.
+"Remover preenchimentos" fica desligada porque **apaga desenho de verdade** —
+hachuras e áreas pintadas somem da prancha.
+
+Como a linha de base da estimativa é a página sem nenhuma compactação, a barra
+já abre mostrando a comparação e a porcentagem, em vez de um número solto. É o
+que faz o usuário ver, de entrada, o que o app está fazendo por ele.
+
 "Remover duplicados" mostra a proporção real da planta aberta, calculada dos
 `dup_group` que o binário já traz. Numa planta do acervo isso é 60%, e ver o
 número é o que faz a opção deixar de ser um palpite.

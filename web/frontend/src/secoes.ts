@@ -9,8 +9,9 @@ import type { Unidade } from "./calibrate.js";
 import type { Opcoes } from "./select.js";
 import type { EstadoDaTela } from "./toolbar.js";
 import {
-  criarBotao, criarCampoComUnidade, criarInterruptor,
+  criarBotao, criarCampoComUnidade, criarIcone, criarInterruptor,
 } from "./ui/controles.js";
+import { precisaDeBusca, type ResumoDeCamada } from "./camadas.js";
 
 const COMPACTACAO: Array<{ chave: keyof Opcoes; nome: string; explica: string }> = [
   { chave: "join_polylines", nome: "Unir em polilinhas",
@@ -112,5 +113,92 @@ export function secaoCompactacao(e: EstadoDaTela, repetidos: number | null,
     aoMudar: (v) => { e.opcoes.min_len_mm = v; aoMudar(); },
   }));
 
+  return caixa;
+}
+
+function corEmHex(cor: number): string {
+  return `#${cor.toString(16).padStart(6, "0")}`;
+}
+
+export function secaoCamadas(e: EstadoDaTela, resumo: ResumoDeCamada[],
+                             parcial: boolean, aoMudar: () => void): HTMLElement {
+  const caixa = document.createElement("div");
+  caixa.className = "secao";
+
+  const cabecalho = document.createElement("div");
+  cabecalho.className = "apoio";
+  cabecalho.dataset["teste"] = "camadas-total";
+  cabecalho.textContent = parcial
+    ? `${resumo.length} camadas (contagem parcial)`
+    : `${resumo.length} camadas`;
+
+  const todas = document.createElement("div");
+  todas.append(
+    criarBotao({
+      rotulo: "Ligar todas", classe: "discreto apoio", teste: "ligar-todas",
+      aoClicar: () => { e.layersDesligados.clear(); aoMudar(); },
+    }),
+    criarBotao({
+      rotulo: "Desligar todas", classe: "discreto apoio", teste: "desligar-todas",
+      aoClicar: () => {
+        for (const c of resumo) e.layersDesligados.add(c.nome);
+        aoMudar();
+      },
+    }),
+  );
+
+  caixa.append(cabecalho, todas);
+
+  const lista = document.createElement("div");
+  lista.className = "lista-de-camadas";
+
+  const desenhar = (filtro: string) => {
+    lista.replaceChildren();
+    const alvo = filtro.trim().toLowerCase();
+    for (const c of resumo) {
+      if (alvo && !c.nome.toLowerCase().includes(alvo)) continue;
+      const ligada = !e.layersDesligados.has(c.nome);
+
+      const linha = document.createElement("button");
+      linha.type = "button";
+      linha.className = "camada";
+      linha.dataset["teste"] = `camada-${c.nome}`;
+      linha.setAttribute("aria-pressed", String(ligada));
+
+      const olho = criarIcone(ligada ? "olho" : "olho-cortado");
+      const cor = document.createElement("span");
+      cor.className = "cor";
+      cor.style.background = corEmHex(c.cor);
+      const nome = document.createElement("span");
+      nome.className = "nome";
+      nome.textContent = c.nome;
+      nome.title = c.nome;      // nome longo é cortado por ellipsis
+      const quantas = document.createElement("span");
+      quantas.className = "quantas";
+      quantas.textContent = c.n.toLocaleString("pt-BR");
+
+      linha.append(olho, cor, nome, quantas);
+      linha.addEventListener("click", () => {
+        if (e.layersDesligados.has(c.nome)) e.layersDesligados.delete(c.nome);
+        else e.layersDesligados.add(c.nome);
+        aoMudar();
+      });
+      lista.append(linha);
+    }
+  };
+
+  if (precisaDeBusca(resumo.length)) {
+    const busca = document.createElement("input");
+    busca.type = "search";
+    busca.className = "campo campo-largo";
+    busca.placeholder = "Filtrar camadas";
+    busca.dataset["teste"] = "busca-camadas";
+    // Filtra sem remontar o painel: remontar perderia o foco a cada tecla.
+    busca.addEventListener("input", () => desenhar(busca.value));
+    caixa.append(busca);
+  }
+
+  desenhar("");
+  caixa.append(lista);
   return caixa;
 }

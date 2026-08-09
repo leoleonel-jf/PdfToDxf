@@ -95,3 +95,43 @@ test("em tela estreita o painel vira gaveta", async ({ page }) => {
   await t(page, "abrir-painel").click();
   await expect(page.locator("#painel")).toBeVisible();
 });
+
+test("camadas mostram contagem e desligar uma muda a estimativa", async ({ page }) => {
+  await abrirPlanta(page);
+
+  const camada = t(page, "camada-TEXTO");
+  await expect(camada).toBeVisible();
+  await expect(camada).toHaveAttribute("aria-pressed", "true");
+
+  const estimativa = t(page, "estimativa-valor");
+  const antes = await estimativa.textContent();
+  await camada.click();
+  await expect(camada).toHaveAttribute("aria-pressed", "false");
+  await expect(estimativa).not.toHaveText(antes!);
+});
+
+test("a estimativa mostra o tamanho sem compactação ao lado do atual", async ({ page }) => {
+  await abrirPlanta(page);
+  const estimativa = t(page, "estimativa-valor");
+
+  // Três opções abrem ligadas, então a comparação aparece de saída.
+  await expect(estimativa).toContainText("→");
+  await expect(estimativa).toContainText("−");
+
+  // Desligando as três, base e atual coincidem: volta a ser um número só.
+  await t(page, "opcao-join_polylines").click();
+  await t(page, "opcao-round_coords").click();
+  await t(page, "opcao-dedup").click();
+  await expect(estimativa).not.toContainText("→");
+});
+
+test("as três opções que só tiram redundância abrem ligadas", async ({ page }) => {
+  await abrirPlanta(page);
+  for (const chave of ["join_polylines", "round_coords", "dedup"]) {
+    await expect(t(page, `opcao-${chave}`), chave)
+      .toHaveAttribute("aria-pressed", "true");
+  }
+  // Esta apaga desenho de verdade: nunca por padrão.
+  await expect(t(page, "opcao-drop_fills"))
+    .toHaveAttribute("aria-pressed", "false");
+});

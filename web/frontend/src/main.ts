@@ -27,7 +27,7 @@ import {
 } from "./calibrate.js";
 import { ordenarPorComprimento } from "./ordem.js";
 import { criarPintor, passo, type Cena } from "./pintor.js";
-import { selecionar } from "./select.js";
+import { selecionar, type Opcoes } from "./select.js";
 import { estimarBytes } from "./estimativa.js";
 import { opcoesEfetivas, type EstadoDaTela } from "./toolbar.js";
 import { montarBarra } from "./barra.js";
@@ -35,8 +35,8 @@ import {
   abrirEm, alternar, aoRedimensionar, estadoInicial, montarPainel,
   paraGuardar, type EstadoDoPainel, type Secao,
 } from "./painel.js";
-import { proporcaoRepetida } from "./camadas.js";
-import { secaoCompactacao, secaoEscala } from "./secoes.js";
+import { proporcaoRepetida, resumoDasCamadas, type ResumoDeCamada } from "./camadas.js";
+import { secaoCamadas, secaoCompactacao, secaoEscala } from "./secoes.js";
 
 const tela = document.querySelector<HTMLCanvasElement>("#desenho")!;
 const ctx = tela.getContext("2d")!;
@@ -95,6 +95,19 @@ let vista: Vista = { escala: 1, dx: 0, dy: 0 };
 let geracao = 0;
 let controle = new AbortController();
 let calibragem: Calibragem | null = null;
+let camadas: ResumoDeCamada[] = [];
+
+/**
+ * A página inteira: todas as camadas, nenhuma compactação.
+ *
+ * É o "antes" que a barra mostra ao lado do "depois". Calculado só quando a
+ * geometria troca — duas vezes por página, no esqueleto e no detalhe — e nunca
+ * a cada clique: seriam ~12 ms jogados fora por opção marcada.
+ */
+const SEM_COMPACTACAO: Opcoes = {
+  excluded_layers: [], drop_fills: false, min_len_mm: 0,
+  dedup: false, join_polylines: false, round_coords: false,
+};
 
 const lupa = document.createElement("canvas");
 lupa.className = "lupa";
@@ -172,6 +185,9 @@ function recalcular(): void {
 function trocarGeometria(nova: Geometria): void {
   geometria = nova;
   ordem = ordenarPorComprimento(nova.length_um);
+  camadas = resumoDasCamadas(nova);
+  estado.bytesBase = estimarBytes(nova, selecionar(nova, SEM_COMPACTACAO),
+                                  SEM_COMPACTACAO);
   recalcular();
 }
 
@@ -235,6 +251,7 @@ async function carregarPagina(): Promise<void> {
     meta = await lerMeta(job, pagina, sinal);
     mostrarAviso(null);
     estado.layersDesligados.clear();
+    camadas = [];
 
     const cruEsqueleto = await lerGeometriaBruta(job, pagina, "esqueleto", sinal);
     if (sinal.aborted) return;
@@ -287,7 +304,7 @@ function montarPainelLateral(): void {
                               aoMudarOpcoes),
     compactacao: () => secaoCompactacao(
       estado, geometria ? proporcaoRepetida(geometria) : null, aoMudarOpcoes),
-    camadas: () => document.createElement("div"),   // tarefa 7
+    camadas: () => secaoCamadas(estado, camadas, estado.parcial, aoMudarOpcoes),
   }, alternarPainel, (s: Secao) => {
     painel = abrirEm(painel, s);
     montarTudo();

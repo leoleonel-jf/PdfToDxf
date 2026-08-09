@@ -4,33 +4,41 @@ Estado em 2026-08-09. Leia isto primeiro ao retomar em sessão nova.
 
 > ## Se o pedido foi só "continuar", faça isto
 >
-> **Planeje a etapa 4 — contas, cotas e registros.** Comece pela skill
-> `superpowers:brainstorming`, que vira spec e depois plano. É o trabalho
-> combinado para a próxima sessão; a decisão foi tomada em 2026-08-09 e a razão
-> está no item 8 de "O que falta". **Não peça confirmação para começar** — só
-> pergunte o que o brainstorming precisar saber sobre a etapa 4 em si.
+> **Execute a etapa 4 — contas, cotas e registros.** A spec e o desenho já
+> existem (`docs/superpowers/specs/2026-08-09-contas-cotas-registros-design.md`);
+> falta o **plano de implementação**. Comece por `superpowers:writing-plans`
+> sobre essa spec, e depois execute com `superpowers:subagent-driven-development`.
+> **Não peça confirmação para começar.**
 >
-> Antes de propor qualquer coisa, leia: a **spec geral**
-> (`docs/superpowers/specs/2026-08-01-pdftodxf-web-design.md`), que é quem
-> descreve o escopo da etapa 4, e a seção "O que falta" abaixo.
+> Antes de propor qualquer coisa, leia a spec da etapa 4 e a seção "O que falta"
+> abaixo.
 >
 > **Três coisas que não são para você fazer nem esperar:**
 >
 > - O **PR #3** (`https://github.com/leoleonel-jf/PdfToDxf/pull/3`) está aberto
->   com a etapa 3 inteira, esperando a revisão do usuário. **Não mescle por
->   conta própria** e não fique bloqueado nele — a etapa 4 é planejamento, e
->   planejar não depende da mescla.
+>   com as etapas 3 e 3.5, esperando a revisão do usuário. **Não mescle por
+>   conta própria** e não fique bloqueado nele.
 > - A **imagem Docker** não foi construída porque o `docker` não existe nesta
 >   máquina. Se o usuário instalar, é um comando; até lá, não tente.
-> - Os itens 1 a 7 de "O que falta" **dependem do humano**. Não os execute por
->   conta própria.
+> - Os itens que "dependem de você" em "O que falta" são do humano. Não os
+>   execute por conta própria.
 >
-> A etapa 3 está pronta e conferida: 2110 testes de unidade, 2 de ponta a ponta
-> rodados três vezes, 15 arquivos de teste Python, e uma planta real desenhando
-> certo na tela. O desenho do canvas foi **refeito no meio da etapa**, depois de
-> três medições derrubarem três arquiteturas — se for mexer no canvas, leia
-> `web/frontend/medicao/RESULTADO.md` antes, porque lá está o que já foi tentado
-> e por que não funcionou.
+> **Pendência de olho humano, e é a mais importante:** a etapa 3.5 redesenhou a
+> interface inteira e **ninguém a viu com planta real na tela**. Nenhum agente
+> tem olhos. Dos três defeitos da etapa 3, dois só apareceram assim.
+>
+> As etapas 3 e 3.5 estão prontas: 2145 testes de unidade, 10 de ponta a ponta,
+> 15 arquivos de teste Python, e **integração contínua verde no GitHub**. O
+> desenho do canvas foi **refeito no meio da etapa 3**, depois de três medições
+> derrubarem três arquiteturas — se for mexer no canvas, leia
+> `web/frontend/medicao/RESULTADO.md` antes.
+>
+> **A lição mais cara da etapa 3.5, para não se repetir:** o plano mandou
+> reimplementar à mão duas conversões que o projeto já tinha prontas e testadas
+> (`escalaPorEscalaDePlotagem` e `corDeInteiro`), e errou as duas — o DXF sairia
+> com 11,34 m onde a parede tem 10,00 m. Sete revisões por tarefa não pegaram,
+> porque cada uma só via o seu pedaço; a revisão final do branch pegou. **Antes
+> de escrever qualquer conversão, procure se ela já existe no núcleo.**
 
 ## O projeto em uma frase
 
@@ -399,10 +407,58 @@ trabalho de sessão, e **não esperam pelos primeiros**.
    docker run --rm -p 8000:8000 pdftodxf
    ```
 
+### Etapa 3.5 — interface redesenhada (2026-08-09, pronta)
+
+Não estava no plano de cinco etapas. Entrou depois de o usuário ver o cabeçalho
+de duas faixas com planta real e dizer que não dava para entender nada e que
+estava com "cara de sistema de prefeitura". Três direções foram desenhadas e
+comparadas; ganhou o **painel lateral recolhível**.
+
+- **Desenho:** `docs/superpowers/specs/2026-08-09-interface-redesenho-design.md`
+- **Plano:** `docs/superpowers/plans/2026-08-09-interface-redesenhada.md`
+
+O que mudou: barra superior fina (abrir, página, estimativa, exportar) e painel
+de 260 px com Escala, Compactação e Camadas — recolhe para uma faixa de ícones
+de 48 px, e vira gaveta abaixo de 900 px. Cada opção de compactação ganhou uma
+linha explicando o efeito, e "remover duplicados" mostra a proporção real da
+planta aberta. As camadas ganharam olho, bolinha de cor e contagem, tudo
+calculado no navegador a partir do binário que já chega. A estimativa mostra
+`12,3 MB → 4,1 MB · −67%` em vez de um número solto. Paleta e tipografia
+refeitas, dez ícones Tabler colados inline, zero dependência nova.
+
+**Três opções de compactação passaram a vir ligadas por padrão** — unir,
+arredondar e remover duplicados, que só tiram redundância. "Remover
+preenchimentos" fica desligada de propósito: ela apaga hachuras e áreas
+pintadas do desenho.
+
+Arquivos novos: `camadas.ts`, `painel.ts`, `secoes.ts`, `barra.ts`,
+`ui/icones.ts`, `ui/controles.ts`. O motor de desenho não foi tocado.
+
+**O que a revisão final pegou e as sete revisões por tarefa não:** a escala de
+plotagem e a troca de unidade estavam sendo calculadas à mão, erradas, em vez de
+usarem as funções já testadas do núcleo; a bolinha de cor não tratava a
+sentinela `0xFFFFFFFF` e pintava branco onde o desenho é preto; e o painel de
+aviso, sem `pointer-events: none`, engolia os cliques do canvas e impedia a
+calibração por dois pontos de completar. Tudo corrigido, com teste de ida e
+volta da escala que não existia.
+
+### Integração contínua (2026-08-09)
+
+`.github/workflows/ci.yml`, três jobs em `push` e `pull_request`: testes Python
+(um arquivo por vez, sob `xvfb`), frontend (`npm test` + `npm run build`) e
+ponta a ponta (Playwright com Chromium). **Verde.**
+
+Ao montá-la apareceu um defeito antigo: o `playwright.config.ts` subia o
+servidor com `.venv/Scripts/python.exe`, e o `cmd.exe` corta no primeiro `/` —
+as execuções verdes anteriores só passavam porque `reuseExistingServer` achava
+um uvicorn já de pé. Hoje o caminho vem de `PDFTODXF_PYTHON`, com padrão certo
+por plataforma.
+
 ### Trabalho de sessão
 
-8. **Planejar a etapa 4 — contas, cotas e registros.** É o próximo trabalho, e
-   é o que "continuar" significa.
+8. **Executar a etapa 4 — contas, cotas e registros.** A spec está pronta em
+   `docs/superpowers/specs/2026-08-09-contas-cotas-registros-design.md`; falta
+   o plano. É o que "continuar" significa.
 
    **Por que a etapa 4 antes da auto-escala**, decidido em 2026-08-09: as
    etapas 4 e 5 são o que leva o projeto ao objetivo declarado — versão web

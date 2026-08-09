@@ -1,0 +1,148 @@
+/**
+ * Cliente HTTP das rotas da etapa 2.
+ *
+ * Todo pedido aceita um `AbortSignal`. Não é enfeite: trocar de página no meio
+ * do carregamento deixa buscas em voo, e o detalhe da página anterior chegando
+ * depois contamina o canvas da página nova — defeito silencioso, que só aparece
+ * com rede lenta.
+ */
+
+export class ErroDaApi extends Error {
+  constructor(public readonly status: number, mensagem: string,
+              public readonly codigo = "") {
+    super(mensagem);
+    this.name = "ErroDaApi";
+  }
+}
+
+export type Ficha = { job_id: string; nome: string; n_paginas: number };
+
+export type EstadoPagina = {
+  situacao: "na_fila" | "extraindo" | "pronta" | "erro";
+  codigo?: string;
+  mensagem?: string;
+  n_entidades?: number;
+};
+
+export type Meta = {
+  n_entidades: number;
+  layers: string[];
+  largura_pt: number;
+  altura_pt: number;
+  limiar_esqueleto_um: number;
+  partes: { esqueleto: number; detalhe: number };
+};
+
+export type PedidoDeExportacao = {
+  escala: number;
+  unidade: "mm" | "cm" | "m";
+  opcoes: {
+    excluded_layers: string[];
+    drop_fills: boolean;
+    min_len_mm: number;
+    dedup: boolean;
+    join_polylines: boolean;
+    round_coords: boolean;
+  };
+};
+
+async function pedir(caminho: string, init: RequestInit = {}): Promise<Response> {
+  const resposta = await fetch(caminho, init);
+  if (!resposta.ok) {
+    let detalhe = `HTTP ${resposta.status}`;
+    try {
+      const corpo = await resposta.json();
+      if (corpo?.detail) detalhe = String(corpo.detail);
+    } catch {
+      // Resposta sem JSON: fica o status, que já diz o suficiente.
+    }
+    throw new ErroDaApi(resposta.status, detalhe);
+  }
+  return resposta;
+}
+
+export async function enviarPdf(arquivo: File, sinal?: AbortSignal): Promise<Ficha> {
+  const forma = new FormData();
+  forma.append("arquivo", arquivo);
+  const r = await pedir("/api/jobs", { method: "POST", body: forma, signal: sinal });
+  return r.json();
+}
+
+export async function pedirExtracao(job: string, pagina: number,
+                                    sinal?: AbortSignal): Promise<EstadoPagina> {
+  const r = await pedir(`/api/jobs/${job}/pages/${pagina}`,
+                        { method: "POST", signal: sinal });
+  return r.json();
+}
+
+export async function lerEstado(job: string, pagina: number,
+                                sinal?: AbortSignal): Promise<EstadoPagina> {
+  const r = await pedir(`/api/jobs/${job}/pages/${pagina}`, { signal: sinal });
+  return r.json();
+}
+
+const ESPERA_INICIAL = 300;
+const ESPERA_MAXIMA = 2000;
+
+function dormir(ms: number, sinal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    sinal.addEventListener("abort", () => {
+      clearTimeout(t);
+      reject(new DOMException("Aborted", "AbortError"));
+    }, { once: true });
+  });
+}
+
+/**
+ * Consulta até a página sair da fila, com recuo crescente.
+ *
+ * Uma planta pesada leva minutos; bater a cada 300 ms por minutos é ruído à
+ * toa, e um intervalo fixo longo faria a planta leve parecer lenta.
+ */
+export async function esperarPagina(job: string, pagina: number,
+                                    sinal: AbortSignal,
+                                    aoMudar: (e: EstadoPagina) => void):
+                                    Promise<EstadoPagina> {
+  let espera = ESPERA_INICIAL;
+  let anterior = "";
+  for (;;) {
+    if (sinal.aborted) throw new DOMException("Aborted", "AbortError");
+    const estado = await lerEstado(job, pagina, sinal);
+    if (estado.situacao !== anterior) {
+      anterior = estado.situacao;
+      aoMudar(estado);
+    }
+    if (estado.situacao === "pronta" || estado.situacao === "erro") return estado;
+    await dormir(espera, sinal);
+    espera = Math.min(espera * 2, ESPERA_MAXIMA);
+  }
+}
+
+export async function lerMeta(job: string, pagina: number,
+                              sinal?: AbortSignal): Promise<Meta> {
+  const r = await pedir(`/api/jobs/${job}/pages/${pagina}/meta.json`,
+                        { signal: sinal });
+  return r.json();
+}
+
+export async function lerGeometriaBruta(job: string, pagina: number,
+                                        parte: "esqueleto" | "detalhe",
+                                        sinal?: AbortSignal): Promise<ArrayBuffer> {
+  const r = await pedir(
+    `/api/jobs/${job}/pages/${pagina}/geometry.bin?parte=${parte}`,
+    { signal: sinal });
+  return r.arrayBuffer();
+}
+
+export async function exportar(job: string, pagina: number,
+                               pedido: PedidoDeExportacao, sinal?: AbortSignal) {
+  const r = await pedir(`/api/jobs/${job}/pages/${pagina}/export`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(pedido),
+    signal: sinal,
+  });
+  return r.json() as Promise<{ chave: string; url: string; cache: boolean;
+                               entidades: number }>;
+}

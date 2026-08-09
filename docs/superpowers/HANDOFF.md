@@ -1,13 +1,15 @@
 # Handoff — versão web do PdfToDxf
 
-Estado em 2026-08-08. Leia isto primeiro ao retomar em sessão nova.
+Estado em 2026-08-09. Leia isto primeiro ao retomar em sessão nova.
 
-> **Se o pedido foi só "continuar":** execute o plano da etapa 3,
-> `docs/superpowers/plans/2026-08-04-frontend-canvas.md` — 15 tarefas, e a
-> primeira **não é código**: é a medição no navegador que decide a arquitetura.
-> Ele é o próximo trabalho que uma sessão consegue fazer sozinha. Os itens 1 a 5
-> da lista "O que falta" **dependem de você, humano**, e não são pré-requisito
-> para a etapa 3: não fique bloqueado neles nem os execute por conta própria.
+> **Se o pedido foi só "continuar":** a etapa 3 está em andamento no branch
+> `frontend-canvas`, com as tarefas 1 a 5 prontas — e **parada de propósito**
+> antes da tarefa 6. A medição da tarefa 1 derrubou a arquitetura de duas
+> threads que o plano supunha, e a decisão do que colocar no lugar é do usuário.
+> Comece por `web/frontend/medicao/RESULTADO.md`, que tem os números e o que
+> reabrir; depois a seção "Etapa 3" abaixo. Os itens 1 a 5 da lista "O que
+> falta" **dependem de você, humano**, e não são pré-requisito: não fique
+> bloqueado neles nem os execute por conta própria.
 
 ## O projeto em uma frase
 
@@ -48,7 +50,8 @@ história isolado:
 
 | Branch | Conteúdo | Situação |
 |---|---|---|
-| `main` | tudo | **em dia** |
+| `main` | tudo, até a etapa 2.5 | **em dia** |
+| `frontend-canvas` | etapa 3, tarefas 1 a 5 | **em andamento**, não mesclado |
 | `nucleo-classify-select` | etapa 1 | mesclada, branch guardado |
 | `api-de-conversao` | etapa 2 | mesclada, branch guardado |
 | `linha-de-comando` | etapa 2.5 (PR #1) | mesclada, branch guardado |
@@ -142,6 +145,48 @@ da tabela de estimativa não cabe no cp1252 do console do Windows, e o
 página não tem desenho vetorial", com código de saída 0. Hoje só a extração fica
 dentro do `try`, e o retrato roda fora dele.
 
+### Etapa 3 — frontend (branch `frontend-canvas`, em andamento)
+
+Cinco das quinze tarefas, em 2026-08-09. **A execução parou na tarefa 6 porque
+a medição da tarefa 1 derrubou a arquitetura do plano** — não é bloqueio
+técnico, é decisão de projeto pendente.
+
+| Tarefa | O que faz | Situação |
+|---|---|---|
+| 1 | andaime do Vite e a medição do custo | pronta |
+| 2 | `select.ts` contra os 1024 casos | pronta |
+| 3 | `estimativa.ts`, mesmo contrato | pronta |
+| 4 | `formato.ts`, leitor do binário | pronta |
+| 5 | `intercalar()` e o achado do dedup | pronta |
+| 6 a 15 | worker, canvas, calibração, tela | **paradas** |
+
+**O que a medição disse, e por que ela manda parar** — detalhe em
+`web/frontend/medicao/RESULTADO.md`:
+
+- O `select()` sobre 3 milhões de entidades custa **~12 ms**. Cabe folgado num
+  quadro de 16 ms, na thread principal, a cada clique numa opção.
+- Reconstruir os `Path2D` no pior caso custa **de 300 a 840 ms**.
+- `Path2D` é API de DOM e **não existe dentro de um Web Worker**. Ou seja: a
+  arquitetura de duas threads move para fora os 12 ms e deixa dentro os 800 ms.
+  O worker das tarefas 5 e 6 do plano protege a interface de uma pausa que não
+  acontece.
+
+Duas correções na própria medição, ambas registradas no RESULTADO, porque sem
+elas a conclusão sairia invertida: recarregar a página **não** aquece o JIT
+(cada carga é um contexto novo, e a mesma fase variou por um fator de dois), e o
+cenário do plano só media o caso **já deduplicado** — 500 mil sobreviventes,
+47–104 ms, abaixo do limiar de 200 ms do próprio plano. O padrão da tela é *sem*
+dedup, e é aí que as 3 milhões chegam ao canvas.
+
+O que existe de código, tudo espelho do Python e válido em qualquer arquitetura:
+`web/frontend/src/{select,estimativa,formato}.ts`, os testes em
+`web/frontend/testes/`, e as duas fixtures novas geradas pelo Python
+(`tests/gerar_fixture_geometria.py`, `tests/gerar_fixture_intercalacao.py`).
+
+Duas coisas que os passos de mutação provaram, e não são teatro: trocar
+`Math.round` por `Math.trunc` no `min_len_um` **quebra** casos do contrato, e
+concatenar em vez de intercalar **quebra** o teste da ordem e o do dedup.
+
 ## O que está verificado
 
 Rodados em 2026-08-08, todos passando com saída limpa:
@@ -160,10 +205,20 @@ Rodados em 2026-08-08, todos passando com saída limpa:
 ./.venv/Scripts/python.exe tests/test_cli.py
 ./.venv/Scripts/python.exe tests/test_numeros.py
 ./.venv/Scripts/python.exe tests/test_entradas_gui.py
+./.venv/Scripts/python.exe tests/test_fixture_geometria.py
 ```
 
-Os treze foram rodados de novo **sobre a `main` já mesclada**, e passam. Mesclar
-sem conferir o resultado não prova nada: cada branch passava sozinho.
+Os treze primeiros foram rodados de novo **sobre a `main` já mesclada**, e
+passam. Mesclar sem conferir o resultado não prova nada: cada branch passava
+sozinho. O décimo quarto é da etapa 3 e roda no branch `frontend-canvas`, onde
+os quatorze passam juntos (2026-08-09).
+
+Do lado TypeScript, no mesmo branch, **2058 testes verdes**:
+
+```
+cd web/frontend && npm test
+cd web/frontend && npm run build
+```
 
 A bateria inteira foi rodada três vezes seguidas, sem falha nenhuma. Isso
 importa: até a correção do commit `1687cef` ela era intermitente — uma página
@@ -239,12 +294,18 @@ pelos primeiros.
 
 ### Trabalho de sessão
 
-6. **Executar o plano da etapa 3**, `docs/superpowers/plans/2026-08-04-frontend-canvas.md`
-   — 15 tarefas. Comece pela tarefa 1, que **não é código**: é uma medição no
-   navegador do custo do `select()` e da reconstrução dos `Path2D` em 3 milhões
-   de entidades. A escolha pelo Web Worker é hipótese fundamentada, não número
-   medido, e o plano diz em que resultado parar e reabrir a arquitetura antes de
-   seguir. Não pule essa tarefa: as tarefas 5 e 6 dependem do que ela decidir.
+6. **Redesenhar as tarefas 6 a 15 da etapa 3** — é o trabalho imediato, e é
+   também decisão de projeto, então provavelmente começa por uma conversa. O
+   plano `docs/superpowers/plans/2026-08-04-frontend-canvas.md` continua válido
+   nas tarefas 1 a 5, que já estão feitas; da 6 em diante ele supõe um Web
+   Worker que a medição mostrou não resolver o problema real.
+
+   O problema real é **não reconstruir todos os caminhos a cada mudança de
+   opção**. Direções que a medição sugere, sem escolher entre elas: manter os
+   `Path2D` montados uma vez e variar só o que é desenhado; recortar por região
+   visível; desenhar em fatias ao longo de vários quadros; ou desistir do
+   `Path2D` agrupado e traçar direto no contexto 2D. Se ainda assim houver
+   worker, ele deve carregar outra coisa que não o `select()`.
 
 7. **Planejar as etapas 4 e 5.**
 
@@ -300,6 +361,12 @@ Nada disso bloqueia; está registrado para não se perder.
   silenciosamente o que o servidor manda, e prévia e DXF continuam concordando
   entre si, mas com o comportamento anterior. O controle hoje é de processo
   (regerar e conferir o diff), não de teste.
+- **O `npm audit` do frontend acusa 5 vulnerabilidades, todas a mesma raiz.** É
+  o aviso do `esbuild` que permite a qualquer site fazer pedido ao servidor de
+  desenvolvimento do Vite e ler a resposta. Só afeta `npm run dev`, que escuta
+  em localhost, e nada disso vai ao navegador do usuário — o projeto não tem
+  dependência de produção. Fechar exigiria Vite 8, que é mudança quebrando
+  compatibilidade e diverge do plano; ficou registrado em vez de aplicado.
 - **`EntityAttrs.kind` é lista de strings** e o laço quente do `select()` compara
   string por entidade. Em 3 milhões de entidades no navegador isso pesa. O
   formato binário da etapa 2 já grava código numérico; falta reconciliar.

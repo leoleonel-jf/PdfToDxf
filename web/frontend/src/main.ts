@@ -276,10 +276,7 @@ function montarTopo(): void {
     mostrarMenu: painel.modo === "gaveta",
     aoAbrirArquivo: (arquivo) => void abrir(arquivo),
     aoTrocarPagina: (p) => { pagina = p; void carregarPagina(); },
-    aoAlternarPainel: () => {
-      painel = alternar(painel);
-      montarTudo();
-    },
+    aoAlternarPainel: alternarPainel,
     aoExportar: () => void baixar(),
   });
 }
@@ -291,20 +288,49 @@ function montarPainelLateral(): void {
     compactacao: () => secaoCompactacao(
       estado, geometria ? proporcaoRepetida(geometria) : null, aoMudarOpcoes),
     camadas: () => document.createElement("div"),   // tarefa 7
-  }, () => {
-    painel = alternar(painel);
-    const g = paraGuardar(painel);
-    try { if (g) localStorage.setItem(CHAVE_DO_PAINEL, g); } catch { /* ignora */ }
-    montarTudo();
-  }, (s: Secao) => {
+  }, alternarPainel, (s: Secao) => {
     painel = abrirEm(painel, s);
     montarTudo();
   });
 }
 
+/** Alterna o painel e grava a preferência. Os dois botões passam por aqui. */
+function alternarPainel(): void {
+  painel = alternar(painel);
+  const g = paraGuardar(painel);
+  try {
+    if (g) localStorage.setItem(CHAVE_DO_PAINEL, g);
+  } catch { /* navegação privativa recusa gravar; a tela não pode morrer por isso */ }
+  montarTudo();
+}
+
+/**
+ * Remonta a tela preservando o foco e o cursor.
+ *
+ * O painel é reconstruído do zero a cada mudança, e as setas de um campo
+ * numérico disparam `change` a cada passo: sem isto, apertar ↑ duas vezes no
+ * campo de mm tira o foco do campo já na primeira. Reencontrar o elemento pelo
+ * `data-teste` é mais barato do que remontar por partes, e resolve todos os
+ * campos de uma vez — inclusive a busca de camadas, que ainda vai chegar.
+ */
 function montarTudo(): void {
+  const ativo = document.activeElement;
+  const foco = ativo instanceof HTMLElement ? ativo.dataset["teste"] : undefined;
+  // `selectionStart` estoura em `input type=number` em alguns navegadores.
+  const cursor = ativo instanceof HTMLInputElement && ativo.type !== "number"
+    ? [ativo.selectionStart, ativo.selectionEnd] as const
+    : null;
+
   montarTopo();
   montarPainelLateral();
+
+  if (!foco) return;
+  const novo = document.querySelector<HTMLElement>(`[data-teste="${foco}"]`);
+  if (!novo) return;
+  novo.focus();
+  if (novo instanceof HTMLInputElement && cursor && cursor[0] !== null) {
+    novo.setSelectionRange(cursor[0], cursor[1]);
+  }
 }
 
 function aoMudarOpcoes(): void {

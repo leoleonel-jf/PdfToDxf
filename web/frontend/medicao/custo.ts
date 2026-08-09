@@ -1,3 +1,8 @@
+// Marca o arquivo como módulo. Sem isto o TypeScript o trata como script
+// global, e as declarações de topo colidem com as do `desenho.ts` — que o
+// navegador nunca veria, porque os dois são carregados como `type="module"`.
+export {};
+
 const N = 3_000_000;
 
 function gerar() {

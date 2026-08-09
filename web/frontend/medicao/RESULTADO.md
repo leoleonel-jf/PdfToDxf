@@ -63,6 +63,35 @@ de 200 ms do próprio plano, e levaria à conclusão oposta.
   trabalho. Três `Path2D` de 3 milhões de segmentos cada é muita coisa viva ao
   mesmo tempo.
 
+## Segunda medição: traçar custa mais que montar
+
+Feita em 2026-08-09, durante o redesenho, por `medicao/desenho.html`. A primeira
+mediu quanto custa **montar** os `Path2D`. Esta mede quanto custa **traçá-los**,
+por quadro — a pergunta de que o pan e o zoom dependem, e que ninguém tinha
+feito. Segmentos curtos espalhados pela folha inteira, que é como uma planta é.
+
+O `getImageData` de um pixel ao fim de cada quadro é o que força a rasterização
+a terminar antes de o cronômetro parar. Sem ele o Chrome volta de `stroke()`
+antes de pintar, e a medida sairia otimista por uma ordem de grandeza.
+
+| | quadro isolado | pan de 5 quadros | zoom 4× |
+|---|---|---|---|
+| 500 mil | 341 / 249 / 182 | 205 / 174 / 228 / 248 / 173 | 114 / 91 / 100 |
+| 3 milhões | 1292 / 1091 / 815 | 768 / 964 / 749 / 297 / 558 | 784 / 668 / 714 |
+
+Três conclusões, e elas mandam mais que as da primeira medição:
+
+- **O custo dominante é por quadro, não por clique.** Traçar 3 milhões custa de
+  750 a 1290 ms; montar custava de 300 a 840 ms. Um arrasto de pan roda a ~1
+  quadro por segundo, e nada é reconstruído nesse caminho.
+- **Não há teto seguro nem na planta pequena.** 500 mil segmentos já dão 173 a
+  341 ms por quadro, ou seja ~4 quadros por segundo. Não é um problema só do
+  pior caso.
+- **O `stroke()` não recorta sozinho.** Com zoom de 4×, 15/16 da folha estão
+  fora da tela e o custo cai de ~900 para ~720 ms. O tempo é gasto percorrendo
+  segmentos que não aparecem — que é exatamente o que um recorte por região
+  visível elimina.
+
 ## O que reabrir antes da tarefa 5
 
 Isto é o achado, não a solução — a solução é decisão de projeto:

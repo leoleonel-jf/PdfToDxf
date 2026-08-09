@@ -1475,86 +1475,35 @@ function montarTopo(): void {
    `src/toolbar.ts`, junto do `OPCOES_DE_COMPACTACAO`, que a tarefa 6 recria em
    `secoes.ts`.
 
-- [ ] **Passo 5: reescrever o teste de ponta a ponta**
+- [ ] **Passo 5: manter o teste de ponta a ponta passando**
 
-Substitua **todo** o conteúdo de `web/frontend/e2e/conversao.spec.ts` por:
+> **Corrigido em 2026-08-09, antes da execução.** A versão anterior deste passo
+> reescrevia o e2e já com seletores que só existem na tarefa 6, deixando um
+> commit sabidamente vermelho. Com o CI no ar isso pinta o PR de vermelho no
+> meio da etapa, e ninguém de fora distingue "combinado" de "quebrado". A
+> reescrita foi inteira para a tarefa 6.
 
-```ts
-import { expect, test, type Page } from "@playwright/test";
-import { fileURLToPath } from "node:url";
+Nesta tarefa o e2e só precisa **continuar passando**. Como a barra mudou, dois
+seletores antigos deixaram de existir; faça apenas estas trocas cirúrgicas em
+`web/frontend/e2e/conversao.spec.ts`:
 
-const PLANTA = fileURLToPath(
-  new URL("../../../tests/fixtures/planta_de_teste.pdf", import.meta.url));
+- `page.locator("#exportar")` → `page.locator('[data-teste="exportar"]')`
+  (duas ocorrências)
+- `page.locator("#estimativa")` → `page.locator('[data-teste="estimativa-valor"]')`
+- A asserção `await expect(estimativa).toContainText("≈")` vira
+  `await expect(estimativa).not.toHaveText("")` — o `≈` saiu do texto quando a
+  estimativa passou a ser comparação.
+- **Apague** o bloco do chip de layer (`const chip = …` até
+  `toHaveAttribute("aria-pressed", "false")`) e o bloco do "Unir em polilinhas".
+  Os dois miravam a faixa 2, que não existe mais; a tarefa 6 os recria mirando o
+  painel.
 
-/**
- * Todos os seletores são `data-teste`, e nenhum é por texto.
- *
- * O cabeçalho antigo era procurado por rótulo, e esta etapa muda quase todos:
- * teste que quebra ao trocar uma palavra não estava testando comportamento.
- */
-const t = (page: Page, nome: string) => page.locator(`[data-teste="${nome}"]`);
+O `#escolher-pdf` continua valendo: a tarefa 5 mantém o `id` no `<input
+type=file>` escondido, justamente porque o Playwright precisa dele para
+`setInputFiles`.
 
-async function abrirPlanta(page: Page): Promise<void> {
-  await page.goto("/");
-  await page.setInputFiles("#escolher-pdf", PLANTA);
-  // Espera por condição: o botão só habilita quando a geometria chegou.
-  await expect(t(page, "exportar")).toBeEnabled({ timeout: 60_000 });
-  await expect(page.locator("#aviso")).toBeHidden();
-}
-
-test("converte uma planta de ponta a ponta", async ({ page }) => {
-  await abrirPlanta(page);
-
-  const estimativa = t(page, "estimativa-valor");
-  await expect(estimativa).not.toHaveText("");
-
-  // "Unir em polilinhas" abre ligada; desligá-la mexe na estimativa.
-  const opcao = t(page, "opcao-join_polylines");
-  await expect(opcao).toHaveAttribute("aria-pressed", "true");
-  const antes = await estimativa.textContent();
-  await opcao.click();
-  await expect(opcao).toHaveAttribute("aria-pressed", "false");
-  await expect(estimativa).not.toHaveText(antes!);
-
-  // Exporta e o download acontece.
-  const download = page.waitForEvent("download");
-  await t(page, "exportar").click();
-  const arquivo = await download;
-  expect(await arquivo.path()).toBeTruthy();
-});
-
-test("o desenho aparece no canvas", async ({ page }) => {
-  await abrirPlanta(page);
-
-  // Espera por condição, e não por relógio: com o preparo fatiado entre
-  // quadros, quantos quadros passam até o desenho ficar pronto depende da
-  // máquina. O `main.ts` publica a contagem no próprio canvas.
-  await expect
-    .poll(async () => Number(await page.locator("#desenho")
-                                       .getAttribute("data-desenhadas")),
-          { timeout: 30_000 })
-    .toBeGreaterThan(0);
-
-  // Um canvas todo do fundo é canvas vazio. Conta quantas cores distintas há:
-  // com desenho, há mais de uma.
-  const cores = await page.locator("#desenho").evaluate((tela) => {
-    const c = tela as HTMLCanvasElement;
-    const ctx = c.getContext("2d")!;
-    const d = ctx.getImageData(0, 0, c.width, c.height).data;
-    const vistas = new Set<number>();
-    for (let i = 0; i < d.length; i += 4) {
-      vistas.add((d[i]! << 16) | (d[i + 1]! << 8) | d[i + 2]!);
-      if (vistas.size > 1) break;
-    }
-    return vistas.size;
-  });
-  expect(cores).toBeGreaterThan(1);
-});
-```
-
-O seletor `opcao-join_polylines` só existe depois da tarefa 6. **Este passo
-deixa o primeiro teste vermelho de propósito** — é o que garante que a tarefa 6
-seja escrita para satisfazê-lo, e não o contrário.
+A reescrita completa do arquivo, com os `data-teste` e os casos novos, é o
+passo 4 da tarefa 6.
 
 - [ ] **Passo 6: rodar**
 
@@ -1562,9 +1511,8 @@ seja escrita para satisfazê-lo, e não o contrário.
 cd web/frontend && npm test && npm run build && npm run e2e
 ```
 
-Esperado: `npm test` e `npm run build` PASSAM. No `e2e`, "o desenho aparece no
-canvas" PASSA e "converte uma planta de ponta a ponta" FALHA em
-`opcao-join_polylines`. Confirme que a falha é essa, e não outra.
+Esperado: **tudo PASSA**, os dois testes de ponta a ponta inclusive. Se o e2e
+falhar, é defeito desta tarefa — não há nada combinado para ficar vermelho.
 
 - [ ] **Passo 7: commitar**
 
@@ -1915,9 +1863,80 @@ window.addEventListener("resize", () => {
 
 - [ ] **Passo 4: acrescentar os casos de ponta a ponta**
 
-Acrescente ao fim de `web/frontend/e2e/conversao.spec.ts`:
+Substitua **todo** o conteúdo de `web/frontend/e2e/conversao.spec.ts` por:
 
 ```ts
+import { expect, test, type Page } from "@playwright/test";
+import { fileURLToPath } from "node:url";
+
+const PLANTA = fileURLToPath(
+  new URL("../../../tests/fixtures/planta_de_teste.pdf", import.meta.url));
+
+/**
+ * Todos os seletores são `data-teste`, e nenhum é por texto.
+ *
+ * O cabeçalho antigo era procurado por rótulo, e esta etapa muda quase todos:
+ * teste que quebra ao trocar uma palavra não estava testando comportamento.
+ */
+const t = (page: Page, nome: string) => page.locator(`[data-teste="${nome}"]`);
+
+async function abrirPlanta(page: Page): Promise<void> {
+  await page.goto("/");
+  await page.setInputFiles("#escolher-pdf", PLANTA);
+  // Espera por condição: o botão só habilita quando a geometria chegou.
+  await expect(t(page, "exportar")).toBeEnabled({ timeout: 60_000 });
+  await expect(page.locator("#aviso")).toBeHidden();
+}
+
+test("converte uma planta de ponta a ponta", async ({ page }) => {
+  await abrirPlanta(page);
+
+  const estimativa = t(page, "estimativa-valor");
+  await expect(estimativa).not.toHaveText("");
+
+  // "Unir em polilinhas" abre ligada; desligá-la mexe na estimativa.
+  const opcao = t(page, "opcao-join_polylines");
+  await expect(opcao).toHaveAttribute("aria-pressed", "true");
+  const antes = await estimativa.textContent();
+  await opcao.click();
+  await expect(opcao).toHaveAttribute("aria-pressed", "false");
+  await expect(estimativa).not.toHaveText(antes!);
+
+  // Exporta e o download acontece.
+  const download = page.waitForEvent("download");
+  await t(page, "exportar").click();
+  const arquivo = await download;
+  expect(await arquivo.path()).toBeTruthy();
+});
+
+test("o desenho aparece no canvas", async ({ page }) => {
+  await abrirPlanta(page);
+
+  // Espera por condição, e não por relógio: com o preparo fatiado entre
+  // quadros, quantos quadros passam até o desenho ficar pronto depende da
+  // máquina. O `main.ts` publica a contagem no próprio canvas.
+  await expect
+    .poll(async () => Number(await page.locator("#desenho")
+                                       .getAttribute("data-desenhadas")),
+          { timeout: 30_000 })
+    .toBeGreaterThan(0);
+
+  // Um canvas todo do fundo é canvas vazio. Conta quantas cores distintas há:
+  // com desenho, há mais de uma.
+  const cores = await page.locator("#desenho").evaluate((tela) => {
+    const c = tela as HTMLCanvasElement;
+    const ctx = c.getContext("2d")!;
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    const vistas = new Set<number>();
+    for (let i = 0; i < d.length; i += 4) {
+      vistas.add((d[i]! << 16) | (d[i + 1]! << 8) | d[i + 2]!);
+      if (vistas.size > 1) break;
+    }
+    return vistas.size;
+  });
+  expect(cores).toBeGreaterThan(1);
+});
+
 test("o painel recolhe, guarda o estado e reabre na seção clicada", async ({ page }) => {
   await abrirPlanta(page);
 
@@ -1952,8 +1971,7 @@ test("em tela estreita o painel vira gaveta", async ({ page }) => {
 cd web/frontend && npm test && npm run build && npm run e2e
 ```
 
-Esperado: tudo PASSA, inclusive o "converte uma planta de ponta a ponta" que a
-tarefa 5 deixou vermelho.
+Esperado: tudo PASSA, com quatro testes de ponta a ponta.
 
 - [ ] **Passo 6: conferir com planta real, na tela**
 

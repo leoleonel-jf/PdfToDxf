@@ -61,11 +61,75 @@ async function pedir(caminho: string, init: RequestInit = {}): Promise<Response>
   return resposta;
 }
 
-export async function enviarPdf(arquivo: File, sinal?: AbortSignal): Promise<Ficha> {
-  const forma = new FormData();
-  forma.append("arquivo", arquivo);
-  const r = await pedir("/api/jobs", { method: "POST", body: forma, signal: sinal });
-  return r.json();
+/**
+ * Envia o PDF, relatando quantos bytes já subiram.
+ *
+ * É o único pedido deste arquivo que não usa `fetch`, e a razão é única: o
+ * `fetch` não expõe progresso de upload em navegador nenhum hoje. O corpo em
+ * fluxo com `duplex: "half"` resolveria, e não tem suporte suficiente.
+ *
+ * Duas coisas não podem regredir aqui, porque já valiam antes: o `AbortSignal`
+ * corta o envio em curso, e a recusa do servidor vira `ErroDaApi` com status e
+ * detalhe — é por esse caminho que a mensagem de recusa chega à tela.
+ */
+export function enviarPdf(arquivo: File, sinal?: AbortSignal,
+                          aoProgredir?: (enviados: number, total: number) => void):
+                          Promise<Ficha> {
+  return new Promise((resolve, reject) => {
+    if (sinal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+
+    const forma = new FormData();
+    forma.append("arquivo", arquivo);
+
+    const x = new XMLHttpRequest();
+    x.open("POST", "/api/jobs");
+
+    x.upload.addEventListener("progress", (e) => {
+      const p = e as ProgressEvent;
+      if (p.lengthComputable) aoProgredir?.(p.loaded, p.total);
+    });
+
+    const desistir = () => x.abort();
+    sinal?.addEventListener("abort", desistir, { once: true });
+    const limpar = () => sinal?.removeEventListener("abort", desistir);
+
+    x.addEventListener("abort", () => {
+      limpar();
+      reject(new DOMException("Aborted", "AbortError"));
+    });
+
+    x.addEventListener("error", () => {
+      limpar();
+      reject(new TypeError("Não consegui falar com o servidor."));
+    });
+
+    x.addEventListener("load", () => {
+      limpar();
+      if (x.status >= 200 && x.status < 300) {
+        try {
+          resolve(JSON.parse(x.responseText) as Ficha);
+        } catch {
+          reject(new ErroDaApi(x.status, "O servidor respondeu algo que não entendi."));
+        }
+        return;
+      }
+      // Mesmo contrato do `pedir`: detalhe do corpo quando houver, status
+      // quando não houver.
+      let detalhe = `HTTP ${x.status}`;
+      try {
+        const corpo = JSON.parse(x.responseText);
+        if (corpo?.detail) detalhe = String(corpo.detail);
+      } catch {
+        // Resposta sem JSON: fica o status, que já diz o suficiente.
+      }
+      reject(new ErroDaApi(x.status, detalhe));
+    });
+
+    x.send(forma);
+  });
 }
 
 export async function pedirExtracao(job: string, pagina: number,

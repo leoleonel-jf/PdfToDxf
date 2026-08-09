@@ -9,28 +9,17 @@ test("converte uma planta de ponta a ponta", async ({ page }) => {
   await page.setInputFiles("#escolher-pdf", PLANTA);
 
   // Espera por condição: o botão só habilita quando a geometria chegou.
-  await expect(page.locator("#exportar")).toBeEnabled({ timeout: 60_000 });
+  await expect(page.locator('[data-teste="exportar"]'))
+    .toBeEnabled({ timeout: 60_000 });
   await expect(page.locator("#aviso")).toBeHidden();
 
   // A estimativa apareceu e não é zero.
-  const estimativa = page.locator("#estimativa");
-  await expect(estimativa).toContainText("≈");
-
-  // Um chip de layer existe e desligá-lo muda a estimativa.
-  const antes = await estimativa.textContent();
-  const chip = page.locator("#faixa-opcoes button", { hasText: "TEXTO" });
-  await chip.click();
-  await expect(estimativa).not.toHaveText(antes!);
-  await expect(chip).toHaveAttribute("aria-pressed", "false");
-
-  // Ligar "unir em polilinhas" também mexe na estimativa.
-  const depoisDoLayer = await estimativa.textContent();
-  await page.locator("#faixa-opcoes button", { hasText: "Unir em polilinhas" }).click();
-  await expect(estimativa).not.toHaveText(depoisDoLayer!);
+  const estimativa = page.locator('[data-teste="estimativa-valor"]');
+  await expect(estimativa).not.toHaveText("");
 
   // Exporta e o download acontece.
   const download = page.waitForEvent("download");
-  await page.locator("#exportar").click();
+  await page.locator('[data-teste="exportar"]').click();
   const arquivo = await download;
   expect(await arquivo.path()).toBeTruthy();
 });
@@ -38,7 +27,8 @@ test("converte uma planta de ponta a ponta", async ({ page }) => {
 test("o desenho aparece no canvas", async ({ page }) => {
   await page.goto("/");
   await page.setInputFiles("#escolher-pdf", PLANTA);
-  await expect(page.locator("#exportar")).toBeEnabled({ timeout: 60_000 });
+  await expect(page.locator('[data-teste="exportar"]'))
+    .toBeEnabled({ timeout: 60_000 });
 
   // Espera por condição, e não por relógio: com o preparo fatiado entre
   // quadros, quantos quadros passam até o desenho ficar pronto depende da

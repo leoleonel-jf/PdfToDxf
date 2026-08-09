@@ -22,21 +22,21 @@ import {
 } from "./gestos.js";
 import { avisoDaSituacao, avisoDoErro, type Aviso } from "./estados.js";
 import {
-  escalaPorDoisPontos, iniciarCalibragem, marcarPonto, posicaoDaLupa,
-  type Calibragem,
+  escalaPorDoisPontos, marcarPonto, posicaoDaLupa, type Calibragem,
 } from "./calibrate.js";
 import { ordenarPorComprimento } from "./ordem.js";
 import { criarPintor, passo, type Cena } from "./pintor.js";
 import { selecionar } from "./select.js";
 import { estimarBytes } from "./estimativa.js";
-import {
-  montarFaixaDeOpcoes, opcoesEfetivas, textoDaEstimativa, type EstadoDaTela,
-} from "./toolbar.js";
+import { opcoesEfetivas, type EstadoDaTela } from "./toolbar.js";
+import { montarBarra } from "./barra.js";
 
 const tela = document.querySelector<HTMLCanvasElement>("#desenho")!;
 const ctx = tela.getContext("2d")!;
-const faixaPrincipal = document.querySelector<HTMLElement>("#faixa-principal")!;
-const faixaOpcoes = document.querySelector<HTMLElement>("#faixa-opcoes")!;
+const barra = document.querySelector<HTMLElement>("#barra")!;
+// A tarefa 6 lê `#painel` para montar o painel lateral; nesta tarefa o
+// elemento já existe no HTML (passo 3), mas nada em JS o usa ainda — declarar
+// a constante aqui e não usá-la falharia `noUnusedLocals`.
 const painelAviso = document.querySelector<HTMLElement>("#aviso")!;
 const faixaDetalhe = document.querySelector<HTMLElement>("#faixa-detalhe")!;
 
@@ -55,6 +55,7 @@ const estado: EstadoDaTela = {
 };
 
 let job = "";
+let nomeDoArquivo = "";
 let pagina = 1;
 let nPaginas = 1;
 let meta: Meta | null = null;
@@ -133,7 +134,7 @@ function recalcular(): void {
   for (const v of mascara) vivos += v;
   estado.sobreviventes = vivos;
   geracao++;                     // avisa o pintor que a lista precisa ser refeita
-  montarFaixaPrincipal();
+  montarTopo();
   agendar();
 }
 
@@ -171,6 +172,7 @@ async function abrir(arquivo: File): Promise<void> {
     mostrarAviso({ titulo: "Enviando o PDF", detalhe: "Um instante.",
                    podeTentarDeNovo: false });
     const ficha = await enviarPdf(arquivo, sinal);
+    nomeDoArquivo = arquivo.name;
     job = ficha.job_id;
     nPaginas = ficha.n_paginas;
     pagina = 1;
@@ -208,7 +210,6 @@ async function carregarPagina(): Promise<void> {
     meta = await lerMeta(job, pagina, sinal);
     mostrarAviso(null);
     estado.layersDesligados.clear();
-    montarFaixaDeOpcoes(faixaOpcoes, estado, meta.layers, aoMudarOpcoes);
 
     const cruEsqueleto = await lerGeometriaBruta(job, pagina, "esqueleto", sinal);
     if (sinal.aborted) return;
@@ -240,78 +241,19 @@ async function carregarPagina(): Promise<void> {
   }
 }
 
-function aoMudarOpcoes(): void {
-  montarFaixaDeOpcoes(faixaOpcoes, estado, meta?.layers ?? [], aoMudarOpcoes);
-  recalcular();
-}
-
-function montarFaixaPrincipal(): void {
-  faixaPrincipal.replaceChildren();
-
-  const escolher = document.createElement("input");
-  escolher.type = "file";
-  escolher.accept = "application/pdf";
-  escolher.id = "escolher-pdf";
-  escolher.addEventListener("change", () => {
-    const arquivo = escolher.files?.[0];
-    if (arquivo) void abrir(arquivo);
+function montarTopo(): void {
+  montarBarra(barra, {
+    estado,
+    nomeDoArquivo,
+    pagina,
+    nPaginas,
+    temGeometria: Boolean(geometria),
+    mostrarMenu: false,          // a tarefa 6 liga isto ao modo do painel
+    aoAbrirArquivo: (arquivo) => void abrir(arquivo),
+    aoTrocarPagina: (p) => { pagina = p; void carregarPagina(); },
+    aoAlternarPainel: () => {},  // a tarefa 6 liga isto
+    aoExportar: () => void baixar(),
   });
-  faixaPrincipal.append(escolher);
-
-  if (nPaginas > 1) {
-    const seletor = document.createElement("select");
-    seletor.className = "botao";
-    seletor.id = "seletor-pagina";
-    for (let p = 1; p <= nPaginas; p++) {
-      const opcao = document.createElement("option");
-      opcao.value = String(p);
-      opcao.textContent = `Página ${p}`;
-      opcao.selected = p === pagina;
-      seletor.append(opcao);
-    }
-    seletor.addEventListener("change", () => {
-      pagina = Number(seletor.value);
-      void carregarPagina();
-    });
-    faixaPrincipal.append(seletor);
-  }
-
-  const escala = document.createElement("span");
-  escala.className = "fraco";
-  escala.id = "escala-atual";
-  escala.textContent = `1 pt = ${estado.escala} ${estado.unidade}`;
-  faixaPrincipal.append(escala);
-
-  const estimativa = document.createElement("span");
-  estimativa.className = "fraco";
-  estimativa.id = "estimativa";
-  estimativa.textContent = textoDaEstimativa(estado.bytes, estado.parcial);
-  faixaPrincipal.append(estimativa);
-
-  const calibrar = document.createElement("button");
-  calibrar.className = "botao";
-  calibrar.id = "calibrar";
-  calibrar.type = "button";
-  calibrar.textContent = "Calibrar (2 pontos)";
-  calibrar.disabled = !geometria;
-  calibrar.setAttribute("aria-pressed", String(Boolean(calibragem?.ativa)));
-  calibrar.addEventListener("click", () => {
-    calibragem = iniciarCalibragem();
-    mostrarAviso({ titulo: "Calibração", podeTentarDeNovo: false,
-                   detalhe: "Toque nas duas extremidades de uma medida " +
-                            "conhecida da planta." });
-    montarFaixaPrincipal();
-  });
-  faixaPrincipal.append(calibrar);
-
-  const exportarBotao = document.createElement("button");
-  exportarBotao.className = "botao principal";
-  exportarBotao.id = "exportar";
-  exportarBotao.type = "button";
-  exportarBotao.textContent = "Exportar DXF";
-  exportarBotao.disabled = !geometria;
-  exportarBotao.addEventListener("click", () => void baixar());
-  faixaPrincipal.append(exportarBotao);
 }
 
 async function baixar(): Promise<void> {
@@ -412,7 +354,7 @@ tela.addEventListener("click", (e) => {
                    detalhe: erro instanceof Error ? erro.message : "" });
   }
   calibragem = null;
-  montarFaixaPrincipal();
+  montarTopo();
 });
 
 tela.addEventListener("pointerdown", (e) => {
@@ -477,4 +419,4 @@ window.addEventListener("resize", () => {
 });
 
 ajustarTamanho();
-montarFaixaPrincipal();
+montarTopo();

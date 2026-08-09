@@ -57,6 +57,15 @@ function gerar(): Geometria {
   };
 }
 
+/**
+ * Reporta o **mínimo**, não a faixa.
+ *
+ * Sob carga o ruído só soma tempo: uma fatia roubada pelo escalonador, uma
+ * coleta de lixo, outro processo no núcleo. Nada disso deixa o trabalho mais
+ * rápido. Então o mínimo de muitas passagens é a estimativa honesta do custo
+ * real, e é o único número que sobrevive a uma máquina ocupada. A mediana vai
+ * junto para se ver o tamanho do ruído.
+ */
 function cronometrar<T>(nome: string, vezes: number, f: () => T): T {
   const gastos: number[] = [];
   let r: T = undefined as T;
@@ -65,7 +74,10 @@ function cronometrar<T>(nome: string, vezes: number, f: () => T): T {
     r = f();
     gastos.push(performance.now() - inicio);
   }
-  linhas.push(`${nome}: ${gastos.map((g) => g.toFixed(0)).join(" / ")} ms`);
+  const ordenados = [...gastos].sort((a, b) => a - b);
+  const minimo = ordenados[0]!;
+  const mediana = ordenados[Math.floor(ordenados.length / 2)]!;
+  linhas.push(`${nome}: min ${minimo.toFixed(0)} ms, mediana ${mediana.toFixed(0)} ms`);
   mostrar();
   return r;
 }
@@ -108,7 +120,7 @@ for (const [lado, teto, folga] of COMBINACOES) {
     const visivel = janelaVisivel(v, tela.width, tela.height, 0);
 
     const p = prepararTudo(g, mascara, ordem, janela, escala, lado, teto);
-    cronometrar(`  ${nome} | quadro`, 5, () => {
+    cronometrar(`  ${nome} | quadro`, 15, () => {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, tela.width, tela.height);
       desenharLote(ctx, g, p.lista, p.quantos, v, () => new Path2D(), visivel);

@@ -100,3 +100,61 @@ export function textoDe(g: Geometria, i: number): string {
   if (inicio === fim) return "";
   return DECODIFICADOR.decode(g.texto.subarray(inicio, fim));
 }
+
+/**
+ * Junta esqueleto e detalhe de volta em ordem de índice original.
+ *
+ * Não é conveniência: o `select()` com dedup elege o primeiro de cada grupo de
+ * duplicatas **em ordem original**, e a divisão separa longos de curtos. Sem
+ * restaurar a ordem, a prévia mostra um traço que o DXF descarta. As duas
+ * partes já chegam ordenadas, então uma passada basta.
+ */
+export function intercalar(a: Geometria, b: Geometria): Geometria {
+  const n = a.n + b.n;
+  const idx = new Uint32Array(n);
+  const kind = new Uint8Array(n);
+  const layer_id = new Uint32Array(n);
+  const is_fill = new Uint8Array(n);
+  const length_um = new Uint32Array(n);
+  const dup_group = new Int32Array(n);
+  const byte_cost = new Uint32Array(n);
+  const cor = new Uint32Array(n);
+  const coords = new Float32Array(a.coords.length + b.coords.length);
+  const coord_off = new Uint32Array(n + 1);
+  const texto = new Uint8Array(a.texto.length + b.texto.length);
+  const texto_off = new Uint32Array(n + 1);
+
+  let ia = 0, ib = 0, cursorCoord = 0, cursorTexto = 0;
+  for (let k = 0; k < n; k++) {
+    const daPrimeira = ib >= b.n || (ia < a.n && a.idx[ia]! < b.idx[ib]!);
+    const g = daPrimeira ? a : b;
+    const i = daPrimeira ? ia++ : ib++;
+
+    idx[k] = g.idx[i]!;
+    kind[k] = g.kind[i]!;
+    layer_id[k] = g.layer_id[i]!;
+    is_fill[k] = g.is_fill[i]!;
+    length_um[k] = g.length_um[i]!;
+    dup_group[k] = g.dup_group[i]!;
+    byte_cost[k] = g.byte_cost[i]!;
+    cor[k] = g.cor[i]!;
+
+    const c = g.coords.subarray(g.coord_off[i]!, g.coord_off[i + 1]!);
+    coords.set(c, cursorCoord);
+    cursorCoord += c.length;
+    coord_off[k + 1] = cursorCoord;
+
+    const t = g.texto.subarray(g.texto_off[i]!, g.texto_off[i + 1]!);
+    if (t.length) {
+      texto.set(t, cursorTexto);
+      cursorTexto += t.length;
+    }
+    texto_off[k + 1] = cursorTexto;
+  }
+
+  return {
+    n, layers: a.layers, n_groups: a.n_groups,
+    idx, kind, layer_id, is_fill, length_um, dup_group, byte_cost, cor,
+    coord_off, coords, texto_off, texto,
+  };
+}

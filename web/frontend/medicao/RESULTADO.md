@@ -92,6 +92,75 @@ Três conclusões, e elas mandam mais que as da primeira medição:
   segmentos que não aparecem — que é exatamente o que um recorte por região
   visível elimina.
 
+## Terceira medição: a varredura é o custo, não o traçado
+
+Feita em 2026-08-09 por `medicao/indice.html`, durante o redesenho, para
+responder antes de escrever o spec — e não depois — quanto custa o índice que o
+desenho novo pretendia usar. **Navegador diferente das duas primeiras:** o
+embutido do app (Chromium 148 sobre Electron), porque a extensão do Chrome não
+voltou depois de a máquina reiniciar. Mesmo motor, versão um pouco atrás.
+
+3 milhões de segmentos com comprimentos log-uniformes de 0,05 a 100 pt — a forma
+de uma planta de CAD, muita linha curta e poucas longas. Uniforme daria uma
+planta que não existe e responderia à pergunta errada.
+
+### Montar o índice
+
+| Fase | ms |
+|---|---|
+| ordenar por comprimento (radix de 16 bits, 2 passadas) | 270 / 233 |
+| montar a grade | 560 / 455 |
+
+Das 3 milhões, 893 mil ficaram **fora** da grade, na lista de "grandes": são as
+que não cabem numa célula. Com esta distribuição, quase um terço.
+
+### O quadro, com grade e com os filtros
+
+| Zoom | Filtro | Traçados | ms |
+|---|---|---|---|
+| folha inteira | nenhum | 3.000.000 | 1701 / 1743 / 1546 |
+| folha inteira | limiar de 1 px | 1.797.261 | 941 / 950 / 1118 |
+| folha inteira | limiar + teto de 4 por caixa | 113.600 | 423 / 529 / 563 |
+| folha inteira | limiar + teto de 2 por caixa | 56.800 | 474 / 517 / 625 |
+| zoom 4× | limiar + teto de 2 por caixa | 220.857 | 505 / 374 / 426 |
+| zoom 16× | limiar + teto de 2 por caixa | 59.480 | 167 / 169 / 169 |
+
+Duas coisas já aparecem aqui. **O limiar de um pixel corta pouco**: 1,8 milhão
+de segmentos sobrevive a ele com a folha inteira à vista, porque numa planta a
+maioria das linhas é maior que um pixel. E **reduzir o traçado de 3 milhões para
+57 mil não fez o quadro cair na mesma proporção** — de ~1600 ms para ~500 ms, e
+não para ~20 ms. Algo além do traçado estava dominando.
+
+### O experimento de controle, que é o que decidiu
+
+A mesma lista de 56.800, já pronta, sem varrer as 3 milhões:
+
+| | ms |
+|---|---|
+| desenhar a lista pronta | 22 / 17 / 27 / 17 / 15 |
+| desenhar a lista pronta, pan de 5 quadros | 15 / 16 / 16 / 15 / 14 |
+
+**Vinte vezes mais rápido, desenhando exatamente as mesmas entidades.** O meio
+segundo era inteiramente a varredura das 3 milhões, refeita a cada quadro. O
+traçado de 57 mil segmentos custa 15 ms, que é quadro de 60 por segundo.
+
+### O que isso decidiu
+
+- **A grade foi descartada.** Ela custava de 455 a 560 ms para montar e existia
+  para evitar uma varredura que o desenho novo não faz mais. Recortar por região
+  dentro de uma lista de 57 mil é um teste de caixa sobre 57 mil itens, abaixo
+  de um milissegundo.
+- **A lista de desenho é preparada uma vez, não por quadro.** O teto por região
+  escolhe os mais longos primeiro, e por isso a ordenação por comprimento é o
+  único pré-cálculo que sobra.
+- **Pan e zoom não preparam nada**: re-traçam a lista sob outra transformação,
+  a 15 ms. Preparar de novo só quando o zoom muda muito ou quando a máscara
+  muda — e essa preparação, de ~500 ms, é fatiada entre quadros.
+
+O código da grade continua em `medicao/indice.ts` de propósito: é o registro do
+que foi medido e recusado, e sem ele a linha "a grade foi descartada" seria
+afirmação sem prova.
+
 ## O que reabrir antes da tarefa 5
 
 Isto é o achado, não a solução — a solução é decisão de projeto:

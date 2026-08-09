@@ -8,9 +8,11 @@ Estado em 2026-08-09. Leia isto primeiro ao retomar em sessão nova.
 > e commitado em
 > `docs/superpowers/specs/2026-08-09-canvas-redesenho-design.md`.
 >
-> O spec foi revisado e aprovado, e o plano das tarefas restantes está escrito
-> em `docs/superpowers/plans/2026-08-09-canvas-redesenhado.md` — doze tarefas.
-> **O próximo passo é executá-lo**, começando pela tarefa 1 (`ordem.ts`). Leia o
+> O spec foi aprovado e o plano
+> `docs/superpowers/plans/2026-08-09-canvas-redesenhado.md` está **em execução:
+> 5 das 12 tarefas prontas** (`ordem.ts`, `canvas.ts`, `lista.ts`, `pintor.ts`,
+> `api.ts`), 2086 testes verdes. **O próximo passo é a tarefa 5 do plano** — o
+> `gestos.ts`, que é a tarefa 10 do plano de 2026-08-04 mais uma emenda. Leia o
 > spec novo e o
 > `web/frontend/medicao/RESULTADO.md` antes de propor qualquer coisa — os
 > números são o que sustenta o desenho, e três hipóteses razoáveis já morreram
@@ -154,9 +156,30 @@ dentro do `try`, e o retrato roda fora dele.
 
 ### Etapa 3 — frontend (branch `frontend-canvas`, em andamento)
 
-Cinco das quinze tarefas, em 2026-08-09. A execução parou na tarefa 6 porque a
-medição derrubou a arquitetura do plano; o desenho foi refeito e **as tarefas 6
-a 15 do plano antigo estão canceladas**, à espera de um plano novo.
+A medição derrubou a arquitetura do plano de 2026-08-04, o desenho foi refeito,
+e a etapa passou a ser governada pelo plano de 2026-08-09 — **5 das 12 tarefas
+dele estão prontas**, com 2086 testes verdes:
+
+| Arquivo | O que faz |
+|---|---|
+| `select.ts`, `estimativa.ts`, `formato.ts` | espelhos do Python e o leitor do binário |
+| `ordem.ts` | ordem por comprimento decrescente, radix estável |
+| `canvas.ts` | vista papel↔tela e o traçado de um lote |
+| `lista.ts` | a lista de desenho preparada por janela, retomável |
+| `pintor.ts` | o laço de quadro: orçamento e quando preparar de novo |
+| `api.ts` | cliente HTTP com recuo crescente e aborto por página |
+
+Falta a interface: `gestos.ts`, `calibrate.ts`, `estados.ts`, `estilo.css`,
+`toolbar.ts`, `main.ts`, a calibração na tela, o Playwright e o Docker.
+
+**As constantes do desenho foram medidas e mudadas:** região de 8 px, teto 2,
+folga 0,25 — o spec fixava 4 e 4 a partir de um protótipo, e medido com a
+implementação de verdade aquele par dava 143 ms por quadro contra 31 ms deste.
+**Nenhuma combinação fecha o alvo de 33 ms nos três zooms**, e o motivo está no
+RESULTADO: o custo do quadro segue a **tinta rasterizada**, não a contagem de
+entidades, e os três parâmetros só controlam contagem. O ajuste fino, e a
+decisão sobre um cache de imagem para o pan, esperam **planta real na tela** —
+é quando a qualidade do desenho pode ser vista em vez de suposta.
 
 **Leia `docs/superpowers/specs/2026-08-09-canvas-redesenho-design.md`** — ele
 substitui a seção de arquitetura do desenho de 2026-08-04 e é o que governa
@@ -314,15 +337,13 @@ pelos primeiros.
 
 ### Trabalho de sessão
 
-6. **Executar `docs/superpowers/plans/2026-08-09-canvas-redesenhado.md`** —
-   doze tarefas, começando pela 1 (`ordem.ts`). É o trabalho imediato.
+6. **Terminar `docs/superpowers/plans/2026-08-09-canvas-redesenhado.md`** — 5
+   das 12 tarefas prontas; a próxima é a 5, `gestos.ts`. É o trabalho imediato.
 
-   Duas coisas para não tropeçar: o plano é **um delta** sobre o de 2026-08-04,
-   que continua no repositório como fonte do código das tarefas que não mudaram
-   — a tabela no topo dele diz exatamente qual tarefa vem de onde, e a ordem de
-   execução não é a ordem dos números. E o passo 6 da tarefa 3 é uma **medição
-   que pode derrubar uma constante do spec**; se nem o teto 2 couber em 33 ms
-   por quadro, pare em vez de ajustar o número em silêncio.
+   Para não tropeçar: o plano é **um delta** sobre o de 2026-08-04, que continua
+   no repositório como fonte do código das tarefas que não mudaram — a tabela no
+   topo dele diz qual tarefa vem de onde, e **a ordem de execução não é a ordem
+   dos números**.
 
 7. **Planejar as etapas 4 e 5.**
 

@@ -32,6 +32,17 @@ export function escalaPorEscalaDePlotagem(razao: number,
   return (PT_PARA_MM * razao) / MM_POR_UNIDADE[unidade];
 }
 
+/**
+ * A inversa de `escalaPorEscalaDePlotagem`: o "N" de 1:N.
+ *
+ * A tela precisa mostrar a razão de plotagem, e calcular `1/escala` para isso
+ * está errado — `escala` é unidade real por ponto de papel, não uma razão. Com
+ * a unidade em metros, `escala = 0.01` é 1:28, não 1:100.
+ */
+export function razaoDeEscala(escala: number, unidade: Unidade = "m"): number {
+  return (escala * MM_POR_UNIDADE[unidade]) / PT_PARA_MM;
+}
+
 // --- o gesto ----------------------------------------------------------------
 
 export type Calibragem = {

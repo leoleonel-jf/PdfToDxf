@@ -5,7 +5,10 @@
  * faltava: no cabeçalho antigo "Remover duplicados" era um botão azul sem
  * nenhuma pista do que faria com o desenho.
  */
-import type { Unidade } from "./calibrate.js";
+import {
+  escalaPorEscalaDePlotagem, razaoDeEscala, MM_POR_UNIDADE, type Unidade,
+} from "./calibrate.js";
+import { corDeInteiro } from "./canvas.js";
 import type { Opcoes } from "./select.js";
 import type { EstadoDaTela } from "./toolbar.js";
 import {
@@ -39,6 +42,22 @@ function explicacao(chave: keyof Opcoes, repetidos: number | null): string {
 
 const UNIDADES: Unidade[] = ["mm", "cm", "m"];
 
+/**
+ * A frase por extenso: "1 pt de papel = 1 cm real".
+ *
+ * `0.01 m` e `1 cm` são o mesmo comprimento, mas só o segundo se lê. O número
+ * vai para milímetros, escolhe sozinho a unidade que o deixa legível, e sai com
+ * vírgula decimal e a concordância certa — a linha existe para ser lida.
+ */
+function leituraDaEscala(escala: number, unidade: Unidade): string {
+  const mm = escala * MM_POR_UNIDADE[unidade];
+  const escolhida: Unidade = mm >= 1000 ? "m" : mm >= 10 ? "cm" : "mm";
+  const quanto = mm / MM_POR_UNIDADE[escolhida];
+  const numero = quanto.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+  const real = numero === "1" ? "real" : "reais";
+  return `1 pt de papel = ${numero} ${escolhida} ${real}`;
+}
+
 export function secaoEscala(e: EstadoDaTela, temGeometria: boolean,
                             aoCalibrar: () => void,
                             aoMudar: () => void): HTMLElement {
@@ -48,18 +67,26 @@ export function secaoEscala(e: EstadoDaTela, temGeometria: boolean,
   const valor = document.createElement("div");
   valor.className = "destaque-numero";
   valor.dataset["teste"] = "escala-atual";
-  valor.textContent = `1:${Math.round(1 / e.escala)}`;
+  // `1/escala` não é a razão de plotagem: `escala` é unidade real por ponto de
+  // papel, e converter uma na outra depende da unidade. Quem sabe fazer a conta
+  // é o `calibrate.ts`, que tem teste para ela.
+  valor.textContent = `1:${Math.round(razaoDeEscala(e.escala, e.unidade))}`;
 
   const leitura = document.createElement("div");
   leitura.className = "apoio";
-  leitura.textContent = `1 pt de papel = ${e.escala} ${e.unidade} reais`;
+  leitura.textContent = leituraDaEscala(e.escala, e.unidade);
 
   // Alternativa que a spec geral previa desde 2026-08-01 e que a tela da etapa
   // 3 nunca teve: quem já sabe a escala de plotagem não precisa calibrar.
   const porNumero = criarCampoComUnidade({
-    valor: Math.round(1 / e.escala), unidade: "", rotulo: "Escala 1:",
-    teste: "escala-1n", passo: "1",
-    aoMudar: (v) => { if (v > 0) { e.escala = 1 / v; aoMudar(); } },
+    valor: Math.round(razaoDeEscala(e.escala, e.unidade)), unidade: "",
+    rotulo: "Escala 1:", teste: "escala-1n", passo: "1",
+    aoMudar: (v) => {
+      if (v > 0) {
+        e.escala = escalaPorEscalaDePlotagem(v, e.unidade);
+        aoMudar();
+      }
+    },
   });
 
   const unidade = document.createElement("select");
@@ -74,7 +101,13 @@ export function secaoEscala(e: EstadoDaTela, temGeometria: boolean,
     unidade.append(o);
   }
   unidade.addEventListener("change", () => {
-    e.unidade = unidade.value as Unidade;
+    const antiga = e.unidade;
+    const nova = unidade.value as Unidade;
+    // Trocar a unidade não pode mudar o tamanho do desenho: `escala` é unidade
+    // real por ponto de papel, então mudar a unidade exige reexpressar o mesmo
+    // comprimento. Sem isto, ir de metro para milímetro encolhe o DXF 1000x.
+    e.escala = (e.escala * MM_POR_UNIDADE[antiga]) / MM_POR_UNIDADE[nova];
+    e.unidade = nova;
     aoMudar();
   });
 
@@ -114,10 +147,6 @@ export function secaoCompactacao(e: EstadoDaTela, repetidos: number | null,
   }));
 
   return caixa;
-}
-
-function corEmHex(cor: number): string {
-  return `#${cor.toString(16).padStart(6, "0")}`;
 }
 
 export function secaoCamadas(e: EstadoDaTela, resumo: ResumoDeCamada[],
@@ -168,7 +197,10 @@ export function secaoCamadas(e: EstadoDaTela, resumo: ResumoDeCamada[],
       const olho = criarIcone(ligada ? "olho" : "olho-cortado");
       const cor = document.createElement("span");
       cor.className = "cor";
-      cor.style.background = corEmHex(c.cor);
+      // A mesma conversão do canvas, e não uma cópia à mão: `SEM_COR` é
+      // 0xFFFFFFFF, que sem tratamento vira uma bolinha branca ao lado de uma
+      // camada que o desenho pinta de preto.
+      cor.style.background = corDeInteiro(c.cor);
       const nome = document.createElement("span");
       nome.className = "nome";
       nome.textContent = c.nome;

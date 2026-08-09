@@ -16,7 +16,6 @@ export type EstadoDaTela = {
   bytes: number;
   /** A página inteira, sem nenhuma compactação e com todas as camadas. */
   bytesBase: number;
-  sobreviventes: number;
 };
 
 /**
@@ -35,11 +34,6 @@ export function formatarBytes(bytes: number): string {
   return mb >= 1
     ? `${mb.toFixed(1).replace(".", ",")} MB`
     : `${(bytes / 1000).toFixed(1).replace(".", ",")} kB`;
-}
-
-export function textoDaEstimativa(bytes: number, parcial: boolean): string {
-  const texto = `≈ ${formatarBytes(bytes)}`;
-  return parcial ? `${texto} (parcial)` : texto;
 }
 
 /**

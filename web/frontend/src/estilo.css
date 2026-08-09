@@ -266,6 +266,11 @@ html, body {
 .aviso {
   position: absolute;
   inset: 0;
+  /* O aviso cobre o desenho inteiro, e a calibração por 2 pontos é justamente
+     um aviso pedindo dois cliques no canvas: sem isto os cliques morrem nesta
+     div e a calibração nunca fecha. Só há um `h2` e um `p` aqui — nada que
+     precise receber ponteiro. */
+  pointer-events: none;
   display: grid;
   place-content: center;
   gap: var(--e2);

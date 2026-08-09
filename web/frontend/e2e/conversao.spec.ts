@@ -125,6 +125,69 @@ test("a estimativa mostra o tamanho sem compactação ao lado do atual", async (
   await expect(estimativa).not.toContainText("→");
 });
 
+/**
+ * A base é o "antes" da comparação: a página inteira, sem compactação nenhuma.
+ *
+ * O teste acima só exige que a estimativa mude, e passaria igual se a base
+ * fosse recalculada a cada clique — que é exatamente o que ela não pode ser,
+ * nem por custo (~12 ms por opção marcada) nem por sentido: o "antes" tem de
+ * ficar parado para que a redução signifique alguma coisa.
+ */
+test("a base da comparação não se mexe a cada clique", async ({ page }) => {
+  await abrirPlanta(page);
+  const estimativa = t(page, "estimativa-valor");
+
+  const base = async () => {
+    const texto = (await estimativa.textContent())!;
+    expect(texto, texto).toContain("→");
+    return texto.split("→")[0]!.trim();
+  };
+
+  const antes = await base();
+  const textoAntes = (await estimativa.textContent())!;
+
+  // Desligar uma camada tira desenho do arquivo: o número da direita cai, o da
+  // esquerda — a página inteira, com todas as camadas — não pode se mexer.
+  await t(page, "camada-TEXTO").click();
+  await expect(t(page, "camada-TEXTO")).toHaveAttribute("aria-pressed", "false");
+  await expect(estimativa).not.toHaveText(textoAntes);
+  expect(await base()).toBe(antes);
+
+  await t(page, "camada-TEXTO").click();
+  await expect(t(page, "camada-TEXTO")).toHaveAttribute("aria-pressed", "true");
+  expect(await base()).toBe(antes);
+});
+
+/**
+ * O painel abre completo e clicável antes de qualquer PDF, e um clique que não
+ * redesenha é pior do que um botão desabilitado: `drop_fills` ficaria ligada em
+ * silêncio, e a planta carregaria já sem hachura nenhuma.
+ */
+test("o painel responde antes de a planta chegar", async ({ page }) => {
+  await page.goto("/");
+  const opcao = t(page, "opcao-drop_fills");
+  await expect(opcao).toHaveAttribute("aria-pressed", "false");
+  await opcao.click();
+  await expect(opcao).toHaveAttribute("aria-pressed", "true");
+});
+
+test("o atalho do painel recolhido leva à seção pedida", async ({ page }) => {
+  // Larga o bastante para o painel não virar gaveta, e baixa o bastante para
+  // Camadas cair abaixo da dobra: numa janela alta as três seções cabem juntas
+  // e o teste passaria sem provar nada.
+  await page.setViewportSize({ width: 1280, height: 400 });
+  await abrirPlanta(page);
+
+  await t(page, "recolher-painel").click();
+  await expect(page.locator("#painel")).toHaveAttribute("data-modo", "recolhido");
+
+  // Reabrir na seção certa não basta: com 260 px de largura, Camadas fica
+  // abaixo da dobra do painel e o usuário teria de procurar o que acabou de
+  // pedir. `toBeInViewport` é o que distingue "montada" de "à vista".
+  await t(page, "atalho-camadas").click();
+  await expect(t(page, "secao-camadas")).toBeInViewport();
+});
+
 test("as três opções que só tiram redundância abrem ligadas", async ({ page }) => {
   await abrirPlanta(page);
   for (const chave of ["join_polylines", "round_coords", "dedup"]) {

@@ -65,7 +65,6 @@ const estado: EstadoDaTela = {
   parcial: false,
   bytes: 0,
   bytesBase: 0,
-  sobreviventes: 0,
 };
 
 const CHAVE_DO_PAINEL = "pdftodxf.painel";
@@ -164,13 +163,13 @@ function agendar(): void {
  * thread principal, e foi para provar isso que a tarefa 1 do plano existiu.
  */
 function recalcular(): void {
-  if (!geometria) return;
+  // Sem geometria não há o que recalcular, mas há o que redesenhar: é este o
+  // caminho de todo clique no painel, e sair sem remontar deixaria o
+  // interruptor mostrando o estado anterior ao próprio clique.
+  if (!geometria) { montarTudo(); return; }
   const opts = opcoesEfetivas(estado);
   mascara = selecionar(geometria, opts);
   estado.bytes = estimarBytes(geometria, mascara, opts);
-  let vivos = 0;
-  for (const v of mascara) vivos += v;
-  estado.sobreviventes = vivos;
   geracao++;                     // avisa o pintor que a lista precisa ser refeita
   montarTudo();
   agendar();
@@ -237,7 +236,13 @@ async function carregarPagina(): Promise<void> {
   const sinal = controle.signal;
 
   geometria = null;
+  estado.bytes = 0;
+  estado.bytesBase = 0;
   faixaDetalhe.hidden = true;
+  // Sem remontar aqui, numa planta de várias páginas o "Exportar DXF" continua
+  // habilitado com a estimativa da página anterior — e o clique exportaria uma
+  // página que ainda não foi extraída.
+  montarTudo();
 
   try {
     await pedirExtracao(job, pagina, sinal);
@@ -308,6 +313,11 @@ function montarPainelLateral(): void {
   }, alternarPainel, (s: Secao) => {
     painel = abrirEm(painel, s);
     montarTudo();
+    // Abrir o painel na seção certa é metade do trabalho: com 260 px de
+    // largura, Camadas fica abaixo da dobra e o usuário teria de procurar o
+    // que acabou de pedir.
+    document.querySelector(`[data-teste="secao-${s}"]`)
+      ?.scrollIntoView({ block: "start" });
   });
 }
 
@@ -321,14 +331,20 @@ function alternarPainel(): void {
   montarTudo();
 }
 
+const BUSCA = '[data-teste="busca-camadas"]';
+
 /**
- * Remonta a tela preservando o foco e o cursor.
+ * Remonta a tela preservando foco, cursor, rolagem e o filtro de camadas.
  *
  * O painel é reconstruído do zero a cada mudança, e as setas de um campo
  * numérico disparam `change` a cada passo: sem isto, apertar ↑ duas vezes no
  * campo de mm tira o foco do campo já na primeira. Reencontrar o elemento pelo
  * `data-teste` é mais barato do que remontar por partes, e resolve todos os
- * campos de uma vez — inclusive a busca de camadas, que ainda vai chegar.
+ * campos de uma vez — inclusive a busca de camadas.
+ *
+ * Rolagem e filtro andam junto com o foco pelo mesmo motivo: filtrar por
+ * "parede" e clicar no olho de uma camada não pode devolver a lista inteira,
+ * com o campo vazio e o painel no topo.
  */
 function montarTudo(): void {
   const ativo = document.activeElement;
@@ -337,12 +353,30 @@ function montarTudo(): void {
   const cursor = ativo instanceof HTMLInputElement && ativo.type !== "number"
     ? [ativo.selectionStart, ativo.selectionEnd] as const
     : null;
+  const rolagem = painelRaiz.scrollTop;
+  const rolagemDaLista =
+    painelRaiz.querySelector<HTMLElement>(".lista-de-camadas")?.scrollTop ?? 0;
+  const filtro = painelRaiz.querySelector<HTMLInputElement>(BUSCA)?.value ?? "";
 
   montarTopo();
   montarPainelLateral();
 
+  // O filtro volta antes da rolagem: é ele que decide a altura da lista.
+  const busca = painelRaiz.querySelector<HTMLInputElement>(BUSCA);
+  if (busca && filtro) {
+    busca.value = filtro;
+    busca.dispatchEvent(new Event("input"));
+  }
+  painelRaiz.scrollTop = rolagem;
+  const lista = painelRaiz.querySelector<HTMLElement>(".lista-de-camadas");
+  if (lista) lista.scrollTop = rolagemDaLista;
+
   if (!foco) return;
-  const novo = document.querySelector<HTMLElement>(`[data-teste="${foco}"]`);
+  // `CSS.escape` porque o `data-teste` de uma camada carrega o nome que veio do
+  // PDF: uma camada chamada `EIXO"A` faria o seletor estourar aqui, depois de
+  // remontar e antes de repintar, deixando a tela congelada.
+  const novo = document.querySelector<HTMLElement>(
+    `[data-teste="${CSS.escape(foco)}"]`);
   if (!novo) return;
   novo.focus();
   if (novo instanceof HTMLInputElement && cursor && cursor[0] !== null) {

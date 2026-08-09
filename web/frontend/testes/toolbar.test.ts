@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  formatarBytes, opcoesEfetivas, textoDaComparacao, textoDaEstimativa,
+  formatarBytes, opcoesEfetivas, textoDaComparacao,
 } from "../src/toolbar.js";
 
 const base = {
@@ -14,7 +14,6 @@ const base = {
   parcial: false,
   bytes: 0,
   bytesBase: 0,
-  sobreviventes: 0,
 };
 
 describe("toolbar.ts", () => {
@@ -27,12 +26,6 @@ describe("toolbar.ts", () => {
     const a = opcoesEfetivas({ ...base, layersDesligados: new Set(["A", "B"]) });
     const b = opcoesEfetivas({ ...base, layersDesligados: new Set(["B", "A"]) });
     expect(a.excluded_layers).toEqual(b.excluded_layers);
-  });
-
-  it("a estimativa parcial vem marcada", () => {
-    expect(textoDaEstimativa(1_500_000, false)).toBe("≈ 1,5 MB");
-    expect(textoDaEstimativa(1_500_000, true)).toBe("≈ 1,5 MB (parcial)");
-    expect(textoDaEstimativa(2048, false)).toBe("≈ 2,0 kB");
   });
 
   it("a comparação mostra base, atual e a redução", () => {

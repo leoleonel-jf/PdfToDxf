@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   escalaPorDoisPontos, escalaPorEscalaDePlotagem, iniciarCalibragem,
-  marcarPonto, posicaoDaLupa,
+  marcarPonto, posicaoDaLupa, razaoDeEscala, MM_POR_UNIDADE, type Unidade,
 } from "../src/calibrate.js";
 import { enquadrar } from "../src/canvas.js";
 
@@ -34,6 +34,44 @@ describe("calibrate.ts espelha calibration.py", () => {
 
   it("recusa razão não positiva", () => {
     expect(() => escalaPorEscalaDePlotagem(0, "m")).toThrow(/positiva/i);
+  });
+});
+
+/**
+ * A ida e a volta da escala, que ninguém testava.
+ *
+ * Foi essa lacuna que deixou passar a tela calculando `1/escala` como se fosse
+ * a razão de plotagem. É a conta que decide o tamanho da parede no CAD: se ela
+ * erra, o DXF inteiro não serve.
+ */
+describe("razão de plotagem: ida e volta", () => {
+  const UNIDADES: Unidade[] = ["mm", "cm", "m"];
+
+  it("volta ao 1:50 de partida nas três unidades", () => {
+    for (const u of UNIDADES) {
+      expect(razaoDeEscala(escalaPorEscalaDePlotagem(50, u), u), u)
+        .toBeCloseTo(50, 9);
+    }
+  });
+
+  it("`escala = 0.01` em metros não é 1:100", () => {
+    // O caso concreto que estava errado na tela: 1 pt de papel valendo 1 cm
+    // real é 1:28,35, e não 1:100. Quem gravasse 1:50 acreditando em `1/escala`
+    // punha 0,02 m/pt onde o certo é 0,0176 — 13% de erro em cada medida.
+    expect(razaoDeEscala(0.01, "m")).not.toBeCloseTo(100, 0);
+    expect(razaoDeEscala(0.01, "m")).toBeCloseTo(28.3464566929134, 9);
+  });
+
+  it("trocar a unidade preserva o tamanho físico", () => {
+    // A fórmula do seletor de unidade em `secoes.ts`.
+    const converter = (escala: number, de: Unidade, para: Unidade) =>
+      (escala * MM_POR_UNIDADE[de]) / MM_POR_UNIDADE[para];
+
+    const emMetros = escalaPorEscalaDePlotagem(50, "m");
+    const emMilimetros = converter(emMetros, "m", "mm");
+    // O mesmo comprimento, dito em outra unidade: a razão de plotagem não muda.
+    expect(razaoDeEscala(emMilimetros, "mm")).toBeCloseTo(50, 9);
+    expect(converter(emMilimetros, "mm", "m")).toBeCloseTo(emMetros, 12);
   });
 });
 

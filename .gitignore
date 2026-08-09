@@ -27,3 +27,10 @@ web/frontend/dist/
 .idea/
 Thumbs.db
 desktop.ini
+
+# Playwright
+web/frontend/test-results/
+web/frontend/playwright-report/
+
+# Dados de trabalho do serviço web (PDFs enviados, DXFs gerados)
+dados/

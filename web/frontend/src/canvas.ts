@@ -10,6 +10,17 @@ import { coordenadasDe, textoDe, SEM_COR, type Geometria } from "./formato.js";
 
 const POLILINHA = 1, ARCO = 2, BEZIER = 3, TEXTO = 4;
 
+/**
+ * A vista, e o eixo Y invertido embutido nela.
+ *
+ * O extractor entrega coordenadas em papel com **Y para cima**, que é o padrão
+ * de CAD; o canvas tem Y para baixo. Por isso a conversão é
+ * `telaY = dy - papelY * escala`, e não uma soma: sem a inversão a prévia sai
+ * de cabeça para baixo. O `dy` já carrega a altura da folha, então a `Vista`
+ * continua sendo três números e o `aplicarZoom` continua valendo sem mudança.
+ *
+ * É o mesmo que a prévia do app desktop faz com `(H - p[1])`.
+ */
 export type Vista = { escala: number; dx: number; dy: number };
 export type Retangulo = { x0: number; y0: number; x1: number; y1: number };
 
@@ -47,31 +58,40 @@ export function enquadrar(larguraPt: number, alturaPt: number,
   return {
     escala,
     dx: (larguraTela - larguraPt * escala) / 2,
-    dy: (alturaTela - alturaPt * escala) / 2,
+    // A borda de baixo do papel, em pixels de tela: metade da sobra mais a
+    // folha inteira. Daí `telaY = dy - papelY * escala` põe o pé da folha
+    // embaixo e o topo em cima.
+    dy: (alturaTela + alturaPt * escala) / 2,
   };
 }
 
 export function pontoDaTela(v: Vista, x: number, y: number) {
-  return { x: x * v.escala + v.dx, y: y * v.escala + v.dy };
+  return { x: x * v.escala + v.dx, y: v.dy - y * v.escala };
 }
 
 export function pontoDoPapel(v: Vista, x: number, y: number) {
-  return { x: (x - v.dx) / v.escala, y: (y - v.dy) / v.escala };
+  return { x: (x - v.dx) / v.escala, y: (v.dy - y) / v.escala };
 }
 
 /**
  * O retângulo de papel que a tela mostra, alargado por `folga` telas de cada
- * lado. `folga = 0.5` dá quatro vezes a área visível — é a janela da lista.
+ * lado. `folga = 0.25` dá duas vezes a largura visível — é a janela da lista.
+ *
+ * O `min`/`max` no eixo Y não é zelo: com o eixo invertido, o topo da tela
+ * corresponde ao **maior** Y de papel, e um retângulo com `y0 > y1` não casaria
+ * com nenhuma entidade.
  */
 export function janelaVisivel(v: Vista, larguraTela: number, alturaTela: number,
                               folga: number): Retangulo {
   const a = pontoDoPapel(v, 0, 0);
   const b = pontoDoPapel(v, larguraTela, alturaTela);
-  const margemX = (b.x - a.x) * folga;
-  const margemY = (b.y - a.y) * folga;
+  const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
+  const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+  const margemX = (x1 - x0) * folga;
+  const margemY = (y1 - y0) * folga;
   return {
-    x0: a.x - margemX, y0: a.y - margemY,
-    x1: b.x + margemX, y1: b.y + margemY,
+    x0: x0 - margemX, y0: y0 - margemY,
+    x1: x1 + margemX, y1: y1 + margemY,
   };
 }
 
@@ -133,31 +153,26 @@ export function desenharLote(ctx: ContextoDesenhavel, g: Geometria,
 
     if (tipo === SEGMENTO) {
       caminho.moveTo(coords[inicio]! * escala + dx,
-                     coords[inicio + 1]! * escala + dy);
+                     dy - coords[inicio + 1]! * escala);
       caminho.lineTo(coords[inicio + 2]! * escala + dx,
-                     coords[inicio + 3]! * escala + dy);
+                     dy - coords[inicio + 3]! * escala);
     } else if (tipo === POLILINHA) {
       // coords[inicio] é o "fechada"; os pontos começam em inicio+1.
       caminho.moveTo(coords[inicio + 1]! * escala + dx,
-                     coords[inicio + 2]! * escala + dy);
+                     dy - coords[inicio + 2]! * escala);
       for (let p = inicio + 3; p + 1 < fim; p += 2) {
-        caminho.lineTo(coords[p]! * escala + dx, coords[p + 1]! * escala + dy);
+        caminho.lineTo(coords[p]! * escala + dx, dy - coords[p + 1]! * escala);
       }
       if (coords[inicio]! !== 0) caminho.closePath();
     } else if (tipo === ARCO) {
-      // Os ângulos do DXF são anti-horários com Y para cima; o canvas é horário
-      // com Y para baixo. Trocar o sinal converte os dois de uma vez.
-      caminho.arc(coords[inicio]! * escala + dx, coords[inicio + 1]! * escala + dy,
-                  coords[inicio + 2]! * escala,
-                  (-coords[inicio + 3]! * Math.PI) / 180,
-                  (-coords[inicio + 4]! * Math.PI) / 180);
+      tracarArco(caminho, coords, inicio, escala, dx, dy);
     } else if (tipo === BEZIER) {
       caminho.moveTo(coords[inicio]! * escala + dx,
-                     coords[inicio + 1]! * escala + dy);
+                     dy - coords[inicio + 1]! * escala);
       caminho.bezierCurveTo(
-        coords[inicio + 2]! * escala + dx, coords[inicio + 3]! * escala + dy,
-        coords[inicio + 4]! * escala + dx, coords[inicio + 5]! * escala + dy,
-        coords[inicio + 6]! * escala + dx, coords[inicio + 7]! * escala + dy);
+        coords[inicio + 2]! * escala + dx, dy - coords[inicio + 3]! * escala,
+        coords[inicio + 4]! * escala + dx, dy - coords[inicio + 5]! * escala,
+        coords[inicio + 6]! * escala + dx, dy - coords[inicio + 7]! * escala);
     }
     tracadas++;
   }
@@ -174,6 +189,8 @@ export function desenharLote(ctx: ContextoDesenhavel, g: Geometria,
     const p = pontoDaTela(v, c[0]!, c[1]!);
     ctx.save();
     ctx.translate(p.x, p.y);
+    // O papel gira anti-horário com Y para cima; a tela, horário com Y para
+    // baixo. Trocar o sinal é o que mantém o texto na mesma inclinação.
     ctx.rotate((-c[3]! * Math.PI) / 180);
     ctx.fillStyle = corDeInteiro(g.cor[i]!);
     ctx.font = `${c[2]! * v.escala}px sans-serif`;
@@ -182,6 +199,34 @@ export function desenharLote(ctx: ContextoDesenhavel, g: Geometria,
   }
 
   return tracadas;
+}
+
+/**
+ * O arco, tesselado em segmentos de reta — como faz a prévia do app desktop.
+ *
+ * **Não** se usa `Path2D.arc()`, e a razão é concreta: `arc()` liga o ponto
+ * atual ao início do arco com uma reta. Como os caminhos aqui são agrupados por
+ * (layer, cor), cada arco ficava amarrado ao fim da entidade anterior, e a
+ * planta aparecia coberta de linhas atravessando de um canto a outro — que
+ * mudavam de lugar a cada zoom, porque a lista de desenho muda.
+ *
+ * O `% 360 || 360` vem do desktop e resolve dois casos de uma vez: o arco que
+ * cruza o zero e o círculo completo, em que início e fim coincidem e a conta
+ * ingênua daria varredura zero.
+ */
+function tracarArco(caminho: CaminhoDesenhavel, coords: Float32Array,
+                    inicio: number, escala: number, dx: number,
+                    dy: number): void {
+  const cx = coords[inicio]!, cy = coords[inicio + 1]!, r = coords[inicio + 2]!;
+  const a0 = coords[inicio + 3]!, a1 = coords[inicio + 4]!;
+  const varredura = ((a1 - a0) % 360 + 360) % 360 || 360;
+  const passos = Math.max(4, Math.min(64, Math.trunc(varredura / 6)));
+  for (let i = 0; i <= passos; i++) {
+    const a = ((a0 + (varredura * i) / passos) * Math.PI) / 180;
+    const x = (cx + r * Math.cos(a)) * escala + dx;
+    const y = dy - (cy + r * Math.sin(a)) * escala;
+    if (i === 0) caminho.moveTo(x, y); else caminho.lineTo(x, y);
+  }
 }
 
 /**

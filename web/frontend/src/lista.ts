@@ -15,7 +15,7 @@
  */
 import { coordenadasDe, type Geometria } from "./formato.js";
 import { SEGMENTO } from "./select.js";
-import type { Retangulo, Vista } from "./canvas.js";
+import { janelaVisivel, type Retangulo, type Vista } from "./canvas.js";
 
 /**
  * Os três números que trocam qualidade de desenho por velocidade.
@@ -147,10 +147,10 @@ export function precisaPreparar(p: Preparo, v: Vista, larguraTela: number,
                                 alturaTela: number): boolean {
   const razao = v.escala / p.escala;
   if (razao >= FATOR_DE_ZOOM || razao <= 1 / FATOR_DE_ZOOM) return true;
-  const x0 = (0 - v.dx) / v.escala;
-  const y0 = (0 - v.dy) / v.escala;
-  const x1 = (larguraTela - v.dx) / v.escala;
-  const y1 = (alturaTela - v.dy) / v.escala;
-  return x0 < p.janela.x0 || y0 < p.janela.y0 ||
-         x1 > p.janela.x1 || y1 > p.janela.y1;
+  // Pelo `janelaVisivel`, e não por uma conta própria: a versão que refazia a
+  // aritmética aqui ficou para trás quando o eixo Y passou a ser invertido, e
+  // o defeito só apareceu porque três testes o pegaram. Uma conta, um lugar.
+  const agora = janelaVisivel(v, larguraTela, alturaTela, 0);
+  return agora.x0 < p.janela.x0 || agora.y0 < p.janela.y0 ||
+         agora.x1 > p.janela.x1 || agora.y1 > p.janela.y1;
 }

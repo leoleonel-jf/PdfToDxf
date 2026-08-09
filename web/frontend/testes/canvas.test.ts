@@ -22,12 +22,24 @@ describe("canvas.ts — a vista", () => {
     const v = enquadrar(595, 842, 1000, 800);
     // Cabe pela altura: 800/842 é menor que 1000/595.
     expect(v.escala).toBeCloseTo(800 / 842, 10);
-    const canto = pontoDaTela(v, 0, 0);
-    const oposto = pontoDaTela(v, 595, 842);
-    expect(canto.y).toBeCloseTo(0, 6);
-    expect(oposto.y).toBeCloseTo(800, 6);
+    const pe = pontoDaTela(v, 0, 0);
+    const topo = pontoDaTela(v, 595, 842);
+    // O eixo Y é invertido: o papel tem Y para cima e a tela para baixo. A
+    // origem do papel é o **pé** da folha, então ela vai para baixo na tela.
+    expect(pe.y).toBeCloseTo(800, 6);
+    expect(topo.y).toBeCloseTo(0, 6);
     // Sobra na horizontal, dividida igualmente.
-    expect(canto.x).toBeCloseTo(1000 - oposto.x, 6);
+    expect(pe.x).toBeCloseTo(1000 - topo.x, 6);
+  });
+
+  it("o desenho não sai de cabeça para baixo", () => {
+    // O defeito que este teste prende apareceu numa planta real: sem a
+    // inversão, o que está no alto da folha era desenhado embaixo e todo texto
+    // saía invertido.
+    const v = enquadrar(595, 842, 1000, 800);
+    const alto = pontoDaTela(v, 300, 800);
+    const baixo = pontoDaTela(v, 300, 42);
+    expect(alto.y).toBeLessThan(baixo.y);
   });
 
   it("ida e volta entre papel e tela devolve o mesmo ponto", () => {
@@ -75,6 +87,21 @@ describe("canvas.ts — o traçado", () => {
     const longe = { x0: 10_000, y0: 10_000, x1: 20_000, y1: 20_000 };
     expect(desenharLote(ctx, g, lote, lote.length, v,
                         () => new CaminhoGravado(), longe)).toBe(0);
+  });
+
+  it("o arco não se liga à entidade anterior do mesmo caminho", () => {
+    // O defeito: `Path2D.arc()` liga o ponto atual ao início do arco com uma
+    // reta, e como os caminhos são agrupados por (layer, cor), cada arco ficava
+    // amarrado ao fim da entidade anterior. A planta aparecia coberta de linhas
+    // atravessando de canto a canto, que mudavam a cada zoom.
+    // A entidade 0 é um segmento e a 2 é um arco, ambas do layer PAREDES.
+    const ctx = new ContextoGravado();
+    desenharLote(ctx, g, Uint32Array.from([0, 2]), 2, v,
+                 () => new CaminhoGravado(), TODA_A_FOLHA);
+    const chamadas = ctx.tracados.flatMap((c) => c.chamadas);
+    // Nenhum `arc` nativo, e o arco começa com o seu próprio `moveTo`.
+    expect(chamadas.filter((c) => c[0] === "arc").length).toBe(0);
+    expect(chamadas.filter((c) => c[0] === "moveTo").length).toBe(2);
   });
 
   it("separa por cor: duas cores dão dois traçados", () => {

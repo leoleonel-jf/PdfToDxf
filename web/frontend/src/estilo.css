@@ -18,6 +18,12 @@
 
 * { box-sizing: border-box; }
 
+/* O atributo `hidden` precisa ganhar de qualquer `display` do autor.
+   A regra do navegador para `[hidden]` é fraca, e o `display: grid` do `.aviso`
+   a atropelava em silêncio: o painel ficava sempre visível, e como ele tem
+   fundo escuro semitransparente, cobria a planta inteira. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;

@@ -1,5 +1,17 @@
 import { defineConfig } from "@playwright/test";
 
+// O Python que sobe a API. O padrão continua sendo o `.venv` do projeto, que é
+// como se roda nesta máquina; quem não tem esse caminho — o runner Linux da
+// integração contínua, por exemplo — exporta `PDFTODXF_PYTHON` apontando para
+// o seu interpretador.
+//
+// **Barra invertida no Windows, e isso não é gosto:** o Playwright entrega este
+// comando ao `cmd.exe`, que corta `.venv/Scripts/python.exe` no primeiro `/` e
+// responde "'.venv' não é reconhecido". Com `\` funciona. O erro só não
+// aparecia antes porque `reuseExistingServer` encontrava um uvicorn já de pé.
+const python = process.env.PDFTODXF_PYTHON
+  || (process.platform === "win32" ? ".venv\\Scripts\\python.exe" : ".venv/bin/python");
+
 export default defineConfig({
   testDir: "./e2e",
   // O PDF de teste é gerado a cada execução, não versionado: `*.pdf` está no
@@ -15,7 +27,7 @@ export default defineConfig({
   webServer: [
     {
       // O caminho é relativo ao `cwd` abaixo, que já é a raiz do repositório.
-      command: ".venv/Scripts/python.exe -m uvicorn web.api.main:app --port 8000",
+      command: `${python} -m uvicorn web.api.main:app --port 8000`,
       cwd: "../..",
       // `/openapi.json`, e não `/docs`: a API sobe com `docs_url=None` de
       // propósito, então `/docs` devolve 404 para sempre e a espera nunca

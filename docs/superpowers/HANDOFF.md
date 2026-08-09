@@ -452,6 +452,12 @@ pontos, porque quem especificou errado foi o plano. Detalhe em
   `full` e `starlette/testclient.py` faz `import httpx2 as httpx`. Verificado.
 - **Sem pytest.** Os testes deste projeto são funções com `assert` e um bloco
   `if __name__ == "__main__":`. Mantenha o padrão.
+- **Integração contínua em `.github/workflows/ci.yml`**, três jobs em paralelo:
+  os arquivos `tests/test_*.py` um a um (sob Xvfb, por causa das duas suítes de
+  janela Tk), `npm test` + `npm run build`, e o Playwright. O runner não tem
+  `.venv` — o `playwright.config.ts` e o `e2e/preparar.ts` aceitam
+  **`PDFTODXF_PYTHON`** no lugar do `.venv/Scripts/python.exe`, e o padrão
+  continua sendo o `.venv` local.
 
 ## Dívida conhecida
 

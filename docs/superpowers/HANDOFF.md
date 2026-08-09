@@ -8,9 +8,10 @@ Estado em 2026-08-09. Leia isto primeiro ao retomar em sessão nova.
 > e commitado em
 > `docs/superpowers/specs/2026-08-09-canvas-redesenho-design.md`.
 >
-> **O próximo passo é o usuário revisar esse spec escrito.** Depois dele, e só
-> depois, escrever o plano das tarefas restantes pela skill
-> `superpowers:writing-plans`. Leia o spec novo e o
+> O spec foi revisado e aprovado, e o plano das tarefas restantes está escrito
+> em `docs/superpowers/plans/2026-08-09-canvas-redesenhado.md` — doze tarefas.
+> **O próximo passo é executá-lo**, começando pela tarefa 1 (`ordem.ts`). Leia o
+> spec novo e o
 > `web/frontend/medicao/RESULTADO.md` antes de propor qualquer coisa — os
 > números são o que sustenta o desenho, e três hipóteses razoáveis já morreram
 > neles. Os itens 1 a 5 da lista "O que falta" **dependem de você, humano**, e
@@ -313,15 +314,15 @@ pelos primeiros.
 
 ### Trabalho de sessão
 
-6. **Escrever o plano das tarefas restantes da etapa 3**, pela skill
-   `superpowers:writing-plans`, sobre o desenho novo
-   (`docs/superpowers/specs/2026-08-09-canvas-redesenho-design.md`). **Antes
-   disso o usuário precisa revisar o spec escrito** — foi onde a sessão de
-   2026-08-09 parou.
+6. **Executar `docs/superpowers/plans/2026-08-09-canvas-redesenhado.md`** —
+   doze tarefas, começando pela 1 (`ordem.ts`). É o trabalho imediato.
 
-   O plano antigo `docs/superpowers/plans/2026-08-04-frontend-canvas.md`
-   continua valendo nas tarefas 1 a 5, que estão feitas. Da 6 em diante está
-   cancelado: supõe um Web Worker que não resolve o problema real.
+   Duas coisas para não tropeçar: o plano é **um delta** sobre o de 2026-08-04,
+   que continua no repositório como fonte do código das tarefas que não mudaram
+   — a tabela no topo dele diz exatamente qual tarefa vem de onde, e a ordem de
+   execução não é a ordem dos números. E o passo 6 da tarefa 3 é uma **medição
+   que pode derrubar uma constante do spec**; se nem o teto 2 couber em 33 ms
+   por quadro, pare em vez de ajustar o número em silêncio.
 
 7. **Planejar as etapas 4 e 5.**
 

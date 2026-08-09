@@ -454,8 +454,12 @@ export interface ContextoDesenhavel {
   fillText(t: string, x: number, y: number): void;
   stroke(c: CaminhoDesenhavel): void;
   lineWidth: number;
-  strokeStyle: string;
-  fillStyle: string;
+  // A união vem do DOM: `CanvasRenderingContext2D.strokeStyle` aceita gradiente
+  // e padrão além de texto. Declarar só `string` aqui faria o contexto de
+  // verdade não caber nesta interface, e só o de mentira caberia — que é
+  // exatamente o contrário do que ela serve para provar.
+  strokeStyle: string | CanvasGradient | CanvasPattern;
+  fillStyle: string | CanvasGradient | CanvasPattern;
   font: string;
 }
 

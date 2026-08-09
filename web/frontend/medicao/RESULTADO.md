@@ -161,6 +161,61 @@ O código da grade continua em `medicao/indice.ts` de propósito: é o registro 
 que foi medido e recusado, e sem ele a linha "a grade foi descartada" seria
 afirmação sem prova.
 
+## Quarta medição: o `lista.ts` de verdade, e o critério não fecha
+
+Feita em 2026-08-09 por `medicao/preparo.html`, no passo 6 da tarefa 3 do plano
+`2026-08-09-canvas-redesenhado.md`. Chrome 151, mesma máquina. **A máquina
+estava carregada** — 84 processos de Chrome e node somando 9,8 GB — e isso
+importa para ler os números.
+
+### Duas lições de método, antes dos números
+
+**Comparar entre cargas de página não presta numa máquina ocupada.** A primeira
+tentativa mediu antes e depois de uma otimização em cargas separadas, e o
+`gerar 3M`, que não mudou uma linha, foi de 976 para 2000 ms entre as duas. A
+medição foi refeita varrendo todas as combinações **numa carga só**, com o
+`gerar 3M` como controle: na rodada válida ele deu 838 ms.
+
+**O `desenharLote` alocava três vezes por entidade** — um `subarray` em
+`coordenadasDe` e um objeto `{x, y}` em cada `pontoDaTela`. Em 113 mil entidades
+são 340 mil alocações por quadro. O laço quente foi reescrito sobre
+deslocamentos crus dentro de `g.coords`, sem alocar nada. O comportamento é o
+mesmo — os testes do contexto 2D falso não mudaram.
+
+### A varredura
+
+Lista de entidades entre parênteses.
+
+| região / teto / folga | folha inteira | zoom 4× | zoom 16× |
+|---|---|---|---|
+| 4 px, 4, 0,5 | 81–179 ms (113.600) | 338–475 ms (427.852) | 67–132 ms (46.179) |
+| 4 px, 2, 0,5 | 93–138 ms (56.800) | 273–385 ms (221.319) | 72–117 ms (45.092) |
+| 8 px, 2, 0,5 | 19–44 ms (14.400) | 105–188 ms (55.800) | 52–75 ms (36.105) |
+| **8 px, 2, 0,25** | **19–30 ms** (14.200) | **70–81 ms** (37.000) | 44–87 ms (24.136) |
+| 8 px, 1, 0,25 | 11–24 ms (7.100) | 87–198 ms (18.500) | 52–146 ms (15.011) |
+
+### O que isso decidiu
+
+**Nenhuma combinação cumpre o critério de 33 ms nos três zooms.** O plano manda
+parar nesse caso, e foi o que se fez: o par (4, 4) que o spec fixou está longe,
+e nem a melhor combinação chega lá.
+
+Dois achados que o spec não previa:
+
+- **O custo do quadro segue a tinta na tela, não a contagem de entidades.** O
+  zoom 4× é o pior caso justamente porque cada traço fica quatro vezes mais
+  longo. Cortar a lista de 427 mil para 37 mil melhorou o quadro de ~390 ms para
+  ~75 ms: cinco vezes menos entidades, cinco vezes menos tempo — mas partindo de
+  um patamar alto demais, porque a tinta continua lá.
+- **Diminuir o teto de 2 para 1 piorou** em 4× e 16×, com uma lista menor. Isso
+  é impossível como efeito real: é ruído de máquina carregada, e serve de aviso
+  de que a incerteza destes números absolutos é grande. As razões entre linhas
+  da mesma rodada valem; os valores absolutos, menos.
+
+A decisão sobre o que fazer — afrouxar o alvo, adotar a melhor combinação e
+medir de novo com planta real, ou acrescentar o cache de imagem para o pan —
+é de projeto, e está registrada como pendente.
+
 ## O que reabrir antes da tarefa 5
 
 Isto é o achado, não a solução — a solução é decisão de projeto:

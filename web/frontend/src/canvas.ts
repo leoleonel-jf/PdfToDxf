@@ -32,8 +32,12 @@ export interface ContextoDesenhavel {
   fillText(t: string, x: number, y: number): void;
   stroke(c: CaminhoDesenhavel): void;
   lineWidth: number;
-  strokeStyle: string;
-  fillStyle: string;
+  // A união vem do DOM: `CanvasRenderingContext2D.strokeStyle` aceita gradiente
+  // e padrão além de texto. Declarar só `string` aqui faria o contexto de
+  // verdade não caber nesta interface, e só o de mentira caberia — que é
+  // exatamente o contrário do que ela serve para provar.
+  strokeStyle: string | CanvasGradient | CanvasPattern;
+  fillStyle: string | CanvasGradient | CanvasPattern;
   font: string;
 }
 
@@ -96,17 +100,25 @@ export function desenharLote(ctx: ContextoDesenhavel, g: Geometria,
                              criarCaminho: () => CaminhoDesenhavel,
                              limites: Retangulo): number {
   const porChave = new Map<number, { caminho: CaminhoDesenhavel; cor: number }>();
-  const textos: Array<{ i: number; c: Float32Array }> = [];
+  const textos: number[] = [];
   let tracadas = 0;
+
+  // O laço quente não aloca nada: nem `subarray` para as coordenadas, nem
+  // objeto `{x, y}` por ponto. Alocar três vezes por entidade custou 4x o
+  // tempo do quadro quando foi medido — ver medicao/RESULTADO.md. Por isso ele
+  // trabalha com deslocamentos crus dentro de `g.coords`.
+  const coords = g.coords;
+  const escala = v.escala, dx = v.dx, dy = v.dy;
 
   for (let k = 0; k < quantos; k++) {
     const i = lote[k]!;
-    const c = coordenadasDe(g, i);
-    if (foraDos(limites, g, i, c)) continue;
-
+    const inicio = g.coord_off[i]!;
+    const fim = g.coord_off[i + 1]!;
     const tipo = g.kind[i]!;
+    if (foraDos(limites, tipo, coords, inicio, fim)) continue;
+
     if (tipo === TEXTO) {
-      textos.push({ i, c });
+      textos.push(i);
       tracadas++;
       continue;
     }
@@ -117,7 +129,36 @@ export function desenharLote(ctx: ContextoDesenhavel, g: Geometria,
       grupo = { caminho: criarCaminho(), cor: g.cor[i]! };
       porChave.set(chave, grupo);
     }
-    tracarNoCaminho(grupo.caminho, tipo, c, v);
+    const caminho = grupo.caminho;
+
+    if (tipo === SEGMENTO) {
+      caminho.moveTo(coords[inicio]! * escala + dx,
+                     coords[inicio + 1]! * escala + dy);
+      caminho.lineTo(coords[inicio + 2]! * escala + dx,
+                     coords[inicio + 3]! * escala + dy);
+    } else if (tipo === POLILINHA) {
+      // coords[inicio] é o "fechada"; os pontos começam em inicio+1.
+      caminho.moveTo(coords[inicio + 1]! * escala + dx,
+                     coords[inicio + 2]! * escala + dy);
+      for (let p = inicio + 3; p + 1 < fim; p += 2) {
+        caminho.lineTo(coords[p]! * escala + dx, coords[p + 1]! * escala + dy);
+      }
+      if (coords[inicio]! !== 0) caminho.closePath();
+    } else if (tipo === ARCO) {
+      // Os ângulos do DXF são anti-horários com Y para cima; o canvas é horário
+      // com Y para baixo. Trocar o sinal converte os dois de uma vez.
+      caminho.arc(coords[inicio]! * escala + dx, coords[inicio + 1]! * escala + dy,
+                  coords[inicio + 2]! * escala,
+                  (-coords[inicio + 3]! * Math.PI) / 180,
+                  (-coords[inicio + 4]! * Math.PI) / 180);
+    } else if (tipo === BEZIER) {
+      caminho.moveTo(coords[inicio]! * escala + dx,
+                     coords[inicio + 1]! * escala + dy);
+      caminho.bezierCurveTo(
+        coords[inicio + 2]! * escala + dx, coords[inicio + 3]! * escala + dy,
+        coords[inicio + 4]! * escala + dx, coords[inicio + 5]! * escala + dy,
+        coords[inicio + 6]! * escala + dx, coords[inicio + 7]! * escala + dy);
+    }
     tracadas++;
   }
 
@@ -127,15 +168,15 @@ export function desenharLote(ctx: ContextoDesenhavel, g: Geometria,
     ctx.stroke(grupo.caminho);
   }
 
-  for (const { i, c } of textos) {
+  // Fora do laço quente: textos são poucos, e aqui a clareza vale mais.
+  for (const i of textos) {
+    const c = coordenadasDe(g, i);
     const p = pontoDaTela(v, c[0]!, c[1]!);
-    const altura = c[2]! * v.escala;
     ctx.save();
     ctx.translate(p.x, p.y);
-    // O papel tem Y para cima e a tela para baixo, então o giro inverte.
     ctx.rotate((-c[3]! * Math.PI) / 180);
     ctx.fillStyle = corDeInteiro(g.cor[i]!);
-    ctx.font = `${altura}px sans-serif`;
+    ctx.font = `${c[2]! * v.escala}px sans-serif`;
     ctx.fillText(textoDe(g, i), 0, 0);
     ctx.restore();
   }
@@ -143,24 +184,29 @@ export function desenharLote(ctx: ContextoDesenhavel, g: Geometria,
   return tracadas;
 }
 
-/** Caixa da entidade contra os limites, em coordenadas de papel. */
-function foraDos(limites: Retangulo, g: Geometria, i: number,
-                 c: Float32Array): boolean {
+/**
+ * Caixa da entidade contra os limites, em coordenadas de papel.
+ *
+ * Recebe deslocamentos em vez de um `Float32Array` fatiado: é chamada uma vez
+ * por entidade do lote, e um `subarray` por chamada é lixo que o coletor paga
+ * no meio do quadro.
+ */
+function foraDos(limites: Retangulo, tipo: number, coords: Float32Array,
+                 inicio: number, fim: number): boolean {
   let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
-  const tipo = g.kind[i]!;
   if (tipo === ARCO) {
     // Caixa do círculo inteiro: mais folgada que o arco real, e barata. Errar
     // para o lado de desenhar demais só custa tempo; para o outro, some traço.
-    const r = c[2]!;
-    minx = c[0]! - r; maxx = c[0]! + r;
-    miny = c[1]! - r; maxy = c[1]! + r;
+    const r = coords[inicio + 2]!;
+    minx = coords[inicio]! - r; maxx = coords[inicio]! + r;
+    miny = coords[inicio + 1]! - r; maxy = coords[inicio + 1]! + r;
   } else if (tipo === TEXTO) {
-    minx = c[0]!; maxx = c[0]! + c[4]!;
-    miny = c[1]!; maxy = c[1]! + c[2]!;
+    minx = coords[inicio]!; maxx = minx + coords[inicio + 4]!;
+    miny = coords[inicio + 1]!; maxy = miny + coords[inicio + 2]!;
   } else {
-    const inicio = tipo === POLILINHA ? 1 : 0;
-    for (let p = inicio; p + 1 < c.length; p += 2) {
-      const x = c[p]!, y = c[p + 1]!;
+    const primeiro = tipo === POLILINHA ? inicio + 1 : inicio;
+    for (let p = primeiro; p + 1 < fim; p += 2) {
+      const x = coords[p]!, y = coords[p + 1]!;
       if (x < minx) minx = x;
       if (x > maxx) maxx = x;
       if (y < miny) miny = y;
@@ -169,42 +215,4 @@ function foraDos(limites: Retangulo, g: Geometria, i: number,
   }
   return maxx < limites.x0 || minx > limites.x1 ||
          maxy < limites.y0 || miny > limites.y1;
-}
-
-function tracarNoCaminho(caminho: CaminhoDesenhavel, tipo: number,
-                         c: Float32Array, v: Vista): void {
-  if (tipo === SEGMENTO) {
-    const a = pontoDaTela(v, c[0]!, c[1]!);
-    const b = pontoDaTela(v, c[2]!, c[3]!);
-    caminho.moveTo(a.x, a.y);
-    caminho.lineTo(b.x, b.y);
-    return;
-  }
-  if (tipo === POLILINHA) {
-    // c[0] é o "fechada"; os pontos começam em c[1].
-    const primeiro = pontoDaTela(v, c[1]!, c[2]!);
-    caminho.moveTo(primeiro.x, primeiro.y);
-    for (let p = 3; p + 1 < c.length; p += 2) {
-      const q = pontoDaTela(v, c[p]!, c[p + 1]!);
-      caminho.lineTo(q.x, q.y);
-    }
-    if (c[0]! !== 0) caminho.closePath();
-    return;
-  }
-  if (tipo === ARCO) {
-    const centro = pontoDaTela(v, c[0]!, c[1]!);
-    // Os ângulos do DXF são anti-horários com Y para cima; o canvas é horário
-    // com Y para baixo. Trocar o sinal converte os dois de uma vez.
-    caminho.arc(centro.x, centro.y, c[2]! * v.escala,
-                (-c[3]! * Math.PI) / 180, (-c[4]! * Math.PI) / 180);
-    return;
-  }
-  if (tipo === BEZIER) {
-    const p0 = pontoDaTela(v, c[0]!, c[1]!);
-    const p1 = pontoDaTela(v, c[2]!, c[3]!);
-    const p2 = pontoDaTela(v, c[4]!, c[5]!);
-    const p3 = pontoDaTela(v, c[6]!, c[7]!);
-    caminho.moveTo(p0.x, p0.y);
-    caminho.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
-  }
 }

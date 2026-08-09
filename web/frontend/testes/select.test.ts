@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { carregarContrato, comoTexto } from "./ajuda/contrato.js";
 import { selecionar } from "../src/select.js";
+import { estimarBytes } from "../src/estimativa.js";
 
 const { casos, tabelas } = carregarContrato();
 
@@ -25,6 +26,12 @@ describe("select.ts espelha optimize.select()", () => {
           `length_um=${attrs.length_um[i]}, dup_group=${attrs.dup_group[i]})`);
       }
       expect(obtido).toBe(caso.esperado);
+    });
+
+    it(`bytes do caso ${caso.nome}`, () => {
+      const attrs = tabelas[caso.tabela]!;
+      const mascara = selecionar(attrs, caso.opcoes);
+      expect(estimarBytes(attrs, mascara, caso.opcoes)).toBe(caso.bytes_esperado);
     });
   }
 });

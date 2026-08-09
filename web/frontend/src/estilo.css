@@ -1,0 +1,117 @@
+/* Moldura escura, papel claro: as faixas não competem com o desenho. */
+:root {
+  --fundo-moldura: #1e2126;
+  --fundo-faixa: #262a31;
+  --borda: #383e47;
+  --texto: #e6e9ee;
+  --texto-fraco: #9aa3b0;
+  --ligado: #3d7eff;
+  --ligado-texto: #ffffff;
+  --alerta: #d9534f;
+
+  /* Uma variável só: inverter o desenho depois é uma linha. */
+  --fundo-do-desenho: #f7f7f5;
+
+  --raio: 6px;
+  --gap: 8px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--fundo-moldura);
+  color: var(--texto);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+#app { display: flex; flex-direction: column; height: 100%; }
+
+.faixa {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  padding: 8px 12px;
+  background: var(--fundo-faixa);
+  border-bottom: 1px solid var(--borda);
+  /* Em tela estreita as faixas rolam na horizontal, em vez de espremer os
+     botões até ninguém conseguir acertar um. */
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+
+.botao, .chip {
+  font: inherit;
+  color: var(--texto);
+  background: transparent;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  padding: 6px 12px;
+  cursor: pointer;
+  /* Alvo de toque confortável no celular. */
+  min-height: 36px;
+}
+.botao:hover, .chip:hover { border-color: var(--texto-fraco); }
+.botao[aria-pressed="true"], .chip[aria-pressed="true"] {
+  background: var(--ligado);
+  border-color: var(--ligado);
+  color: var(--ligado-texto);
+}
+.botao:disabled { opacity: 0.45; cursor: default; }
+
+.principal { color: var(--ligado); border-color: var(--ligado); }
+.separador { width: 1px; align-self: stretch; background: var(--borda); }
+.fraco { color: var(--texto-fraco); }
+
+.area-do-desenho { position: relative; flex: 1; min-height: 0; }
+#desenho {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--fundo-do-desenho);
+  touch-action: none;   /* os gestos são nossos, não do navegador */
+}
+
+.aviso {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: var(--gap);
+  text-align: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--fundo-moldura) 88%, transparent);
+}
+.aviso h2 { margin: 0; font-size: 18px; }
+.aviso p { margin: 0; max-width: 46ch; color: var(--texto-fraco); }
+
+.faixa-detalhe {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--texto-fraco);
+  background: var(--fundo-faixa);
+  border-top: 1px solid var(--borda);
+}
+
+.rodape {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--texto-fraco);
+  background: var(--fundo-faixa);
+  border-top: 1px solid var(--borda);
+}
+.rodape a { color: var(--texto-fraco); }
+
+.lupa {
+  position: absolute;
+  width: 120px; height: 120px;
+  border: 2px solid var(--ligado);
+  border-radius: 50%;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--fundo-do-desenho);
+}

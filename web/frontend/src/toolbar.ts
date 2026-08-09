@@ -14,6 +14,8 @@ export type EstadoDaTela = {
   unidade: Unidade;
   parcial: boolean;
   bytes: number;
+  /** A página inteira, sem nenhuma compactação e com todas as camadas. */
+  bytesBase: number;
   sobreviventes: number;
 };
 
@@ -28,11 +30,37 @@ export function opcoesEfetivas(e: EstadoDaTela): Opcoes {
   return { ...e.opcoes, excluded_layers: [...e.layersDesligados].sort() };
 }
 
-export function textoDaEstimativa(bytes: number, parcial: boolean): string {
+export function formatarBytes(bytes: number): string {
   const mb = bytes / 1_000_000;
-  const texto = mb >= 1
-    ? `≈ ${mb.toFixed(1).replace(".", ",")} MB`
-    : `≈ ${(bytes / 1000).toFixed(1).replace(".", ",")} kB`;
+  return mb >= 1
+    ? `${mb.toFixed(1).replace(".", ",")} MB`
+    : `${(bytes / 1000).toFixed(1).replace(".", ",")} kB`;
+}
+
+export function textoDaEstimativa(bytes: number, parcial: boolean): string {
+  const texto = `≈ ${formatarBytes(bytes)}`;
+  return parcial ? `${texto} (parcial)` : texto;
+}
+
+/**
+ * O tamanho sem compactação, o tamanho atual e o quanto encolheu.
+ *
+ * A base é a página inteira — todas as camadas, nenhuma opção — então a
+ * diferença inclui também as camadas que o usuário desligou. É de propósito:
+ * ele quer saber o que aconteceu com o arquivo dele, e desligar camada é uma
+ * das coisas que aconteceram.
+ *
+ * Abaixo de 1% a redução some da barra em vez de virar "−0%", que só ocupa
+ * espaço e não informa nada.
+ */
+export function textoDaComparacao(bytesBase: number, bytesAtual: number,
+                                  parcial: boolean): string {
+  const reducao = bytesBase > 0
+    ? Math.round((1 - bytesAtual / bytesBase) * 100)
+    : 0;
+  const texto = reducao >= 1
+    ? `${formatarBytes(bytesBase)} → ${formatarBytes(bytesAtual)} · −${reducao}%`
+    : formatarBytes(bytesAtual);
   return parcial ? `${texto} (parcial)` : texto;
 }
 

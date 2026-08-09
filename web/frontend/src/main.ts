@@ -50,6 +50,7 @@ const estado: EstadoDaTela = {
   unidade: "m",
   parcial: false,
   bytes: 0,
+  bytesBase: 0,
   sobreviventes: 0,
 };
 

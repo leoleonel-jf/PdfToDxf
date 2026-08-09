@@ -22,7 +22,8 @@ import {
 } from "./gestos.js";
 import { avisoDaSituacao, avisoDoErro, type Aviso } from "./estados.js";
 import {
-  escalaPorDoisPontos, marcarPonto, posicaoDaLupa, type Calibragem,
+  escalaPorDoisPontos, iniciarCalibragem, marcarPonto, posicaoDaLupa,
+  type Calibragem,
 } from "./calibrate.js";
 import { ordenarPorComprimento } from "./ordem.js";
 import { criarPintor, passo, type Cena } from "./pintor.js";
@@ -30,20 +31,33 @@ import { selecionar } from "./select.js";
 import { estimarBytes } from "./estimativa.js";
 import { opcoesEfetivas, type EstadoDaTela } from "./toolbar.js";
 import { montarBarra } from "./barra.js";
+import {
+  abrirEm, alternar, aoRedimensionar, estadoInicial, montarPainel,
+  paraGuardar, type EstadoDoPainel, type Secao,
+} from "./painel.js";
+import { proporcaoRepetida } from "./camadas.js";
+import { secaoCompactacao, secaoEscala } from "./secoes.js";
 
 const tela = document.querySelector<HTMLCanvasElement>("#desenho")!;
 const ctx = tela.getContext("2d")!;
 const barra = document.querySelector<HTMLElement>("#barra")!;
-// A tarefa 6 lê `#painel` para montar o painel lateral; nesta tarefa o
-// elemento já existe no HTML (passo 3), mas nada em JS o usa ainda — declarar
-// a constante aqui e não usá-la falharia `noUnusedLocals`.
+const painelRaiz = document.querySelector<HTMLElement>("#painel")!;
 const painelAviso = document.querySelector<HTMLElement>("#aviso")!;
 const faixaDetalhe = document.querySelector<HTMLElement>("#faixa-detalhe")!;
 
 const estado: EstadoDaTela = {
   opcoes: {
+    // Três ligadas de saída: as que só tiram redundância. `dedup` descarta
+    // traços exatamente sobrepostos, `join_polylines` troca segmentos
+    // encadeados por uma polilinha com os mesmos vértices, e `round_coords`
+    // arredonda a 4 casas (dxf_writer.py:135) — com a unidade em metros, 0,1
+    // mm de resolução, muito abaixo de qualquer tolerância de projeto.
+    //
+    // `drop_fills` fica desligada de propósito: ela apaga desenho de
+    // verdade, hachura e área pintada somem da prancha. Ninguém deve
+    // descobrir isso por acidente.
     excluded_layers: [], drop_fills: false, min_len_mm: 0,
-    dedup: false, join_polylines: false, round_coords: false,
+    dedup: true, join_polylines: true, round_coords: true,
   },
   layersDesligados: new Set(),
   escala: 0.01,
@@ -53,6 +67,17 @@ const estado: EstadoDaTela = {
   bytesBase: 0,
   sobreviventes: 0,
 };
+
+const CHAVE_DO_PAINEL = "pdftodxf.painel";
+
+// O `try` não é zelo excessivo: em navegação privativa de alguns navegadores
+// `localStorage` estoura ao ser lido, e a tela inteira morreria por causa de
+// uma preferência de layout.
+function guardado(): string | null {
+  try { return localStorage.getItem(CHAVE_DO_PAINEL); } catch { return null; }
+}
+
+let painel: EstadoDoPainel = estadoInicial(window.innerWidth, guardado());
 
 let job = "";
 let nomeDoArquivo = "";
@@ -134,7 +159,7 @@ function recalcular(): void {
   for (const v of mascara) vivos += v;
   estado.sobreviventes = vivos;
   geracao++;                     // avisa o pintor que a lista precisa ser refeita
-  montarTopo();
+  montarTudo();
   agendar();
 }
 
@@ -248,12 +273,50 @@ function montarTopo(): void {
     pagina,
     nPaginas,
     temGeometria: Boolean(geometria),
-    mostrarMenu: false,          // a tarefa 6 liga isto ao modo do painel
+    mostrarMenu: painel.modo === "gaveta",
     aoAbrirArquivo: (arquivo) => void abrir(arquivo),
     aoTrocarPagina: (p) => { pagina = p; void carregarPagina(); },
-    aoAlternarPainel: () => {},  // a tarefa 6 liga isto
+    aoAlternarPainel: () => {
+      painel = alternar(painel);
+      montarTudo();
+    },
     aoExportar: () => void baixar(),
   });
+}
+
+function montarPainelLateral(): void {
+  montarPainel(painelRaiz, painel, {
+    escala: () => secaoEscala(estado, Boolean(geometria), iniciarCalibracao,
+                              aoMudarOpcoes),
+    compactacao: () => secaoCompactacao(
+      estado, geometria ? proporcaoRepetida(geometria) : null, aoMudarOpcoes),
+    camadas: () => document.createElement("div"),   // tarefa 7
+  }, () => {
+    painel = alternar(painel);
+    const g = paraGuardar(painel);
+    try { if (g) localStorage.setItem(CHAVE_DO_PAINEL, g); } catch { /* ignora */ }
+    montarTudo();
+  }, (s: Secao) => {
+    painel = abrirEm(painel, s);
+    montarTudo();
+  });
+}
+
+function montarTudo(): void {
+  montarTopo();
+  montarPainelLateral();
+}
+
+function aoMudarOpcoes(): void {
+  recalcular();          // recalcular já chama montarTudo pelo caminho abaixo
+}
+
+function iniciarCalibracao(): void {
+  calibragem = iniciarCalibragem();
+  mostrarAviso({ titulo: "Calibração", podeTentarDeNovo: false,
+                 detalhe: "Toque nas duas extremidades de uma medida " +
+                          "conhecida da planta." });
+  montarTudo();
 }
 
 async function baixar(): Promise<void> {
@@ -354,7 +417,7 @@ tela.addEventListener("click", (e) => {
                    detalhe: erro instanceof Error ? erro.message : "" });
   }
   calibragem = null;
-  montarTopo();
+  montarTudo();
 });
 
 tela.addEventListener("pointerdown", (e) => {
@@ -414,9 +477,11 @@ tela.addEventListener("dblclick", () => {
 });
 
 window.addEventListener("resize", () => {
+  const novo = aoRedimensionar(painel, window.innerWidth, guardado());
+  if (novo !== painel) { painel = novo; montarTudo(); }
   ajustarTamanho();
   aoMexer(vista);
 });
 
 ajustarTamanho();
-montarTopo();
+montarTudo();

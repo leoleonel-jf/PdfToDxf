@@ -1,34 +1,48 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { fileURLToPath } from "node:url";
 
 const PLANTA = fileURLToPath(
   new URL("../../../tests/fixtures/planta_de_teste.pdf", import.meta.url));
 
-test("converte uma planta de ponta a ponta", async ({ page }) => {
+/**
+ * Todos os seletores são `data-teste`, e nenhum é por texto.
+ *
+ * O cabeçalho antigo era procurado por rótulo, e esta etapa muda quase todos:
+ * teste que quebra ao trocar uma palavra não estava testando comportamento.
+ */
+const t = (page: Page, nome: string) => page.locator(`[data-teste="${nome}"]`);
+
+async function abrirPlanta(page: Page): Promise<void> {
   await page.goto("/");
   await page.setInputFiles("#escolher-pdf", PLANTA);
-
   // Espera por condição: o botão só habilita quando a geometria chegou.
-  await expect(page.locator('[data-teste="exportar"]'))
-    .toBeEnabled({ timeout: 60_000 });
+  await expect(t(page, "exportar")).toBeEnabled({ timeout: 60_000 });
   await expect(page.locator("#aviso")).toBeHidden();
+}
 
-  // A estimativa apareceu e não é zero.
-  const estimativa = page.locator('[data-teste="estimativa-valor"]');
+test("converte uma planta de ponta a ponta", async ({ page }) => {
+  await abrirPlanta(page);
+
+  const estimativa = t(page, "estimativa-valor");
   await expect(estimativa).not.toHaveText("");
+
+  // "Unir em polilinhas" abre ligada; desligá-la mexe na estimativa.
+  const opcao = t(page, "opcao-join_polylines");
+  await expect(opcao).toHaveAttribute("aria-pressed", "true");
+  const antes = await estimativa.textContent();
+  await opcao.click();
+  await expect(opcao).toHaveAttribute("aria-pressed", "false");
+  await expect(estimativa).not.toHaveText(antes!);
 
   // Exporta e o download acontece.
   const download = page.waitForEvent("download");
-  await page.locator('[data-teste="exportar"]').click();
+  await t(page, "exportar").click();
   const arquivo = await download;
   expect(await arquivo.path()).toBeTruthy();
 });
 
 test("o desenho aparece no canvas", async ({ page }) => {
-  await page.goto("/");
-  await page.setInputFiles("#escolher-pdf", PLANTA);
-  await expect(page.locator('[data-teste="exportar"]'))
-    .toBeEnabled({ timeout: 60_000 });
+  await abrirPlanta(page);
 
   // Espera por condição, e não por relógio: com o preparo fatiado entre
   // quadros, quantos quadros passam até o desenho ficar pronto depende da
@@ -53,4 +67,31 @@ test("o desenho aparece no canvas", async ({ page }) => {
     return vistas.size;
   });
   expect(cores).toBeGreaterThan(1);
+});
+
+test("o painel recolhe, guarda o estado e reabre na seção clicada", async ({ page }) => {
+  await abrirPlanta(page);
+
+  await expect(t(page, "secao-compactacao")).toBeVisible();
+  await t(page, "recolher-painel").click();
+  await expect(page.locator("#painel")).toHaveAttribute("data-modo", "recolhido");
+  await expect(t(page, "secao-compactacao")).toBeHidden();
+
+  // A preferência sobrevive ao recarregamento.
+  await page.reload();
+  await expect(page.locator("#painel")).toHaveAttribute("data-modo", "recolhido");
+
+  // Clicar no atalho reabre já naquela seção.
+  await t(page, "atalho-camadas").click();
+  await expect(page.locator("#painel")).toHaveAttribute("data-modo", "aberto");
+});
+
+test("em tela estreita o painel vira gaveta", async ({ page }) => {
+  await page.setViewportSize({ width: 500, height: 800 });
+  await page.goto("/");
+  await expect(page.locator("#painel")).toHaveAttribute("data-modo", "gaveta");
+  await expect(page.locator("#painel")).toBeHidden();
+
+  await t(page, "abrir-painel").click();
+  await expect(page.locator("#painel")).toBeVisible();
 });

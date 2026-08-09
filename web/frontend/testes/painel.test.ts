@@ -63,6 +63,23 @@ describe("painel.ts", () => {
     expect(aoRedimensionar(a, LARGO + 1, null)).toBe(a);
   });
 
+  it("continuar estreito não cria objeto novo", () => {
+    // Identidade de referência, e não igualdade: `main.ts` compara com `!==`
+    // para decidir se remonta o painel. Devolver uma cópia aqui remontaria a
+    // tela a cada evento de redimensionamento com a janela já estreita.
+    const g = alternar(estadoInicial(ESTREITO, null));
+    expect(aoRedimensionar(g, ESTREITO - 50, null)).toBe(g);
+  });
+
+  it("a gaveta aberta continua aberta enquanto a tela seguir estreita", () => {
+    const g = alternar(estadoInicial(ESTREITO, null));
+    expect(aoRedimensionar(g, ESTREITO - 50, null).gavetaAberta).toBe(true);
+  });
+
+  it("na largura exata do limiar ainda não é gaveta", () => {
+    expect(estadoInicial(LARGURA_DA_GAVETA, null).modo).toBe("aberto");
+  });
+
   it("gaveta não é preferência: não vai para o armazenamento", () => {
     expect(paraGuardar(estadoInicial(ESTREITO, null))).toBe(null);
     expect(paraGuardar(estadoInicial(LARGO, null))).toBe("aberto");

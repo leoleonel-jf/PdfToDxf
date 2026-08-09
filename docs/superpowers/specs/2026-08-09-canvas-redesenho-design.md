@@ -49,19 +49,29 @@ Na memória, depois que a página carrega:
 duas regras:
 
 1. **A lista cobre uma janela, não a folha inteira.** A janela é o retângulo
-   visível alargado em **meia tela para cada lado** — quatro vezes a área
-   visível. Não é otimização: preparar a folha inteira funciona com a folha à
+   visível alargado em **um quarto de tela para cada lado**. Não é otimização: preparar a folha inteira funciona com a folha à
    vista e desmorona no zoom fechado, onde as regiões ficam menores que o traço
    e passam a existir mais regiões do que entidades. Aí o teto não corta nada e
    a lista volta às 3 milhões. Com a janela, o número de regiões fica constante
    em qualquer zoom, e a lista fica limitada pelo que cabe na tela.
 
-2. **Teto por região.** A janela é dividida em regiões de **4 × 4 pixels**, e
-   cada região aceita no máximo **4 entidades**. Os dois valores vêm do
-   protótipo: com teto de 4 a lista ficou em 113 mil e com teto de 2 em 57 mil,
-   e as duas traçam dentro do quadro. Começar por 4 dá o desenho mais cheio das
-   duas opções que cabem; a tarefa do `lista.ts` confirma ou ajusta o par,
-   medindo, e o número escolhido fica registrado com o motivo.
+2. **Teto por região.** A janela é dividida em regiões de **8 × 8 pixels**, e
+   cada região aceita no máximo **2 entidades**. Medidos com a implementação de
+   verdade em 2026-08-09; a varredura completa está em
+   `web/frontend/medicao/RESULTADO.md`. Dão 31 ms por quadro com a folha à
+   vista e 48 ms no zoom fechado.
+
+   **Não fecham o alvo de 33 ms nos três zooms, e nenhuma combinação fecha.** A
+   medição mostrou por quê, e é coisa que este desenho não previa: o custo do
+   quadro segue a **tinta rasterizada**, não a contagem de entidades — no zoom
+   fechado cada traço é longo na tela. Os três parâmetros controlam contagem;
+   nenhum controla tinta. Cortar a lista de 113 mil para 7 mil levou o quadro de
+   143 para 10 ms com a folha à vista, mas só de 97 para 44 ms no zoom de 16×.
+
+   O ajuste fino fica para quando houver **planta real na tela**: teto 1 seria
+   mais rápido e mostraria 7.100 de 3 milhões de entidades, e se isso é ralo
+   demais só se vê olhando. Se o arrasto incomodar de verdade, o remédio não é
+   mexer nestes números — é o cache de imagem, que ataca a tinta.
 3. **Os mais longos primeiro.** A preparação percorre as entidades na ordem de
    comprimento decrescente, então quem ocupa as vagas de cada região é o traço
    que mais se vê. É para isto, e só para isto, que a ordenação existe.
@@ -89,14 +99,15 @@ Recortar por caixa dentro de uma lista de 57 mil custa menos de um milissegundo.
 |---|---|
 | A máscara mudou | clique em opção ou em layer: outras entidades disputam as vagas |
 | O zoom dobrou ou caiu à metade | as regiões do teto valem para uma faixa de zoom, não para um valor. O fator **2** é o ponto de partida: dentro dele a lista fica no máximo duas vezes mais densa ou mais rala que o ideal, o que a rasterização absorve |
-| A vista saiu da janela | o pan andou mais de meia tela desde a última preparação, e a borda começaria a aparecer vazia |
+| A vista saiu da janela | o pan andou mais de um quarto de tela desde a última preparação, e a borda começaria a aparecer vazia |
 | O conjunto de entidades mudou | o esqueleto chegou; depois o detalhe chegou |
 
 **Nenhum desses acontece durante o gesto.** Enquanto o dedo, o mouse ou a roda
 estão em movimento, a tela desenha a lista que tem, a 15 ms. A preparação
 acontece quando o gesto para. Um arrasto longo pode encostar na borda da janela
-e mostrar vazio ali por um instante; meia tela de folga é o que torna isso raro,
-e parar o gesto conserta.
+e mostrar vazio ali por um instante; parar o gesto conserta. A folga é um quarto
+de tela e não mais: cada folga a mais engorda a lista, e a lista é o que se
+paga a cada quadro.
 
 Preparar custa da ordem de 500 ms, e por isso é **fatiada entre quadros**: cada
 quadro prepara um pedaço e desenha o que já tem. A planta se completa à vista,

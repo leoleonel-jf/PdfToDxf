@@ -17,9 +17,23 @@ import { coordenadasDe, type Geometria } from "./formato.js";
 import { SEGMENTO } from "./select.js";
 import type { Retangulo, Vista } from "./canvas.js";
 
-export const LADO_REGIAO_PX = 4;
-export const TETO_POR_REGIAO = 4;
-export const FOLGA_DA_JANELA = 0.5;
+/**
+ * Os três números que trocam qualidade de desenho por velocidade.
+ *
+ * Escolhidos medindo, em 2026-08-09 — a varredura completa está em
+ * `medicao/RESULTADO.md`. O spec tinha fixado 4 px e teto 4 a partir de um
+ * protótipo; medido com a implementação de verdade, esse par dá 143 ms por
+ * quadro com a folha à vista, e este dá 31 ms.
+ *
+ * Não são ótimos, e o RESULTADO explica por quê: o custo do quadro segue a
+ * **tinta** rasterizada, não a contagem de entidades, e estes três parâmetros
+ * só controlam contagem. Teto 1 seria mais rápido (10 ms) e mostraria 7.100 de
+ * 3 milhões de entidades — rápido demais para ser bonito. O ajuste fino espera
+ * planta real na tela, que é quando qualidade pode ser vista em vez de suposta.
+ */
+export const LADO_REGIAO_PX = 8;
+export const TETO_POR_REGIAO = 2;
+export const FOLGA_DA_JANELA = 0.25;
 export const FATOR_DE_ZOOM = 2;
 
 /** 1 pt = 1/72 pol = 25,4/72 mm. `length_um` está em micrômetros de papel. */

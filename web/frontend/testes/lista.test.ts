@@ -53,11 +53,13 @@ describe("lista.ts", () => {
   });
 
   it("entre candidatos da mesma região, fica o mais comprido", () => {
+    // Três candidatos na mesma região, com o teto em 2: o mais curto — o de
+    // índice 0, meio ponto — é o que sobra de fora. É esta a promessa que faz a
+    // ordenação por comprimento existir.
     const g = geometriaDe([[1, 1, 1.5, 1], [1, 1, 9, 1], [1, 1, 3, 1]]);
     const ordem = ordenarPorComprimento(g.length_um);
-    // Teto de 4, mas só três candidatos: entram todos, na ordem do mais longo.
     const p = prepararTudo(g, new Uint8Array(3).fill(1), ordem, FOLHA, 1);
-    expect([...p.lista.subarray(0, p.quantos)]).toEqual([1, 2, 0]);
+    expect([...p.lista.subarray(0, p.quantos)]).toEqual([1, 2]);
   });
 
   it("nunca inclui o que a máscara zerou", () => {

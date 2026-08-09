@@ -70,12 +70,19 @@ Valem para todas as tarefas; não repetidas em cada uma.
 ## Constantes deste plano
 
 ```
-LADO_REGIAO_PX = 4      lado da região do teto, em pixels
-TETO_POR_REGIAO = 4     entidades por região
-FOLGA_DA_JANELA = 0.5   meia tela para cada lado
+LADO_REGIAO_PX = 8      lado da região do teto, em pixels
+TETO_POR_REGIAO = 2     entidades por região
+FOLGA_DA_JANELA = 0.25  um quarto de tela para cada lado
 FATOR_DE_ZOOM = 2       fora dessa faixa, prepara de novo
 UM_POR_PONTO = 25.4 / 72 * 1000   = 352,7777… µm por ponto de papel
 ```
+
+Os três primeiros foram **medidos e escolhidos em 2026-08-09**, na execução do
+passo 6 da tarefa 3. O spec tinha fixado 4 px e teto 4 a partir de um protótipo;
+com a implementação de verdade esse par dá 143 ms por quadro com a folha à
+vista, contra 31 ms deste. Nenhuma combinação fecha o alvo de 33 ms nos três
+zooms — o motivo e a varredura completa estão em
+`web/frontend/medicao/RESULTADO.md`.
 
 `UM_POR_PONTO` é onde se erra: `length_um` está em **micrômetros de papel** e as
 coordenadas em **pontos**. Converter um pelo outro sem esse fator dá um limiar

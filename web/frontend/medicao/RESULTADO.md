@@ -250,6 +250,20 @@ Isso é inferência a partir de duas medições, não medida direta: não se med
 tinta. Mas explica todos os números da tabela, e nenhuma outra hipótese testada
 explica.
 
+### O que foi adotado
+
+**8 px de lado, teto 2, folga 0,25** — 31 ms com a folha à vista, ~105 ms no
+zoom intermediário, 48 ms no fechado. Decisão do usuário em 2026-08-09.
+
+Não é o mais rápido: teto 1 dá 10 / 64 / 44 ms. Mas teto 1 mostra 7.100 de 3
+milhões de entidades com a folha à vista, e se isso é ralo demais só se vê
+olhando. **Ajustar mais sem planta real na tela seria otimizar contra um número
+sintético**, trocando qualidade que ninguém viu por milissegundos num pior caso
+que talvez não exista neste acervo.
+
+O ajuste fino, e a decisão sobre o cache de imagem, ficam para quando a tela
+funcionar com uma planta de verdade.
+
 ### O que fica pendente
 
 Nenhuma combinação fecha 33 ms nos três zooms, e mexer nos parâmetros não vai

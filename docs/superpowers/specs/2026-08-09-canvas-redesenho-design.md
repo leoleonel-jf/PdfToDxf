@@ -48,14 +48,21 @@ Na memória, depois que a página carrega:
 É o centro do desenho. Uma lista de índices de entidade, preparada uma vez, com
 duas regras:
 
-1. **Teto por região de papel.** A folha é dividida em regiões do tamanho de
-   **4 × 4 pixels** no zoom para o qual a lista está sendo preparada, e cada
-   região aceita no máximo **4 entidades**. Os dois valores vêm do protótipo:
-   com teto de 4 a lista ficou em 113 mil e com teto de 2 em 57 mil, e as duas
-   traçam dentro do quadro. Começar por 4 dá o desenho mais cheio das duas
-   opções que cabem; a primeira tarefa do plano confirma ou ajusta o par,
+1. **A lista cobre uma janela, não a folha inteira.** A janela é o retângulo
+   visível alargado em **meia tela para cada lado** — quatro vezes a área
+   visível. Não é otimização: preparar a folha inteira funciona com a folha à
+   vista e desmorona no zoom fechado, onde as regiões ficam menores que o traço
+   e passam a existir mais regiões do que entidades. Aí o teto não corta nada e
+   a lista volta às 3 milhões. Com a janela, o número de regiões fica constante
+   em qualquer zoom, e a lista fica limitada pelo que cabe na tela.
+
+2. **Teto por região.** A janela é dividida em regiões de **4 × 4 pixels**, e
+   cada região aceita no máximo **4 entidades**. Os dois valores vêm do
+   protótipo: com teto de 4 a lista ficou em 113 mil e com teto de 2 em 57 mil,
+   e as duas traçam dentro do quadro. Começar por 4 dá o desenho mais cheio das
+   duas opções que cabem; a tarefa do `lista.ts` confirma ou ajusta o par,
    medindo, e o número escolhido fica registrado com o motivo.
-2. **Os mais longos primeiro.** A preparação percorre as entidades na ordem de
+3. **Os mais longos primeiro.** A preparação percorre as entidades na ordem de
    comprimento decrescente, então quem ocupa as vagas de cada região é o traço
    que mais se vê. É para isto, e só para isto, que a ordenação existe.
 
@@ -78,13 +85,18 @@ Recortar por caixa dentro de uma lista de 57 mil custa menos de um milissegundo.
 
 ### Quando a lista é preparada de novo
 
-Só em três situações, e nenhuma delas é pan:
-
 | Evento | Por quê |
 |---|---|
 | A máscara mudou | clique em opção ou em layer: outras entidades disputam as vagas |
 | O zoom dobrou ou caiu à metade | as regiões do teto valem para uma faixa de zoom, não para um valor. O fator **2** é o ponto de partida: dentro dele a lista fica no máximo duas vezes mais densa ou mais rala que o ideal, o que a rasterização absorve |
+| A vista saiu da janela | o pan andou mais de meia tela desde a última preparação, e a borda começaria a aparecer vazia |
 | O conjunto de entidades mudou | o esqueleto chegou; depois o detalhe chegou |
+
+**Nenhum desses acontece durante o gesto.** Enquanto o dedo, o mouse ou a roda
+estão em movimento, a tela desenha a lista que tem, a 15 ms. A preparação
+acontece quando o gesto para. Um arrasto longo pode encostar na borda da janela
+e mostrar vazio ali por um instante; meia tela de folga é o que torna isso raro,
+e parar o gesto conserta.
 
 Preparar custa da ordem de 500 ms, e por isso é **fatiada entre quadros**: cada
 quadro prepara um pedaço e desenha o que já tem. A planta se completa à vista,
@@ -159,13 +171,14 @@ O miolo:
 | Esqueleto chega | `lerGeometria` → `ordem` → `select` → prepara a lista → desenha e enquadra a folha |
 | Detalhe chega | `intercalar` → `ordem` → `select` → prepara de novo → desenha |
 | Clique em opção ou layer | `select` + `estimarBytes` (~12 ms, thread principal) → prepara de novo, fatiado |
-| Pan | só a transformação muda → traça a mesma lista, 15 ms |
+| Pan | traça a mesma lista, 15 ms; prepara de novo ao fim do gesto, e só se a vista saiu da janela |
 | Zoom | traça a mesma lista durante o gesto; prepara de novo quando o gesto para, e só se o zoom saiu da faixa do fator 2 |
 | Janela redimensionada | como o zoom |
 
 Uma regra em vez de seis casos: **o pintor recomeça quando muda a transformação,
-a máscara ou o conjunto de entidades; e só prepara a lista de novo quando muda a
-máscara, o conjunto, ou o zoom além de um fator.**
+a máscara ou o conjunto de entidades; e só prepara a lista de novo, ao fim do
+gesto, quando muda a máscara, muda o conjunto, o zoom sai da faixa do fator 2 ou
+a vista sai da janela.**
 
 ## Estados e erros
 
@@ -190,6 +203,7 @@ Os três primeiros existem e passam; os dois últimos vêm do desenho de
 | Leitor do formato, contra fixture do Python | a ponte entre as duas implementações do formato |
 | Intercalação | o achado do dedup: decidir por parte separada elege dois sobreviventes |
 | `lista` respeita o teto e prefere os longos | nenhuma região passa do teto; entre dois candidatos fica o mais comprido |
+| `lista` cobre a janela inteira e nada além | entidade dentro da janela entra; fora dela, não. É o que impede a lista de crescer com o zoom |
 | **`lista` fatiada é igual a `lista` inteira** | o desenho não pode depender de quantos pedaços couberam em cada quadro |
 | `lista` nunca inclui o que a máscara zerou | a simplificação não ressuscita o que as opções descartaram |
 | Zoom mantém parado o ponto sob o dedo | função pura em `gestos.ts`, provada sem navegador |

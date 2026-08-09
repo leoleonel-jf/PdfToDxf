@@ -352,7 +352,9 @@ Acrescente ao fim de `web/frontend/testes/toolbar.test.ts`, dentro do
   });
 
   it("redução abaixo de 1% não vira ruído na barra", () => {
-    expect(textoDaComparacao(1_000_000, 999_000, false)).toBe("1,0 MB");
+    // Um número só, e é o atual: a barra tem de dizer o que o arquivo vai
+    // pesar, não o que ele pesaria sem compactação nenhuma.
+    expect(textoDaComparacao(1_000_000, 999_000, false)).toBe("999,0 kB");
   });
 
   it("a comparação parcial vem marcada", () => {

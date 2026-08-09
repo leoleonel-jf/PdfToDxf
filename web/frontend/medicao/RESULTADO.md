@@ -212,9 +212,57 @@ Dois achados que o spec não previa:
   de que a incerteza destes números absolutos é grande. As razões entre linhas
   da mesma rodada valem; os valores absolutos, menos.
 
-A decisão sobre o que fazer — afrouxar o alvo, adotar a melhor combinação e
-medir de novo com planta real, ou acrescentar o cache de imagem para o pan —
-é de projeto, e está registrada como pendente.
+### A repetição com a máquina limpa
+
+Repetida com o Chrome fechado (de 62 processos e 7,2 GB para 23 e 2,4 GB), no
+navegador embutido do app — Chromium 148 — e com o **mínimo de 15 passagens**
+no lugar da faixa. Sob carga o ruído só soma tempo, nunca subtrai, então o
+mínimo é a estimativa honesta do custo real.
+
+| região / teto / folga | folha inteira | zoom 4× | zoom 16× |
+|---|---|---|---|
+| 4 px, 4, 0,5 | 143 ms (113.600) | 389 ms (427.852) | 97 ms (46.179) |
+| 4 px, 2, 0,5 | 95 ms (56.800) | 270 ms (221.319) | 77 ms (45.092) |
+| 8 px, 2, 0,5 | 33 ms (14.400) | 88 ms (55.800) | 65 ms (36.105) |
+| 8 px, 2, 0,25 | 31 ms (14.200) | 105 ms (37.000) | 48 ms (24.136) |
+| 8 px, 1, 0,25 | 10 ms (7.100) | 64 ms (18.500) | 44 ms (15.011) |
+
+**A carga não era o fator dominante:** o `gerar 3M` de controle foi de 838 para
+777 ms, quase nada. O que a limpeza e o mínimo consertaram foi a *anomalia* —
+antes, baixar o teto de 2 para 1 parecia piorar o quadro com uma lista menor, o
+que é impossível. Agora a ordem é monotônica, como a física manda. Fica a lição:
+o remédio para ruído de medição foi o mínimo de muitas passagens, não a máquina
+livre.
+
+### Por que espremer a lista dá retorno decrescente
+
+O protótipo desenhou 56.800 segmentos **curtos** em 15 ms. Aqui, 15.011
+segmentos custam 44 ms: quatro vezes menos entidades e três vezes mais tempo. A
+diferença é o comprimento — no zoom fechado cada traço é longo na tela.
+
+Daí a conclusão que o spec não previa: **o custo do quadro segue a tinta
+rasterizada, não a contagem de entidades.** Os três parâmetros do desenho —
+lado da região, teto e folga — controlam contagem. Nenhum controla tinta. É por
+isso que cortar a lista de 113 mil para 7 mil levou o quadro de 143 para 10 ms
+com a folha à vista, mas só de 97 para 44 ms no zoom de 16×.
+
+Isso é inferência a partir de duas medições, não medida direta: não se mediu
+tinta. Mas explica todos os números da tabela, e nenhuma outra hipótese testada
+explica.
+
+### O que fica pendente
+
+Nenhuma combinação fecha 33 ms nos três zooms, e mexer nos parâmetros não vai
+fechar. A decisão é de projeto:
+
+- adotar a melhor combinação e julgar com **planta real na tela**, que é quando
+  a qualidade do desenho pode ser vista em vez de suposta;
+- ou acrescentar o cache de imagem para o pan, que ataca a tinta em vez da
+  contagem — desenhar uma vez e arrastar a imagem.
+
+Toda esta medição usa uma distribuição sintética log-uniforme de 0,05 a 100 pt.
+Ela é plausível, mas **não é uma planta**. A planta grande do acervo tem 2,33
+milhões de entidades, não 3 milhões, e com dedup ligado cai para 934 mil.
 
 ## O que reabrir antes da tarefa 5
 

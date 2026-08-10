@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { enviarPdf, ErroDaApi, esperarPagina, lerEstado } from "../src/api.js";
+import { enviarPdf, ErroDaApi, esperarPagina, lerEstado, lerGeometriaBruta } from "../src/api.js";
 
 function respostaDe(corpo: unknown, status = 200): Response {
   return new Response(JSON.stringify(corpo), {
@@ -132,5 +132,50 @@ describe("api.ts", () => {
       .rejects.toSatisfy((e: unknown) => e instanceof DOMException &&
                                          e.name === "AbortError");
     expect(x.enviado).toBe(null);
+  });
+
+  function respostaEmPedacos(pedacos: Uint8Array[], tamanho?: number): Response {
+    const fluxo = new ReadableStream<Uint8Array>({
+      start(controle) {
+        for (const p of pedacos) controle.enqueue(p);
+        controle.close();
+      },
+    });
+    const cabecalhos: Record<string, string> = {};
+    if (tamanho !== undefined) cabecalhos["content-length"] = String(tamanho);
+    return new Response(fluxo, { status: 200, headers: cabecalhos });
+  }
+
+  it("a geometria chega inteira e o progresso acompanha", async () => {
+    const a = new Uint8Array([1, 2, 3]);
+    const b = new Uint8Array([4, 5]);
+    vi.stubGlobal("fetch", vi.fn(async () => respostaEmPedacos([a, b], 5)));
+
+    const vistos: Array<[number, number | null]> = [];
+    const buffer = await lerGeometriaBruta("a".repeat(32), 1, "esqueleto",
+                                           undefined,
+                                           (lidos, total) => vistos.push([lidos, total]));
+
+    expect(new Uint8Array(buffer)).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+    expect(buffer.byteLength).toBe(5);
+    expect(vistos).toEqual([[3, 5], [5, 5]]);
+  });
+
+  it("sem Content-Length o total é nulo, e não um palpite", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      respostaEmPedacos([new Uint8Array([7, 7])])));
+
+    const vistos: Array<number | null> = [];
+    await lerGeometriaBruta("a".repeat(32), 1, "detalhe", undefined,
+                            (_lidos, total) => vistos.push(total));
+    expect(vistos).toEqual([null]);
+  });
+
+  it("erro do servidor continua virando ErroDaApi antes de ler o corpo", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(JSON.stringify({ detail: "A página ainda não está pronta." }),
+                   { status: 409, headers: { "content-type": "application/json" } })));
+    await expect(lerGeometriaBruta("a".repeat(32), 1, "esqueleto"))
+      .rejects.toSatisfy((e: unknown) => e instanceof ErroDaApi && e.status === 409);
   });
 });

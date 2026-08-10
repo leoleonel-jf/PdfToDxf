@@ -190,13 +190,51 @@ export async function lerMeta(job: string, pagina: number,
   return r.json();
 }
 
+/**
+ * Baixa a geometria lendo o corpo em pedaços, para poder relatar progresso.
+ *
+ * O buffer devolvido tem de ser byte a byte o mesmo que `arrayBuffer()`
+ * devolvia: é sobre ele que o leitor do formato monta as `TypedArray` sem
+ * copiar, e é por isso que as seções são enchidas até múltiplo de 4.
+ */
 export async function lerGeometriaBruta(job: string, pagina: number,
                                         parte: "esqueleto" | "detalhe",
-                                        sinal?: AbortSignal): Promise<ArrayBuffer> {
+                                        sinal?: AbortSignal,
+                                        aoProgredir?: (lidos: number,
+                                                       total: number | null) => void):
+                                        Promise<ArrayBuffer> {
   const r = await pedir(
     `/api/jobs/${job}/pages/${pagina}/geometry.bin?parte=${parte}`,
     { signal: sinal });
-  return r.arrayBuffer();
+
+  const declarado = Number(r.headers.get("content-length"));
+  // Sem tamanho declarado — resposta comprimida, por exemplo — o progresso sai
+  // indeterminado, e não com uma porcentagem inventada.
+  const total = Number.isFinite(declarado) && declarado > 0 ? declarado : null;
+
+  // Ambiente sem corpo em fluxo: cai no caminho antigo em vez de estourar.
+  if (!r.body) return r.arrayBuffer();
+
+  const leitor = r.body.getReader();
+  const pedacos: Uint8Array[] = [];
+  let lidos = 0;
+  for (;;) {
+    const { done, value } = await leitor.read();
+    if (done) break;
+    pedacos.push(value);
+    lidos += value.byteLength;
+    aoProgredir?.(lidos, total);
+  }
+
+  // Uma cópia só, no fim. Concatenar a cada pedaço seria quadrático, e numa
+  // planta no teto são dezenas de megabytes.
+  const inteiro = new Uint8Array(lidos);
+  let onde = 0;
+  for (const p of pedacos) {
+    inteiro.set(p, onde);
+    onde += p.byteLength;
+  }
+  return inteiro.buffer;
 }
 
 export async function exportar(job: string, pagina: number,

@@ -27,8 +27,9 @@ Estado em 2026-08-09. Leia isto primeiro ao retomar em sessão nova.
 > interface inteira e **ninguém a viu com planta real na tela**. Nenhum agente
 > tem olhos. Dos três defeitos da etapa 3, dois só apareceram assim.
 >
-> As etapas 3 e 3.5 estão prontas: 2145 testes de unidade, 10 de ponta a ponta,
-> 15 arquivos de teste Python, e **integração contínua verde no GitHub**. O
+> As etapas 3, 3.5 e 3.6 estão prontas: **2162 testes de unidade, 17 de ponta a
+> ponta**, 15 arquivos de teste Python, e **integração contínua verde no
+> GitHub**. O
 > desenho do canvas foi **refeito no meio da etapa 3**, depois de três medições
 > derrubarem três arquiteturas — se for mexer no canvas, leia
 > `web/frontend/medicao/RESULTADO.md` antes.
@@ -442,11 +443,16 @@ aviso, sem `pointer-events: none`, engolia os cliques do canvas e impedia a
 calibração por dois pontos de completar. Tudo corrigido, com teste de ida e
 volta da escala que não existia.
 
-### Defeito de ambiente nesta máquina (2026-08-09)
+### Defeito de ambiente que já passou (2026-08-09 → 2026-08-10)
 
-**`npm run e2e` dá 9 de 10 aqui, e 10 de 10 no CI do GitHub.** O que falha é
-"converte uma planta de ponta a ponta", em `download.path()`, com `canceled`. O
-navegador começa o download com o nome certo e depois o cancela.
+> **Resolvido por um reinício da máquina.** Hoje a bateria dá **17 de 17** aqui,
+> em 36 s. Fica registrado porque o diagnóstico é reaproveitável: se o mesmo
+> sintoma voltar, comece pelo reinício em vez de caçar defeito no código.
+
+Durante algumas horas, `npm run e2e` dava 9 de 10 nesta máquina e 10 de 10 no
+CI. O que falhava era "converte uma planta de ponta a ponta", em
+`download.path()`, com `canceled`. O navegador começava o download com o nome
+certo e depois o cancelava.
 
 **Não é do código**, e isto foi verificado, não suposto:
 
@@ -460,13 +466,36 @@ navegador começa o download com o nome certo e depois o cancela.
 - **o CI no Linux roda os dez e passa.**
 
 Sintoma de apoio: a bateria caiu de 25 s para 2,7 min, e um `du` no `%TEMP%`
-(2941 entradas) estourou dois minutos sem terminar. O palpite é o `%TEMP%` em
-estado ruim — é lá que o Chromium grava o download antes de entregá-lo. Limpar
-essa pasta ficou para o usuário fazer fora de sessão, com os programas
-fechados.
+(2941 entradas) estourou dois minutos sem terminar. Reinstalar o Chromium do
+Playwright não resolveu; **reiniciar o Windows resolveu.**
 
-**Ao retomar:** se `npm run e2e` der 9 de 10 só nesse teste, é isto. Confira o
-CI antes de caçar defeito no código.
+### Etapa 3.6 — indicadores de progresso (2026-08-10, pronta)
+
+Entrou depois da 3.5, a pedido do usuário: a tela não contava o que estava
+acontecendo nos momentos em que ficava parada.
+
+- **Desenho:** `docs/superpowers/specs/2026-08-09-progresso-design.md`
+- **Plano:** `docs/superpowers/plans/2026-08-09-progresso.md`
+
+Cinco momentos ganharam indicador: envio do PDF (determinado, com botão de
+cancelar), extração (indeterminado, com tempo decorrido), download da geometria
+(determinado), pintura no canvas (indeterminado) e geração do DXF
+(indeterminado). `enviarPdf` trocou `fetch` por `XMLHttpRequest`, que é o único
+jeito de saber quantos bytes subiram; `lerGeometriaBruta` passou a ler o corpo
+em pedaços. Nenhuma dependência nova.
+
+**A regra que governa: nunca inventar porcentagem.** Sem número real, a barra é
+indeterminada e mostra o tempo decorrido, que é verdade.
+
+**O que a revisão final pegou, e as revisões por tarefa não:** o plano pôs
+**cinco produtores disputando um slot só**, sem arbitragem. Disso saíam três
+defeitos — a porcentagem de "Desenhando" era falsa (numerador contava a janela
+visível, denominador contava a página inteira, então em qualquer zoom a barra
+mentia); um tique da faixa apagava um aviso vivo na sobreposição, inclusive a
+instrução da calibração e mensagens de erro; e o botão Cancelar era destruído e
+recriado a cada ~50 ms, o que **engolia o clique** entre o apertar e o soltar.
+Hoje são **dois indicadores independentes**, um por lugar, o aviso ganha do
+progresso na sobreposição, e a barra é criada uma vez e só atualizada.
 
 ### Integração contínua (2026-08-09)
 

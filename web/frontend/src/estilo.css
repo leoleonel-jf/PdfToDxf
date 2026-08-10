@@ -281,6 +281,11 @@ html, body {
 .aviso h2 { margin: 0; font-size: var(--t-maior); font-weight: 500; }
 .aviso p { margin: 0; max-width: 46ch; color: var(--c7); }
 
+/* O `.aviso` não recebe ponteiro para não engolir os cliques do canvas — mas o
+   que é clicável dentro dele precisa receber, senão o botão de cancelar nasce
+   morto. */
+.aviso button { pointer-events: auto; }
+
 .faixa-detalhe {
   position: absolute;
   left: 0; right: 0; bottom: 0;
@@ -308,4 +313,31 @@ html, body {
   overflow: hidden;
   pointer-events: none;
   background: var(--fundo-do-desenho);
+}
+
+/* --- progresso ----------------------------------------------------------- */
+
+.progresso { display: flex; flex-direction: column; gap: var(--e1); width: 100%; max-width: 32rem; }
+.progresso > .apoio { display: flex; justify-content: space-between; }
+
+.progresso-trilho {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--c0);
+  overflow: hidden;
+}
+.progresso-trecho { height: 100%; background: var(--destaque); transition: width 120ms linear; }
+
+/* Indeterminado: um trecho que vai e volta. Não finge saber quanto falta —
+   só diz que alguma coisa continua acontecendo. */
+.progresso-trecho.indeterminado {
+  width: 35%;
+  animation: vaivem 1.4s ease-in-out infinite;
+}
+@keyframes vaivem {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(286%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progresso-trecho.indeterminado { animation: none; width: 100%; opacity: 0.4; }
 }

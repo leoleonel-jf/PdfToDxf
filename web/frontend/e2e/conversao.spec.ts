@@ -198,3 +198,49 @@ test("as três opções que só tiram redundância abrem ligadas", async ({ page
   await expect(t(page, "opcao-drop_fills"))
     .toHaveAttribute("aria-pressed", "false");
 });
+
+test("o envio mostra barra de progresso e ela some ao terminar", async ({ page }) => {
+  await page.goto("/");
+  const progresso = t(page, "progresso");
+  await page.setInputFiles("#escolher-pdf", PLANTA);
+  // A barra pode passar rápido; o que importa é que ela some no fim.
+  await expect(t(page, "exportar")).toBeEnabled({ timeout: 60_000 });
+  await expect(progresso).toBeHidden();
+});
+
+test("exportar mostra o indicador enquanto o servidor gera o DXF", async ({ page }) => {
+  await abrirPlanta(page);
+  const download = page.waitForEvent("download");
+  await t(page, "exportar").click();
+  await download;
+  await expect(t(page, "progresso")).toBeHidden();
+});
+
+/**
+ * Prova que o `.aviso button` do estilo.css devolve o ponteiro.
+ *
+ * O `.aviso` tem `pointer-events: none` para não engolir os cliques da
+ * calibração por dois pontos — mas sem uma regra que devolva o ponteiro ao
+ * botão de cancelar, ele nasceria inclicável, e `toBeEnabled` não pegaria
+ * isso: um elemento com `pointer-events: none` continua "enabled". Só um
+ * `click()` de verdade prova a coisa. O PDF de teste é pequeno demais para dar
+ * tempo de clicar antes do envio terminar sozinho, então a resposta do
+ * servidor é atrasada de propósito.
+ */
+test("cancelar durante o envio aborta de verdade e destrava a tela", async ({ page }) => {
+  await page.goto("/");
+  await page.route("**/api/jobs", async (route) => {
+    await new Promise((r) => setTimeout(r, 3000));
+    try { await route.continue(); } catch { /* abortada pelo cliente antes do proxy */ }
+  });
+  await page.setInputFiles("#escolher-pdf", PLANTA);
+
+  const cancelar = t(page, "cancelar");
+  await expect(cancelar).toBeVisible();
+  await cancelar.click();
+
+  // A barra some — sem isto, o clique cancelava o envio mas a tela ficava
+  // presa mostrando a barra para sempre, com um botão que já não fazia nada.
+  await expect(t(page, "progresso")).toBeHidden();
+  await expect(t(page, "exportar")).toBeDisabled();
+});

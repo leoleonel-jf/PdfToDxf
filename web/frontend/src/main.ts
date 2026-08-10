@@ -37,6 +37,8 @@ import {
 } from "./painel.js";
 import { proporcaoRepetida, resumoDasCamadas, type ResumoDeCamada } from "./camadas.js";
 import { secaoCamadas, secaoCompactacao, secaoEscala } from "./secoes.js";
+import { criarBarraDeProgresso, criarBotao } from "./ui/controles.js";
+import type { Progresso } from "./progresso.js";
 
 const tela = document.querySelector<HTMLCanvasElement>("#desenho")!;
 const ctx = tela.getContext("2d")!;
@@ -96,6 +98,21 @@ let controle = new AbortController();
 let calibragem: Calibragem | null = null;
 let camadas: ResumoDeCamada[] = [];
 
+/** O que a tela está esperando agora, e nada se não estiver esperando nada. */
+let emCurso: { onde: "aviso" | "faixa"; rotulo: string; p: Progresso } | null = null;
+let cancelar: (() => void) | null = null;
+let relogio = 0;
+
+/** Início do preparo em curso, para a barra "Desenhando" — e não estado da tela. */
+let inicioDoPreparo = 0;
+/**
+ * Quantas entidades a máscara atual mantém — o total da barra "Desenhando".
+ *
+ * Variável do laço de desenho, não de `EstadoDaTela`: a etapa 3.5 removeu o
+ * campo `sobreviventes` de lá por ser código morto, e ele não volta.
+ */
+let sobreviventesDoPreparo = 0;
+
 /**
  * A página inteira: todas as camadas, nenhuma compactação.
  *
@@ -154,6 +171,15 @@ function agendar(): void {
     // O teste de ponta a ponta espera por esta contagem, e não por relógio: com
     // preparo fatiado, o número de quadros depende da máquina.
     tela.dataset["desenhadas"] = String(pintor.desenhadas);
+    // Só aparece se demorar: numa planta leve o preparo termina em um quadro, e
+    // piscar uma barra a cada clique numa opção seria pior do que não ter.
+    if (!acabou && Date.now() - inicioDoPreparo > 300) {
+      mostrarProgresso("faixa", "Desenhando",
+                       { tipo: "determinado", feito: pintor.desenhadas,
+                         total: sobreviventesDoPreparo });
+    } else if (acabou && emCurso?.rotulo === "Desenhando") {
+      esconderProgresso();
+    }
     if (!acabou) agendar();
   });
 }
@@ -171,7 +197,12 @@ function recalcular(): void {
   mascara = selecionar(geometria, opts);
   estado.bytes = estimarBytes(geometria, mascara, opts);
   geracao++;                     // avisa o pintor que a lista precisa ser refeita
+  // Total da barra "Desenhando": conta os sobreviventes desta máscara. Variável
+  // do laço de desenho — não de `EstadoDaTela` — porque só o preparo usa.
+  sobreviventesDoPreparo = 0;
+  for (const v of mascara) if (v) sobreviventesDoPreparo++;
   montarTudo();
+  inicioDoPreparo = Date.now();
   agendar();
 }
 
@@ -190,7 +221,78 @@ function trocarGeometria(nova: Geometria): void {
   recalcular();
 }
 
+/**
+ * O indeterminado precisa de um relógio; o determinado, não.
+ *
+ * Sem isto o tempo decorrido ficaria congelado no instante em que a barra
+ * apareceu — que é justamente o pior momento, porque é quando ele vale zero.
+ */
+function ligarRelogio(): void {
+  if (relogio) return;
+  relogio = window.setInterval(() => {
+    if (emCurso?.p.tipo === "indeterminado") desenharProgresso();
+    else pararRelogio();
+  }, 1000);
+}
+
+function pararRelogio(): void {
+  if (relogio) { clearInterval(relogio); relogio = 0; }
+}
+
+function mostrarProgresso(onde: "aviso" | "faixa", rotulo: string,
+                          p: Progresso, podeCancelar = false): void {
+  emCurso = { onde, rotulo, p };
+  if (!podeCancelar) cancelar = null;
+  if (p.tipo === "indeterminado") ligarRelogio(); else pararRelogio();
+  desenharProgresso();
+}
+
+function esconderProgresso(): void {
+  emCurso = null;
+  cancelar = null;
+  pararRelogio();
+  desenharProgresso();
+}
+
+function desenharProgresso(): void {
+  // Limpa sempre os dois locais, não só o que perde a vez: sem isto, uma barra
+  // que nasceu no `painelAviso` (o envio) e a próxima que nasce na `faixaDetalhe`
+  // (o download) deixam dois `[data-teste="progresso"]` na página ao mesmo
+  // tempo — um escondido, mas ainda achável — e qualquer asserção de ponta a
+  // ponta sobre "a barra" quebra por ambiguidade.
+  if (!emCurso) {
+    painelAviso.hidden = true;
+    painelAviso.replaceChildren();
+    faixaDetalhe.hidden = true;
+    faixaDetalhe.replaceChildren();
+    return;
+  }
+  const barra = criarBarraDeProgresso(emCurso.p, emCurso.rotulo, Date.now());
+  if (emCurso.onde === "faixa") {
+    painelAviso.hidden = true;
+    painelAviso.replaceChildren();
+    faixaDetalhe.hidden = false;
+    faixaDetalhe.replaceChildren(barra);
+    return;
+  }
+  faixaDetalhe.hidden = true;
+  faixaDetalhe.replaceChildren();
+  painelAviso.hidden = false;
+  painelAviso.replaceChildren(barra);
+  if (cancelar) {
+    painelAviso.append(criarBotao({
+      rotulo: "Cancelar", teste: "cancelar", aoClicar: () => cancelar?.(),
+    }));
+  }
+}
+
+/**
+ * `esconderProgresso()` primeiro: um erro nunca pode aparecer por baixo de
+ * uma barra viva. Ela chama `desenharProgresso`, que esconde `painelAviso` —
+ * por isso é `mostrarAviso`, e não ela, quem decide a visibilidade depois.
+ */
 function mostrarAviso(aviso: Aviso | null): void {
+  esconderProgresso();
   if (!aviso) { painelAviso.hidden = true; return; }
   painelAviso.hidden = false;
   painelAviso.replaceChildren();
@@ -207,18 +309,31 @@ async function abrir(arquivo: File): Promise<void> {
   controle.abort();
   controle = new AbortController();
   const sinal = controle.signal;
+  // Identidade e não rótulo: outra chamada a `abrir()` mais nova usa o mesmo
+  // texto "Enviando o PDF", e comparar por rótulo esconderia a barra dela.
+  let meuProgresso: typeof emCurso = null;
 
   try {
-    mostrarAviso({ titulo: "Enviando o PDF", detalhe: "Um instante.",
-                   podeTentarDeNovo: false });
-    const ficha = await enviarPdf(arquivo, sinal);
+    cancelar = () => controle.abort();
+    mostrarProgresso("aviso", "Enviando o PDF",
+                     { tipo: "determinado", feito: 0, total: arquivo.size }, true);
+    meuProgresso = emCurso;
+    const ficha = await enviarPdf(arquivo, sinal, (feito, total) =>
+      mostrarProgresso("aviso", "Enviando o PDF",
+                       { tipo: "determinado", feito, total }, true));
+    esconderProgresso();
     nomeDoArquivo = arquivo.name;
     job = ficha.job_id;
     nPaginas = ficha.n_paginas;
     pagina = 1;
     await carregarPagina();
   } catch (erro) {
-    if (sinal.aborted) return;
+    if (sinal.aborted) {
+      // O clique em "Cancelar" aborta de verdade — sem isto, a barra ficava
+      // presa na tela para sempre, com um botão que já não fazia nada.
+      if (emCurso === meuProgresso) esconderProgresso();
+      return;
+    }
     mostrarAviso(avisoDoErro(erro));
   }
 }
@@ -238,7 +353,10 @@ async function carregarPagina(): Promise<void> {
   geometria = null;
   estado.bytes = 0;
   estado.bytesBase = 0;
-  faixaDetalhe.hidden = true;
+  // `esconderProgresso()` e não só `faixaDetalhe.hidden = true`: sem isto, uma
+  // barra indeterminada da página anterior (relógio ligado) sobreviveria à
+  // troca de página e reapareceria sozinha no próximo tique.
+  esconderProgresso();
   // Sem remontar aqui, numa planta de várias páginas o "Exportar DXF" continua
   // habilitado com a estimativa da página anterior — e o clique exportaria uma
   // página que ainda não foi extraída.
@@ -246,8 +364,13 @@ async function carregarPagina(): Promise<void> {
 
   try {
     await pedirExtracao(job, pagina, sinal);
-    const final = await esperarPagina(job, pagina, sinal, (e) =>
-      mostrarAviso(avisoDaSituacao(e.situacao, e.codigo, e.mensagem)));
+    const inicio = Date.now();
+    const final = await esperarPagina(job, pagina, sinal, (e) => {
+      if (e.situacao === "na_fila" || e.situacao === "extraindo") {
+        mostrarProgresso("aviso", "Processando a planta",
+                         { tipo: "indeterminado", desde: inicio });
+      }
+    });
     if (final.situacao === "erro") {
       mostrarAviso(avisoDaSituacao("erro", final.codigo, final.mensagem));
       return;
@@ -258,20 +381,28 @@ async function carregarPagina(): Promise<void> {
     estado.layersDesligados.clear();
     camadas = [];
 
-    const cruEsqueleto = await lerGeometriaBruta(job, pagina, "esqueleto", sinal);
+    const cruEsqueleto = await lerGeometriaBruta(
+      job, pagina, "esqueleto", sinal, (lidos, total) =>
+        mostrarProgresso("faixa", "Carregando o desenho", total
+          ? { tipo: "determinado", feito: lidos, total }
+          : { tipo: "indeterminado", desde: inicio }));
+    esconderProgresso();
     if (sinal.aborted) return;
     const esqueleto = lerGeometria(cruEsqueleto, meta.layers, 0);
     esqueleto.n_groups = contarGrupos(esqueleto);
     estado.parcial = meta.partes.detalhe > 0;
-    faixaDetalhe.hidden = !estado.parcial;
-    faixaDetalhe.textContent = "Carregando o detalhe do desenho…";
 
     ajustarTamanho();
     vista = enquadrar(meta.largura_pt, meta.altura_pt, tela.width, tela.height);
     trocarGeometria(esqueleto);
 
     if (estado.parcial) {
-      const cruDetalhe = await lerGeometriaBruta(job, pagina, "detalhe", sinal);
+      const cruDetalhe = await lerGeometriaBruta(
+        job, pagina, "detalhe", sinal, (lidos, total) =>
+          mostrarProgresso("faixa", "Carregando o detalhe do desenho", total
+            ? { tipo: "determinado", feito: lidos, total }
+            : { tipo: "indeterminado", desde: inicio }));
+      esconderProgresso();
       if (sinal.aborted) return;
       const parteDetalhe = lerGeometria(cruDetalhe, meta.layers, 0);
       // A intercalação restaura a ordem original. Sem ela, o dedup elegeria um
@@ -279,7 +410,6 @@ async function carregarPagina(): Promise<void> {
       const inteira = intercalar(esqueleto, parteDetalhe);
       inteira.n_groups = contarGrupos(inteira);
       estado.parcial = false;
-      faixaDetalhe.hidden = true;
       trocarGeometria(inteira);
     }
   } catch (erro) {
@@ -397,11 +527,14 @@ function iniciarCalibracao(): void {
 }
 
 async function baixar(): Promise<void> {
+  const inicio = Date.now();
   try {
+    mostrarProgresso("aviso", "Gerando o DXF", { tipo: "indeterminado", desde: inicio });
     const r = await exportar(job, pagina, {
       escala: estado.escala, unidade: estado.unidade,
       opcoes: opcoesEfetivas(estado),
     });
+    esconderProgresso();
     const link = document.createElement("a");
     link.href = r.url;
     link.download = "";

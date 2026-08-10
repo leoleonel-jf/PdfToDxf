@@ -6,6 +6,7 @@
  * um vetor de injeção. O texto vai por `textContent`, sempre.
  */
 import { caminho } from "./icones.js";
+import { porcentagem, tempoDecorrido, type Progresso } from "../progresso.js";
 
 const SVG = "http://www.w3.org/2000/svg";
 
@@ -104,5 +105,53 @@ export function criarCampoComUnidade(o: {
   unidade.textContent = o.unidade;
 
   caixa.append(rotulo, campo, unidade);
+  return caixa;
+}
+
+/**
+ * A barra, determinada ou não.
+ *
+ * `<div role="progressbar">` e não `<progress>`: o elemento nativo não aceita o
+ * tratamento visual do resto da tela sem gambiarra por navegador, e os
+ * atributos `aria-value*` dão ao leitor de tela exatamente a mesma informação.
+ *
+ * Sem porcentagem, o rótulo mostra o tempo decorrido — que é verdade, ao
+ * contrário de qualquer previsão que se pudesse inventar.
+ */
+export function criarBarraDeProgresso(p: Progresso, rotulo: string,
+                                      agora: number): HTMLElement {
+  const caixa = document.createElement("div");
+  caixa.className = "progresso";
+  caixa.dataset["teste"] = "progresso";
+
+  const linha = document.createElement("div");
+  linha.className = "apoio";
+  const texto = document.createElement("span");
+  texto.textContent = rotulo;
+  const valor = document.createElement("span");
+  valor.className = "secundario";
+  const pct = porcentagem(p);
+  valor.textContent = pct !== null
+    ? `${pct}%`
+    : tempoDecorrido((p as { desde: number }).desde, agora);
+  linha.append(texto, valor);
+
+  const trilho = document.createElement("div");
+  trilho.className = "progresso-trilho";
+  trilho.setAttribute("role", "progressbar");
+  trilho.setAttribute("aria-label", rotulo);
+  const trecho = document.createElement("div");
+  if (pct !== null) {
+    trilho.setAttribute("aria-valuemin", "0");
+    trilho.setAttribute("aria-valuemax", "100");
+    trilho.setAttribute("aria-valuenow", String(pct));
+    trecho.className = "progresso-trecho";
+    trecho.style.width = `${pct}%`;
+  } else {
+    trecho.className = "progresso-trecho indeterminado";
+  }
+  trilho.append(trecho);
+
+  caixa.append(linha, trilho);
   return caixa;
 }

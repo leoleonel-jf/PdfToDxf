@@ -442,6 +442,32 @@ aviso, sem `pointer-events: none`, engolia os cliques do canvas e impedia a
 calibração por dois pontos de completar. Tudo corrigido, com teste de ida e
 volta da escala que não existia.
 
+### Defeito de ambiente nesta máquina (2026-08-09)
+
+**`npm run e2e` dá 9 de 10 aqui, e 10 de 10 no CI do GitHub.** O que falha é
+"converte uma planta de ponta a ponta", em `download.path()`, com `canceled`. O
+navegador começa o download com o nome certo e depois o cancela.
+
+**Não é do código**, e isto foi verificado, não suposto:
+
+- o servidor está correto — exportação em 0,137 s e a rota de download devolve
+  44.819 bytes de `application/dxf`, conferido com `curl` fora do navegador;
+- voltar o `api.ts` à versão anterior à etapa 3.6 **não** muda nada;
+- apagar as 111 pastas acumuladas em `dados/` **não** muda nada;
+- tirar por completo o `link.remove()` depois do clique **não** muda nada;
+- reinstalar o Chromium do Playwright **não** muda nada;
+- o mesmo teste passava 10/10 nesta máquina duas horas antes;
+- **o CI no Linux roda os dez e passa.**
+
+Sintoma de apoio: a bateria caiu de 25 s para 2,7 min, e um `du` no `%TEMP%`
+(2941 entradas) estourou dois minutos sem terminar. O palpite é o `%TEMP%` em
+estado ruim — é lá que o Chromium grava o download antes de entregá-lo. Limpar
+essa pasta ficou para o usuário fazer fora de sessão, com os programas
+fechados.
+
+**Ao retomar:** se `npm run e2e` der 9 de 10 só nesse teste, é isto. Confira o
+CI antes de caçar defeito no código.
+
 ### Integração contínua (2026-08-09)
 
 `.github/workflows/ci.yml`, três jobs em `push` e `pull_request`: testes Python

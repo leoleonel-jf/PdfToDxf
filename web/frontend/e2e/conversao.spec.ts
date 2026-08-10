@@ -210,10 +210,21 @@ test("o envio mostra barra de progresso e ela some ao terminar", async ({ page }
 
 test("exportar mostra o indicador enquanto o servidor gera o DXF", async ({ page }) => {
   await abrirPlanta(page);
+  // Segura a resposta do servidor: sem isto, o teste só prova que a barra
+  // está escondida no fim, e uma regressão que apagasse a chamada de
+  // `mostrarProgresso` inteira passaria do mesmo jeito.
+  await page.route("**/api/jobs/*/pages/*/export", async (route) => {
+    await new Promise((r) => setTimeout(r, 800));
+    await route.continue();
+  });
+
+  const progresso = t(page, "progresso");
   const download = page.waitForEvent("download");
   await t(page, "exportar").click();
+  await expect(progresso).toBeVisible();
+
   await download;
-  await expect(t(page, "progresso")).toBeHidden();
+  await expect(progresso).toBeHidden();
 });
 
 /**
@@ -223,12 +234,14 @@ test("exportar mostra o indicador enquanto o servidor gera o DXF", async ({ page
  * calibração por dois pontos — mas sem uma regra que devolva o ponteiro ao
  * botão de cancelar, ele nasceria inclicável, e `toBeEnabled` não pegaria
  * isso: um elemento com `pointer-events: none` continua "enabled". Só um
- * `click()` de verdade prova a coisa. O PDF de teste é pequeno demais para dar
- * tempo de clicar antes do envio terminar sozinho, então a resposta do
- * servidor é atrasada de propósito.
+ * `click()` de verdade prova a coisa.
  */
 test("cancelar durante o envio aborta de verdade e destrava a tela", async ({ page }) => {
   await page.goto("/");
+
+  // Segura a resposta do servidor antes de qualquer byte subir: aqui não
+  // importa que o envio progrida, só que o clique em Cancelar aconteça antes
+  // do fim natural do envio.
   await page.route("**/api/jobs", async (route) => {
     await new Promise((r) => setTimeout(r, 3000));
     try { await route.continue(); } catch { /* abortada pelo cliente antes do proxy */ }
@@ -242,5 +255,58 @@ test("cancelar durante o envio aborta de verdade e destrava a tela", async ({ pa
   // A barra some — sem isto, o clique cancelava o envio mas a tela ficava
   // presa mostrando a barra para sempre, com um botão que já não fazia nada.
   await expect(t(page, "progresso")).toBeHidden();
+  await expect(t(page, "exportar")).toBeDisabled();
+});
+
+/**
+ * O caso em que uma barra de progresso importa de verdade: um arquivo grande,
+ * cancelado depois de o envio já ter andado — não no primeiro tique.
+ *
+ * A guarda antiga comparava a identidade do objeto de progresso, e esse
+ * objeto é recriado a cada tique de `mostrarProgresso`. Interceptar a rota e
+ * segurar a resposta, como o teste acima, não pega isso: a requisição fica
+ * presa antes de qualquer byte subir, então só o tique inicial (feito: 0)
+ * roda, e por acidente a comparação de identidade ainda vale. É preciso um
+ * segundo tique de verdade, com `feito > 0`, para que os objetos divirjam.
+ *
+ * Por isso o envio real acontece — sem `page.route` — mas com a banda de
+ * upload propositalmente estreitada via CDP: no loopback um arquivo pequeno
+ * sobe inteiro num só tique, e o defeito não apareceria.
+ */
+test("cancelar depois de o envio progredir esconde a barra e destrava a tela", async ({ page }) => {
+  await page.goto("/");
+
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Network.enable");
+  await cdp.send("Network.emulateNetworkConditions", {
+    offline: false,
+    latency: 20,
+    downloadThroughput: -1,
+    // 40 KB/s: estreito o bastante para um arquivo de algumas centenas de KB
+    // render mais de um tique de progresso antes de terminar sozinho.
+    uploadThroughput: 40 * 1024,
+  });
+
+  const grande = Buffer.alloc(300 * 1024, 0x41);
+  await page.setInputFiles("#escolher-pdf",
+    { name: "planta-grande.pdf", mimeType: "application/pdf", buffer: grande });
+
+  const progresso = t(page, "progresso");
+  await expect(progresso).toBeVisible();
+
+  // Espera um tique de verdade, com `feito > 0` — o que a barra "importa"
+  // significa aqui — antes de cancelar.
+  const percentual = progresso.locator(".secundario");
+  await expect.poll(async () => {
+    const texto = (await percentual.textContent()) ?? "";
+    const n = Number(texto.replace("%", ""));
+    return Number.isFinite(n) ? n : 0;
+  }, { timeout: 15_000 }).toBeGreaterThan(0);
+
+  const cancelar = t(page, "cancelar");
+  await expect(cancelar).toBeVisible();
+  await cancelar.click();
+
+  await expect(progresso).toBeHidden();
   await expect(t(page, "exportar")).toBeDisabled();
 });

@@ -133,7 +133,7 @@ export function criarBarraDeProgresso(p: Progresso, rotulo: string,
   const pct = porcentagem(p);
   valor.textContent = pct !== null
     ? `${pct}%`
-    : tempoDecorrido((p as { desde: number }).desde, agora);
+    : p.tipo === "indeterminado" ? tempoDecorrido(p.desde, agora) : "";
   linha.append(texto, valor);
 
   const trilho = document.createElement("div");

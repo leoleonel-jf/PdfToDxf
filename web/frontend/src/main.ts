@@ -38,7 +38,7 @@ import {
 import { proporcaoRepetida, resumoDasCamadas, type ResumoDeCamada } from "./camadas.js";
 import { secaoCamadas, secaoCompactacao, secaoEscala } from "./secoes.js";
 import { criarBarraDeProgresso, criarBotao } from "./ui/controles.js";
-import type { Progresso } from "./progresso.js";
+import { porcentagem, type Progresso } from "./progresso.js";
 
 const tela = document.querySelector<HTMLCanvasElement>("#desenho")!;
 const ctx = tela.getContext("2d")!;
@@ -103,6 +103,15 @@ let emCurso: { onde: "aviso" | "faixa"; rotulo: string; p: Progresso } | null = 
 let cancelar: (() => void) | null = null;
 let relogio = 0;
 
+/**
+ * Qual envio está valendo agora.
+ *
+ * A guarda não pode ser a identidade do objeto de progresso: ele é recriado a
+ * cada tique, e a comparação viraria falsa exatamente quando o usuário mais
+ * precisa cancelar — num arquivo grande, depois de o envio já ter andado.
+ */
+let envioEmCurso = 0;
+
 /** Início do preparo em curso, para a barra "Desenhando" — e não estado da tela. */
 let inicioDoPreparo = 0;
 /**
@@ -112,6 +121,17 @@ let inicioDoPreparo = 0;
  * campo `sobreviventes` de lá por ser código morto, e ele não volta.
  */
 let sobreviventesDoPreparo = 0;
+
+/**
+ * Última porcentagem inteira publicada da barra "Desenhando".
+ *
+ * Sem isto, `mostrarProgresso` recria os elementos da barra — via
+ * `replaceChildren` — em todo quadro enquanto o preparo não termina, mesmo sem
+ * a porcentagem mudar. É justamente quando o quadro está apertado, que é o
+ * problema que o limiar de 300 ms queria evitar. Só redesenha quando o valor
+ * inteiro muda; zera quando o preparo termina.
+ */
+let ultimaPorcentagemDesenhando: number | null = null;
 
 /**
  * A página inteira: todas as camadas, nenhuma compactação.
@@ -174,10 +194,17 @@ function agendar(): void {
     // Só aparece se demorar: numa planta leve o preparo termina em um quadro, e
     // piscar uma barra a cada clique numa opção seria pior do que não ter.
     if (!acabou && Date.now() - inicioDoPreparo > 300) {
-      mostrarProgresso("faixa", "Desenhando",
-                       { tipo: "determinado", feito: pintor.desenhadas,
-                         total: sobreviventesDoPreparo });
+      const p: Progresso = { tipo: "determinado", feito: pintor.desenhadas,
+                             total: sobreviventesDoPreparo };
+      const pct = porcentagem(p);
+      // Só redesenha quando a porcentagem inteira muda: repintar em todo
+      // quadro é o próprio problema que o limiar acima queria evitar.
+      if (pct !== ultimaPorcentagemDesenhando) {
+        ultimaPorcentagemDesenhando = pct;
+        mostrarProgresso("faixa", "Desenhando", p);
+      }
     } else if (acabou && emCurso?.rotulo === "Desenhando") {
+      ultimaPorcentagemDesenhando = null;
       esconderProgresso();
     }
     if (!acabou) agendar();
@@ -309,15 +336,15 @@ async function abrir(arquivo: File): Promise<void> {
   controle.abort();
   controle = new AbortController();
   const sinal = controle.signal;
-  // Identidade e não rótulo: outra chamada a `abrir()` mais nova usa o mesmo
-  // texto "Enviando o PDF", e comparar por rótulo esconderia a barra dela.
-  let meuProgresso: typeof emCurso = null;
+  const meuControle = controle;
+  const meuEnvio = ++envioEmCurso;
 
   try {
-    cancelar = () => controle.abort();
+    // O controlador é capturado, e não lido do topo: uma chamada mais nova a
+    // `abrir()` já trocou `controle`, e o botão cancelaria o envio errado.
+    cancelar = () => meuControle.abort();
     mostrarProgresso("aviso", "Enviando o PDF",
                      { tipo: "determinado", feito: 0, total: arquivo.size }, true);
-    meuProgresso = emCurso;
     const ficha = await enviarPdf(arquivo, sinal, (feito, total) =>
       mostrarProgresso("aviso", "Enviando o PDF",
                        { tipo: "determinado", feito, total }, true));
@@ -330,8 +357,10 @@ async function abrir(arquivo: File): Promise<void> {
   } catch (erro) {
     if (sinal.aborted) {
       // O clique em "Cancelar" aborta de verdade — sem isto, a barra ficava
-      // presa na tela para sempre, com um botão que já não fazia nada.
-      if (emCurso === meuProgresso) esconderProgresso();
+      // presa na tela para sempre, com um botão que já não fazia nada. Só
+      // esconde se este ainda for o envio corrente: um `abrir()` mais novo já
+      // pôs a barra dele na tela, e apagá-la seria pior que não esconder nada.
+      if (meuEnvio === envioEmCurso) esconderProgresso();
       return;
     }
     mostrarAviso(avisoDoErro(erro));

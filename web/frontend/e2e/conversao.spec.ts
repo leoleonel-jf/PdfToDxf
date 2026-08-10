@@ -279,7 +279,9 @@ test("o campo de mm não é type=number e mostra 2 casas decimais", async ({ pag
   await abrirPlanta(page);
   const campo = t(page, "min-len");
   await expect(campo).toHaveAttribute("type", "text");
-  await expect(campo).toHaveValue(/^\d+\.\d{2}$/);
+  // Vírgula: é o separador do português, é o que o campo aceita na entrada, e
+  // é o que o resto da tela já usa.
+  await expect(campo).toHaveValue(/^\d+,\d{2}$/);
 });
 
 test("as três opções que só tiram redundância abrem ligadas", async ({ page }) => {

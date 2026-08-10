@@ -84,12 +84,17 @@ export function criarInterruptor(o: {
 /**
  * O valor do campo, formatado com o número de casas decimais pedido.
  *
+ * Com vírgula, que é como se escreve decimal em português — e é o que o resto
+ * da tela já faz ("4,1 MB", "1 pt de papel = 1 cm real"). Mostrar `0.00` num
+ * campo que aceita `0,50` seria ensinar o separador errado bem no lugar onde o
+ * usuário vai digitar.
+ *
  * Extraída como função pura porque é a única parte de `criarCampoComUnidade`
  * capaz de ter teste em Node: o resto usa `document.createElement`, e o
  * ambiente de teste (`vite.config.ts`) roda sem DOM.
  */
 export function formatarComCasas(valor: number, casas: number): string {
-  return valor.toFixed(casas);
+  return valor.toFixed(casas).replace(".", ",");
 }
 
 /**

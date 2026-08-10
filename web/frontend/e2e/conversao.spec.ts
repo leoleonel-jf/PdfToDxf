@@ -12,6 +12,18 @@ const PLANTA = fileURLToPath(
  */
 const t = (page: Page, nome: string) => page.locator(`[data-teste="${nome}"]`);
 
+/**
+ * As duas barras têm o mesmo `data-teste` e lugares diferentes na tela.
+ *
+ * São dois indicadores independentes — a sobreposição para envio, extração e
+ * exportação; a faixa de baixo para o download e o desenho —, e podem estar
+ * vivos ao mesmo tempo. Um seletor solto acharia os dois e o Playwright
+ * recusaria a asserção por ambiguidade, então cada asserção diz de qual fala.
+ */
+const barraDoAviso = (page: Page) => page.locator('#aviso [data-teste="progresso"]');
+const barraDaFaixa = (page: Page) =>
+  page.locator('#faixa-detalhe [data-teste="progresso"]');
+
 async function abrirPlanta(page: Page): Promise<void> {
   await page.goto("/");
   await page.setInputFiles("#escolher-pdf", PLANTA);
@@ -199,13 +211,145 @@ test("as três opções que só tiram redundância abrem ligadas", async ({ page
     .toHaveAttribute("aria-pressed", "false");
 });
 
-test("o envio mostra barra de progresso e ela some ao terminar", async ({ page }) => {
+/**
+ * A barra do envio aparece **de verdade** — e só depois some.
+ *
+ * A versão antiga deste teste só afirmava `toBeHidden()` no fim, e passaria com
+ * a funcionalidade inteira arrancada: um locator que não casa com nada também
+ * está escondido. Segurar a rota e exigir `toBeVisible()` antes é o que faz o
+ * teste morder.
+ */
+test("o envio mostra a barra de verdade e ela some ao terminar", async ({ page }) => {
   await page.goto("/");
-  const progresso = t(page, "progresso");
+
+  let liberar = () => {};
+  const preso = new Promise<void>((r) => { liberar = r; });
+  await page.route("**/api/jobs", async (route) => {
+    await preso;
+    await route.continue();
+  });
+
   await page.setInputFiles("#escolher-pdf", PLANTA);
-  // A barra pode passar rápido; o que importa é que ela some no fim.
+  await expect(barraDoAviso(page)).toBeVisible();
+  // Enquanto nenhum byte foi contado, a barra é indeterminada — e barra
+  // indeterminada não tem `aria-valuenow`, porque não há número a dizer.
+  await expect(page.locator('#aviso [role="progressbar"]'))
+    .not.toHaveAttribute("aria-valuenow", /.*/);
+
+  liberar();
   await expect(t(page, "exportar")).toBeEnabled({ timeout: 60_000 });
-  await expect(progresso).toBeHidden();
+  await expect(barraDoAviso(page)).toBeHidden();
+});
+
+/**
+ * A porcentagem do envio é a do navegador, e existe no DOM.
+ *
+ * Segurar a rota não serve aqui: com a requisição presa no proxy nenhum byte
+ * sobe e o evento de progresso do XHR não chega — é a mesma razão pela qual o
+ * teste de cancelamento com envio andado estreita a banda por CDP. Sem um tique
+ * de verdade, a barra fica (corretamente) indeterminada, e `aria-valuenow` só
+ * aparece quando há bytes contados.
+ */
+test("a barra do envio publica aria-valuenow quando há bytes a contar", async ({ page }) => {
+  await page.goto("/");
+
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Network.enable");
+  await cdp.send("Network.emulateNetworkConditions", {
+    offline: false, latency: 20, downloadThroughput: -1,
+    uploadThroughput: 40 * 1024,
+  });
+
+  const grande = Buffer.alloc(300 * 1024, 0x41);
+  await page.setInputFiles("#escolher-pdf",
+    { name: "planta-grande.pdf", mimeType: "application/pdf", buffer: grande });
+
+  await expect(barraDoAviso(page)).toBeVisible();
+  const trilho = page.locator('#aviso [role="progressbar"]');
+  await expect.poll(async () => trilho.getAttribute("aria-valuenow"),
+                    { timeout: 20_000 }).not.toBeNull();
+
+  // Cancela em vez de esperar os 300 KB subirem a 40 KB/s: o que este teste
+  // tinha a provar já está provado.
+  await t(page, "cancelar").click();
+  await expect(barraDoAviso(page)).toBeHidden();
+});
+
+/**
+ * Faz a planta de teste ter uma parte "detalhe", e segura o download dela.
+ *
+ * A fixture é minúscula: sete entidades cabem inteiras no esqueleto, o servidor
+ * não divide nada e o segundo download — o único momento em que a faixa de
+ * baixo mostra progresso na vida real — nunca aconteceria. Mentir só no
+ * `partes.detalhe` do `meta.json` é o menor empurrão possível: a rota do
+ * detalhe existe e responde de verdade, com um pacote de zero entidades.
+ *
+ * Devolve a função que solta o download.
+ */
+async function comDetalheSegurado(page: Page): Promise<() => void> {
+  let liberar = () => {};
+  const preso = new Promise<void>((r) => { liberar = r; });
+
+  await page.route((url) => url.pathname.endsWith("/meta.json"),
+    async (route) => {
+      const resposta = await route.fetch();
+      const meta = await resposta.json();
+      meta.partes.detalhe = 1;
+      await route.fulfill({ json: meta });
+    });
+  await page.route(
+    (url) => url.pathname.endsWith("/geometry.bin") &&
+             url.searchParams.get("parte") === "detalhe",
+    async (route) => {
+      await preso;
+      try { await route.continue(); } catch { /* página trocou antes */ }
+    });
+
+  return () => liberar();
+}
+
+/**
+ * O download tem indicador, e ele vive na faixa de baixo — não na sobreposição.
+ *
+ * Dos cinco momentos, este e o desenho eram os dois sem cobertura nenhuma, e
+ * são justamente os dois que a revisão pegou.
+ */
+test("a faixa mostra progresso enquanto o detalhe carrega", async ({ page }) => {
+  const liberar = await comDetalheSegurado(page);
+  await abrirPlanta(page);
+
+  const faixa = barraDaFaixa(page);
+  await expect(faixa).toBeVisible();
+  await expect(faixa).toContainText("detalhe");
+  // Nada de porcentagem inventada enquanto o servidor não disse o tamanho.
+  await expect(page.locator('#faixa-detalhe [role="progressbar"]'))
+    .not.toHaveAttribute("aria-valuenow", /.*/);
+
+  liberar();
+  await expect(faixa).toBeHidden();
+});
+
+/**
+ * Um tique da faixa não pode apagar o aviso da sobreposição.
+ *
+ * Havia um slot único para os cinco momentos: a calibração punha a instrução no
+ * `#aviso` e o primeiro pedaço do detalhe a varria da tela, deixando o usuário
+ * com dois cliques a dar e nenhuma instrução dizendo isso.
+ */
+test("um aviso vivo não é apagado por um tique da faixa", async ({ page }) => {
+  const liberar = await comDetalheSegurado(page);
+  await abrirPlanta(page);
+  await expect(barraDaFaixa(page)).toBeVisible();
+
+  await t(page, "calibrar").click();
+  const aviso = page.locator("#aviso");
+  await expect(aviso).toContainText("extremidades");
+
+  // Agora o download anda: chegam pedaços, o progresso é redesenhado, e a
+  // instrução tem de continuar exatamente onde estava.
+  liberar();
+  await expect(barraDaFaixa(page)).toBeHidden();
+  await expect(aviso).toContainText("extremidades");
 });
 
 test("exportar mostra o indicador enquanto o servidor gera o DXF", async ({ page }) => {

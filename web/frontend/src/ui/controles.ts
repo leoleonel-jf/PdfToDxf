@@ -117,9 +117,13 @@ export function criarCampoComUnidade(o: {
  *
  * Sem porcentagem, o rótulo mostra o tempo decorrido — que é verdade, ao
  * contrário de qualquer previsão que se pudesse inventar.
+ *
+ * O `detalhe` é a linha que explica a espera ("Plantas grandes levam alguns
+ * minutos"): numa espera de minutos, uma barra sozinha não diz por quê.
  */
 export function criarBarraDeProgresso(p: Progresso, rotulo: string,
-                                      agora: number): HTMLElement {
+                                      agora: number,
+                                      detalhe?: string): HTMLElement {
   const caixa = document.createElement("div");
   caixa.className = "progresso";
   caixa.dataset["teste"] = "progresso";
@@ -130,10 +134,6 @@ export function criarBarraDeProgresso(p: Progresso, rotulo: string,
   texto.textContent = rotulo;
   const valor = document.createElement("span");
   valor.className = "secundario";
-  const pct = porcentagem(p);
-  valor.textContent = pct !== null
-    ? `${pct}%`
-    : p.tipo === "indeterminado" ? tempoDecorrido(p.desde, agora) : "";
   linha.append(texto, valor);
 
   const trilho = document.createElement("div");
@@ -141,17 +141,54 @@ export function criarBarraDeProgresso(p: Progresso, rotulo: string,
   trilho.setAttribute("role", "progressbar");
   trilho.setAttribute("aria-label", rotulo);
   const trecho = document.createElement("div");
+  trecho.className = "progresso-trecho";
+  trilho.append(trecho);
+
+  caixa.append(linha, trilho);
+  if (detalhe) {
+    const explica = document.createElement("p");
+    explica.className = "explica";
+    explica.textContent = detalhe;
+    caixa.append(explica);
+  }
+  atualizarBarraDeProgresso(caixa, p, agora);
+  return caixa;
+}
+
+/**
+ * O tique seguinte, escrito nos nós que já existem.
+ *
+ * Recriar a barra a cada tique é o que arrancava o botão de cancelar debaixo do
+ * dedo: num envio de verdade o navegador dispara progresso a cada ~50 ms, e
+ * entre o `mousedown` e o `mouseup` de um clique humano — 60 a 120 ms — o nó
+ * seria trocado e o clique morreria no elemento antigo. Aqui só mudam a
+ * largura do trecho, o texto da porcentagem e o `aria-valuenow`.
+ */
+export function atualizarBarraDeProgresso(caixa: HTMLElement, p: Progresso,
+                                          agora: number): void {
+  const valor = caixa.querySelector<HTMLElement>(".secundario");
+  const trilho = caixa.querySelector<HTMLElement>(".progresso-trilho");
+  const trecho = caixa.querySelector<HTMLElement>(".progresso-trecho");
+  if (!valor || !trilho || !trecho) return;
+
+  const pct = porcentagem(p);
+  valor.textContent = pct !== null
+    ? `${pct}%`
+    : p.tipo === "indeterminado" ? tempoDecorrido(p.desde, agora) : "";
+
   if (pct !== null) {
     trilho.setAttribute("aria-valuemin", "0");
     trilho.setAttribute("aria-valuemax", "100");
     trilho.setAttribute("aria-valuenow", String(pct));
     trecho.className = "progresso-trecho";
     trecho.style.width = `${pct}%`;
-  } else {
-    trecho.className = "progresso-trecho indeterminado";
+    return;
   }
-  trilho.append(trecho);
-
-  caixa.append(linha, trilho);
-  return caixa;
+  // Sem porcentagem não há `aria-valuenow`: um leitor de tela que ouvisse "0%"
+  // de uma barra indeterminada estaria ouvindo um número inventado.
+  trilho.removeAttribute("aria-valuemin");
+  trilho.removeAttribute("aria-valuemax");
+  trilho.removeAttribute("aria-valuenow");
+  trecho.className = "progresso-trecho indeterminado";
+  trecho.style.width = "";
 }

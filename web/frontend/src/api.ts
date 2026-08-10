@@ -46,17 +46,30 @@ export type PedidoDeExportacao = {
   };
 };
 
+/**
+ * A recusa do servidor virando erro da tela — em um lugar só.
+ *
+ * O `pedir` e o `enviarPdf` mapeavam isto separado, e o envio é o único caminho
+ * por onde o PDF entra: uma recusa nova escrita só no `pedir` deixaria de fora
+ * justamente a porta de entrada.
+ */
+function erroDaRecusa(status: number, corpoCru: string): ErroDaApi {
+  let detalhe = `HTTP ${status}`;
+  try {
+    const corpo = JSON.parse(corpoCru);
+    if (corpo?.detail) detalhe = String(corpo.detail);
+  } catch {
+    // Resposta sem JSON: fica o status, que já diz o suficiente.
+  }
+  return new ErroDaApi(status, detalhe);
+}
+
 async function pedir(caminho: string, init: RequestInit = {}): Promise<Response> {
   const resposta = await fetch(caminho, init);
   if (!resposta.ok) {
-    let detalhe = `HTTP ${resposta.status}`;
-    try {
-      const corpo = await resposta.json();
-      if (corpo?.detail) detalhe = String(corpo.detail);
-    } catch {
-      // Resposta sem JSON: fica o status, que já diz o suficiente.
-    }
-    throw new ErroDaApi(resposta.status, detalhe);
+    let cru = "";
+    try { cru = await resposta.text(); } catch { /* corpo ilegível: fica o status */ }
+    throw erroDaRecusa(resposta.status, cru);
   }
   return resposta;
 }
@@ -116,16 +129,8 @@ export function enviarPdf(arquivo: File, sinal?: AbortSignal,
         }
         return;
       }
-      // Mesmo contrato do `pedir`: detalhe do corpo quando houver, status
-      // quando não houver.
-      let detalhe = `HTTP ${x.status}`;
-      try {
-        const corpo = JSON.parse(x.responseText);
-        if (corpo?.detail) detalhe = String(corpo.detail);
-      } catch {
-        // Resposta sem JSON: fica o status, que já diz o suficiente.
-      }
-      reject(new ErroDaApi(x.status, detalhe));
+      // Mesmo mapeamento do `pedir`, e literalmente o mesmo código.
+      reject(erroDaRecusa(x.status, x.responseText));
     });
 
     x.send(forma);

@@ -37,7 +37,9 @@ import {
 } from "./painel.js";
 import { proporcaoRepetida, resumoDasCamadas, type ResumoDeCamada } from "./camadas.js";
 import { secaoCamadas, secaoCompactacao, secaoEscala } from "./secoes.js";
-import { criarBarraDeProgresso, criarBotao } from "./ui/controles.js";
+import {
+  atualizarBarraDeProgresso, criarBarraDeProgresso, criarBotao,
+} from "./ui/controles.js";
 import { porcentagem, type Progresso } from "./progresso.js";
 
 const tela = document.querySelector<HTMLCanvasElement>("#desenho")!;
@@ -98,8 +100,27 @@ let controle = new AbortController();
 let calibragem: Calibragem | null = null;
 let camadas: ResumoDeCamada[] = [];
 
-/** O que a tela está esperando agora, e nada se não estiver esperando nada. */
-let emCurso: { onde: "aviso" | "faixa"; rotulo: string; p: Progresso } | null = null;
+/**
+ * Dois lugares de espera, dois donos — e nunca um só disputado por cinco.
+ *
+ * Havia um slot único para os cinco momentos, sem arbitragem: um tique do
+ * download escrevia nele e, de quebra, apagava o aviso que a calibração tinha
+ * acabado de pôr na sobreposição, porque os dois moram no mesmo elemento.
+ * Agora cada momento escreve **no seu**: envio, extração e exportação na
+ * sobreposição; download e desenho na faixa de baixo. Quem pinta um lugar
+ * nunca toca no outro.
+ */
+type Momento = { rotulo: string; p: Progresso; detalhe?: string };
+let progressoAviso: Momento | null = null;
+let progressoFaixa: Momento | null = null;
+
+/**
+ * O aviso vivo, e ele ganha do progresso na sobreposição.
+ *
+ * Instrução de calibração e mensagem de erro vêm antes de qualquer barra: a
+ * barra volta sozinha quando o aviso sair.
+ */
+let avisoCorrente: Aviso | null = null;
 let cancelar: (() => void) | null = null;
 let relogio = 0;
 
@@ -114,24 +135,6 @@ let envioEmCurso = 0;
 
 /** Início do preparo em curso, para a barra "Desenhando" — e não estado da tela. */
 let inicioDoPreparo = 0;
-/**
- * Quantas entidades a máscara atual mantém — o total da barra "Desenhando".
- *
- * Variável do laço de desenho, não de `EstadoDaTela`: a etapa 3.5 removeu o
- * campo `sobreviventes` de lá por ser código morto, e ele não volta.
- */
-let sobreviventesDoPreparo = 0;
-
-/**
- * Última porcentagem inteira publicada da barra "Desenhando".
- *
- * Sem isto, `mostrarProgresso` recria os elementos da barra — via
- * `replaceChildren` — em todo quadro enquanto o preparo não termina, mesmo sem
- * a porcentagem mudar. É justamente quando o quadro está apertado, que é o
- * problema que o limiar de 300 ms queria evitar. Só redesenha quando o valor
- * inteiro muda; zera quando o preparo termina.
- */
-let ultimaPorcentagemDesenhando: number | null = null;
 
 /**
  * A página inteira: todas as camadas, nenhuma compactação.
@@ -193,19 +196,18 @@ function agendar(): void {
     tela.dataset["desenhadas"] = String(pintor.desenhadas);
     // Só aparece se demorar: numa planta leve o preparo termina em um quadro, e
     // piscar uma barra a cada clique numa opção seria pior do que não ter.
+    //
+    // **Indeterminada, e não uma porcentagem.** O par óbvio seria
+    // `pintor.desenhadas` sobre os sobreviventes da máscara, e ele mente: o
+    // numerador conta o que foi traçado dentro da janela visível e o
+    // denominador soma a página inteira. Com zoom num canto, 8 mil traços
+    // sobre 2,3 milhões marcariam 0% do começo ao fim do preparo. Denominador
+    // honesto só existiria dentro do `pintor.ts`, que é do motor de desenho.
     if (!acabou && Date.now() - inicioDoPreparo > 300) {
-      const p: Progresso = { tipo: "determinado", feito: pintor.desenhadas,
-                             total: sobreviventesDoPreparo };
-      const pct = porcentagem(p);
-      // Só redesenha quando a porcentagem inteira muda: repintar em todo
-      // quadro é o próprio problema que o limiar acima queria evitar.
-      if (pct !== ultimaPorcentagemDesenhando) {
-        ultimaPorcentagemDesenhando = pct;
-        mostrarProgresso("faixa", "Desenhando", p);
-      }
-    } else if (acabou && emCurso?.rotulo === "Desenhando") {
-      ultimaPorcentagemDesenhando = null;
-      esconderProgresso();
+      mostrarProgresso("faixa", "Desenhando",
+                       { tipo: "indeterminado", desde: inicioDoPreparo });
+    } else if (acabou && progressoFaixa?.rotulo === "Desenhando") {
+      esconderProgresso("faixa");
     }
     if (!acabou) agendar();
   });
@@ -224,10 +226,6 @@ function recalcular(): void {
   mascara = selecionar(geometria, opts);
   estado.bytes = estimarBytes(geometria, mascara, opts);
   geracao++;                     // avisa o pintor que a lista precisa ser refeita
-  // Total da barra "Desenhando": conta os sobreviventes desta máscara. Variável
-  // do laço de desenho — não de `EstadoDaTela` — porque só o preparo usa.
-  sobreviventesDoPreparo = 0;
-  for (const v of mascara) if (v) sobreviventesDoPreparo++;
   montarTudo();
   inicioDoPreparo = Date.now();
   agendar();
@@ -253,81 +251,150 @@ function trocarGeometria(nova: Geometria): void {
  *
  * Sem isto o tempo decorrido ficaria congelado no instante em que a barra
  * apareceu — que é justamente o pior momento, porque é quando ele vale zero.
+ * Um relógio só serve aos dois lugares: ele acorda enquanto algum deles for
+ * indeterminado e para quando nenhum for.
  */
-function ligarRelogio(): void {
-  if (relogio) return;
-  relogio = window.setInterval(() => {
-    if (emCurso?.p.tipo === "indeterminado") desenharProgresso();
-    else pararRelogio();
-  }, 1000);
+function sincronizarRelogio(): void {
+  const preciso = progressoAviso?.p.tipo === "indeterminado" ||
+                  progressoFaixa?.p.tipo === "indeterminado";
+  if (preciso && !relogio) {
+    relogio = window.setInterval(() => {
+      desenharProgresso();
+      sincronizarRelogio();
+    }, 1000);
+  } else if (!preciso && relogio) {
+    clearInterval(relogio);
+    relogio = 0;
+  }
 }
 
-function pararRelogio(): void {
-  if (relogio) { clearInterval(relogio); relogio = 0; }
-}
-
-function mostrarProgresso(onde: "aviso" | "faixa", rotulo: string,
-                          p: Progresso, podeCancelar = false): void {
-  emCurso = { onde, rotulo, p };
-  if (!podeCancelar) cancelar = null;
-  if (p.tipo === "indeterminado") ligarRelogio(); else pararRelogio();
+function mostrarProgresso(onde: "aviso" | "faixa", rotulo: string, p: Progresso,
+                          extra: { podeCancelar?: boolean; detalhe?: string } = {}):
+                          void {
+  const momento: Momento = { rotulo, p, detalhe: extra.detalhe };
+  if (onde === "faixa") {
+    progressoFaixa = momento;
+  } else {
+    progressoAviso = momento;
+    if (!extra.podeCancelar) cancelar = null;
+  }
+  sincronizarRelogio();
   desenharProgresso();
 }
 
-function esconderProgresso(): void {
-  emCurso = null;
-  cancelar = null;
-  pararRelogio();
+/** Esconde **um** lugar. O outro continua exatamente como estava. */
+function esconderProgresso(onde: "aviso" | "faixa"): void {
+  if (onde === "faixa") {
+    progressoFaixa = null;
+  } else {
+    progressoAviso = null;
+    cancelar = null;
+  }
+  sincronizarRelogio();
   desenharProgresso();
 }
 
-function desenharProgresso(): void {
-  // Limpa sempre os dois locais, não só o que perde a vez: sem isto, uma barra
-  // que nasceu no `painelAviso` (o envio) e a próxima que nasce na `faixaDetalhe`
-  // (o download) deixam dois `[data-teste="progresso"]` na página ao mesmo
-  // tempo — um escondido, mas ainda achável — e qualquer asserção de ponta a
-  // ponta sobre "a barra" quebra por ambiguidade.
-  if (!emCurso) {
-    painelAviso.hidden = true;
-    painelAviso.replaceChildren();
-    faixaDetalhe.hidden = true;
-    faixaDetalhe.replaceChildren();
-    return;
+/** O que está montado num lugar agora, para não remontar o que não mudou. */
+type Montado =
+  | { tipo: "aviso"; aviso: Aviso }
+  | { tipo: "barra"; rotulo: string; detalhe: string; comBotao: boolean;
+      chave: string; el: HTMLElement };
+type Lugar = { raiz: HTMLElement; montado: Montado | null };
+
+const lugarDoAviso: Lugar = { raiz: painelAviso, montado: null };
+const lugarDaFaixa: Lugar = { raiz: faixaDetalhe, montado: null };
+
+/**
+ * O que a barra mostra agora, em uma linha.
+ *
+ * É a chave da deduplicação, e vale para os cinco momentos: enquanto o rótulo
+ * e a porcentagem inteira — ou o segundo inteiro decorrido, no indeterminado —
+ * não mudarem, não há nada novo a pintar.
+ */
+function chaveDoTique(m: Momento, agora: number): string {
+  const pct = porcentagem(m.p);
+  if (pct !== null) return `d${pct}`;
+  if (m.p.tipo === "indeterminado") {
+    return `i${Math.floor((agora - m.p.desde) / 1000)}`;
   }
-  const barra = criarBarraDeProgresso(emCurso.p, emCurso.rotulo, Date.now());
-  if (emCurso.onde === "faixa") {
-    painelAviso.hidden = true;
-    painelAviso.replaceChildren();
-    faixaDetalhe.hidden = false;
-    faixaDetalhe.replaceChildren(barra);
-    return;
-  }
-  faixaDetalhe.hidden = true;
-  faixaDetalhe.replaceChildren();
-  painelAviso.hidden = false;
-  painelAviso.replaceChildren(barra);
-  if (cancelar) {
-    painelAviso.append(criarBotao({
-      rotulo: "Cancelar", teste: "cancelar", aoClicar: () => cancelar?.(),
-    }));
-  }
+  return "sem";       // determinado sem total: não há número nem relógio
+}
+
+function limparLugar(lugar: Lugar): void {
+  if (!lugar.montado) return;
+  lugar.raiz.replaceChildren();
+  lugar.raiz.hidden = true;
+  lugar.montado = null;
 }
 
 /**
- * `esconderProgresso()` primeiro: um erro nunca pode aparecer por baixo de
- * uma barra viva. Ela chama `desenharProgresso`, que esconde `painelAviso` —
- * por isso é `mostrarAviso`, e não ela, quem decide a visibilidade depois.
+ * Cria a barra uma vez; nos tiques seguintes só atualiza o que muda.
+ *
+ * Recriar o DOM a cada tique destruía o botão de cancelar entre o `mousedown` e
+ * o `mouseup` do usuário — num envio de verdade o navegador dispara progresso a
+ * cada ~50 ms, e o clique era engolido. Mesma razão do `montarTudo`, que
+ * preserva foco e cursor desde a etapa 3.5.
  */
-function mostrarAviso(aviso: Aviso | null): void {
-  esconderProgresso();
-  if (!aviso) { painelAviso.hidden = true; return; }
-  painelAviso.hidden = false;
-  painelAviso.replaceChildren();
+function pintarBarra(lugar: Lugar, m: Momento, agora: number,
+                     comBotao: boolean): void {
+  const detalhe = m.detalhe ?? "";
+  const chave = chaveDoTique(m, agora);
+  const antes = lugar.montado;
+  if (antes?.tipo === "barra" && antes.rotulo === m.rotulo &&
+      antes.detalhe === detalhe && antes.comBotao === comBotao) {
+    if (antes.chave === chave) return;
+    antes.chave = chave;
+    atualizarBarraDeProgresso(antes.el, m.p, agora);
+    return;
+  }
+  const el = criarBarraDeProgresso(m.p, m.rotulo, agora, m.detalhe);
+  lugar.raiz.replaceChildren(el);
+  if (comBotao) {
+    lugar.raiz.append(criarBotao({
+      rotulo: "Cancelar", teste: "cancelar", aoClicar: () => cancelar?.(),
+    }));
+  }
+  lugar.raiz.hidden = false;
+  lugar.montado = { tipo: "barra", rotulo: m.rotulo, detalhe, comBotao, chave, el };
+}
+
+function pintarAviso(lugar: Lugar, aviso: Aviso): void {
+  if (lugar.montado?.tipo === "aviso" && lugar.montado.aviso === aviso) return;
   const titulo = document.createElement("h2");
   titulo.textContent = aviso.titulo;
   const detalhe = document.createElement("p");
   detalhe.textContent = aviso.detalhe;
-  painelAviso.append(titulo, detalhe);
+  lugar.raiz.replaceChildren(titulo, detalhe);
+  lugar.raiz.hidden = false;
+  lugar.montado = { tipo: "aviso", aviso };
+}
+
+/**
+ * Desenha **cada lugar a partir do seu próprio slot**, e nunca o outro.
+ *
+ * Na sobreposição o aviso ganha: enquanto houver um vivo, a barra de lá espera
+ * a vez em silêncio, e volta sozinha quando o aviso sair.
+ */
+function desenharProgresso(): void {
+  const agora = Date.now();
+  if (progressoFaixa) pintarBarra(lugarDaFaixa, progressoFaixa, agora, false);
+  else limparLugar(lugarDaFaixa);
+
+  if (avisoCorrente) pintarAviso(lugarDoAviso, avisoCorrente);
+  else if (progressoAviso) {
+    pintarBarra(lugarDoAviso, progressoAviso, agora, cancelar !== null);
+  } else limparLugar(lugarDoAviso);
+}
+
+/**
+ * O aviso da sobreposição — instrução ou erro —, ou `null` para tirá-lo.
+ *
+ * Quem termina um momento esconde o seu próprio progresso; o aviso não faz isso
+ * por ninguém, senão voltaria a existir um dono só para dois assuntos.
+ */
+function mostrarAviso(aviso: Aviso | null): void {
+  avisoCorrente = aviso;
+  desenharProgresso();
 }
 
 async function abrir(arquivo: File): Promise<void> {
@@ -343,12 +410,20 @@ async function abrir(arquivo: File): Promise<void> {
     // O controlador é capturado, e não lido do topo: uma chamada mais nova a
     // `abrir()` já trocou `controle`, e o botão cancelaria o envio errado.
     cancelar = () => meuControle.abort();
+    // Indeterminada até o primeiro tique de verdade, e não "0% de arquivo.size".
+    // O navegador só relata bytes quando o evento traz `lengthComputable`; sem
+    // ele a barra ficaria parada em 0% até o fim, que é pior do que não ter
+    // barra. Assim a falta de tique degrada sozinha para indeterminado.
+    const inicioDoEnvio = Date.now();
     mostrarProgresso("aviso", "Enviando o PDF",
-                     { tipo: "determinado", feito: 0, total: arquivo.size }, true);
+                     { tipo: "indeterminado", desde: inicioDoEnvio },
+                     { podeCancelar: true });
     const ficha = await enviarPdf(arquivo, sinal, (feito, total) =>
-      mostrarProgresso("aviso", "Enviando o PDF",
-                       { tipo: "determinado", feito, total }, true));
-    esconderProgresso();
+      mostrarProgresso("aviso", "Enviando o PDF", total > 0
+        ? { tipo: "determinado", feito, total }
+        : { tipo: "indeterminado", desde: inicioDoEnvio },
+        { podeCancelar: true }));
+    esconderProgresso("aviso");
     nomeDoArquivo = arquivo.name;
     job = ficha.job_id;
     nPaginas = ficha.n_paginas;
@@ -360,9 +435,10 @@ async function abrir(arquivo: File): Promise<void> {
       // presa na tela para sempre, com um botão que já não fazia nada. Só
       // esconde se este ainda for o envio corrente: um `abrir()` mais novo já
       // pôs a barra dele na tela, e apagá-la seria pior que não esconder nada.
-      if (meuEnvio === envioEmCurso) esconderProgresso();
+      if (meuEnvio === envioEmCurso) esconderProgresso("aviso");
       return;
     }
+    esconderProgresso("aviso");
     mostrarAviso(avisoDoErro(erro));
   }
 }
@@ -384,8 +460,12 @@ async function carregarPagina(): Promise<void> {
   estado.bytesBase = 0;
   // `esconderProgresso()` e não só `faixaDetalhe.hidden = true`: sem isto, uma
   // barra indeterminada da página anterior (relógio ligado) sobreviveria à
-  // troca de página e reapareceria sozinha no próximo tique.
-  esconderProgresso();
+  // troca de página e reapareceria sozinha no próximo tique. Os dois lugares,
+  // porque a página anterior pode ter deixado coisa nos dois.
+  esconderProgresso("aviso");
+  esconderProgresso("faixa");
+  // O aviso da página anterior não pode ficar por cima da espera desta.
+  mostrarAviso(null);
   // Sem remontar aqui, numa planta de várias páginas o "Exportar DXF" continua
   // habilitado com a estimativa da página anterior — e o clique exportaria uma
   // página que ainda não foi extraída.
@@ -393,29 +473,46 @@ async function carregarPagina(): Promise<void> {
 
   try {
     await pedirExtracao(job, pagina, sinal);
-    const inicio = Date.now();
+    // Um instante de início por momento: com um só, o relógio do download
+    // começaria a contar desde a extração e o primeiro pedaço da geometria já
+    // anunciaria "4 min" numa planta que levou 4 minutos para ser extraída.
+    const inicioDaExtracao = Date.now();
     const final = await esperarPagina(job, pagina, sinal, (e) => {
-      if (e.situacao === "na_fila" || e.situacao === "extraindo") {
-        mostrarProgresso("aviso", "Processando a planta",
-                         { tipo: "indeterminado", desde: inicio });
+      // Só a espera vira barra: "erro" também tem texto em `avisoDaSituacao`,
+      // e ele é aviso, não progresso — quem o mostra é o `mostrarAviso` abaixo.
+      if (e.situacao !== "na_fila" && e.situacao !== "extraindo") return;
+      // O texto da espera vem de `avisoDaSituacao`, e é ele que explica por que
+      // isto demora — "Plantas grandes levam alguns minutos". Uma barra sozinha
+      // numa espera de minutos não diz nada a quem está esperando.
+      const espera = avisoDaSituacao(e.situacao);
+      if (espera) {
+        mostrarProgresso("aviso", espera.titulo,
+                         { tipo: "indeterminado", desde: inicioDaExtracao },
+                         { detalhe: espera.detalhe });
       }
     });
+    esconderProgresso("aviso");
     if (final.situacao === "erro") {
       mostrarAviso(avisoDaSituacao("erro", final.codigo, final.mensagem));
       return;
     }
 
     meta = await lerMeta(job, pagina, sinal);
-    mostrarAviso(null);
     estado.layersDesligados.clear();
     camadas = [];
 
+    // A barra nasce antes do primeiro pedaço, indeterminada: entre o pedido e a
+    // resposta não se sabe nem o tamanho, e ficar sem indicador nenhum nessa
+    // janela é o que fazia o download parecer travado.
+    const inicioDoEsqueleto = Date.now();
+    mostrarProgresso("faixa", "Carregando o desenho",
+                     { tipo: "indeterminado", desde: inicioDoEsqueleto });
     const cruEsqueleto = await lerGeometriaBruta(
       job, pagina, "esqueleto", sinal, (lidos, total) =>
         mostrarProgresso("faixa", "Carregando o desenho", total
           ? { tipo: "determinado", feito: lidos, total }
-          : { tipo: "indeterminado", desde: inicio }));
-    esconderProgresso();
+          : { tipo: "indeterminado", desde: inicioDoEsqueleto }));
+    esconderProgresso("faixa");
     if (sinal.aborted) return;
     const esqueleto = lerGeometria(cruEsqueleto, meta.layers, 0);
     esqueleto.n_groups = contarGrupos(esqueleto);
@@ -426,12 +523,15 @@ async function carregarPagina(): Promise<void> {
     trocarGeometria(esqueleto);
 
     if (estado.parcial) {
+      const inicioDoDetalhe = Date.now();
+      mostrarProgresso("faixa", "Carregando o detalhe do desenho",
+                       { tipo: "indeterminado", desde: inicioDoDetalhe });
       const cruDetalhe = await lerGeometriaBruta(
         job, pagina, "detalhe", sinal, (lidos, total) =>
           mostrarProgresso("faixa", "Carregando o detalhe do desenho", total
             ? { tipo: "determinado", feito: lidos, total }
-            : { tipo: "indeterminado", desde: inicio }));
-      esconderProgresso();
+            : { tipo: "indeterminado", desde: inicioDoDetalhe }));
+      esconderProgresso("faixa");
       if (sinal.aborted) return;
       const parteDetalhe = lerGeometria(cruDetalhe, meta.layers, 0);
       // A intercalação restaura a ordem original. Sem ela, o dedup elegeria um
@@ -442,7 +542,12 @@ async function carregarPagina(): Promise<void> {
       trocarGeometria(inteira);
     }
   } catch (erro) {
+    // A checagem vem antes de esconder: quem abortou foi uma troca de página, e
+    // a chamada nova já pôs a barra dela na tela — apagá-la aqui deixaria a
+    // página nova carregando sem indicador nenhum.
     if (sinal.aborted) return;
+    esconderProgresso("aviso");
+    esconderProgresso("faixa");
     mostrarAviso(avisoDoErro(erro));
   }
 }
@@ -563,7 +668,7 @@ async function baixar(): Promise<void> {
       escala: estado.escala, unidade: estado.unidade,
       opcoes: opcoesEfetivas(estado),
     });
-    esconderProgresso();
+    esconderProgresso("aviso");
     const link = document.createElement("a");
     link.href = r.url;
     link.download = "";
@@ -572,6 +677,7 @@ async function baixar(): Promise<void> {
     link.click();
     link.remove();
   } catch (erro) {
+    esconderProgresso("aviso");
     mostrarAviso(avisoDoErro(erro));
   }
 }
@@ -593,6 +699,14 @@ let paradaDoGesto = 0;
  */
 function aoMexer(nova: Vista): void {
   vista = nova;
+  // O preparo que este gesto pode disparar começa agora.
+  //
+  // Sem isto, `inicioDoPreparo` só era gravado em `recalcular()` e, num arrasto
+  // ou num zoom — o gesto mais comum da tela —, `Date.now() - inicioDoPreparo`
+  // já valia minutos: o limiar de 300 ms passava de primeira e a barra piscava
+  // em dois quadros. Gravando aqui, ela só aparece se o preparo realmente
+  // demorar depois de a mão parar.
+  inicioDoPreparo = Date.now();
   agendar();
   clearTimeout(paradaDoGesto);
   paradaDoGesto = window.setTimeout(agendar, PAUSA_DO_GESTO_MS);

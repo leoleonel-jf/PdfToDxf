@@ -200,6 +200,88 @@ test("o atalho do painel recolhido leva à seção pedida", async ({ page }) => 
   await expect(t(page, "secao-camadas")).toBeInViewport();
 });
 
+/**
+ * O defeito de verdade: `Number("0,50")` é `NaN`, e vírgula é como um usuário
+ * brasileiro digita decimal. Antes da correção o `NaN` atravessava a guarda
+ * de `escalaPorDoisPontos`, virava a escala da tela e derrubava a exportação
+ * com um 422 que a tela mostrava como "[object Object]". Este teste prova a
+ * cadeia inteira corrigida: vírgula funciona, e a escala muda de verdade.
+ */
+test("calibrar por 2 pontos aceita vírgula na medida", async ({ page }) => {
+  await abrirPlanta(page);
+
+  const escalaAntes = await t(page, "escala-atual").textContent();
+
+  await t(page, "calibrar").click();
+  const tela = page.locator("#desenho");
+  const caixa = (await tela.boundingBox())!;
+  await tela.click({ position: { x: caixa.width * 0.3, y: caixa.height * 0.5 } });
+
+  page.once("dialog", (dialog) => void dialog.accept("0,50"));
+  await tela.click({ position: { x: caixa.width * 0.7, y: caixa.height * 0.5 } });
+
+  // A calibração fechou sem erro: o aviso de instrução some, e não aparece
+  // nenhum "Não deu para calibrar" no lugar dele.
+  await expect(page.locator("#aviso")).toBeHidden();
+  await expect(t(page, "escala-atual")).not.toHaveText(escalaAntes!);
+});
+
+/**
+ * O mesmo defeito, do outro lado: uma medida que não dá para ler nenhum jeito
+ * ("abc") tem de mostrar a mensagem própria da guarda — "positiva" — e nunca
+ * "[object Object]", que era o que a tela mostrava quando o `NaN` da
+ * calibração chegava a atravessar até a resposta do servidor.
+ */
+test("calibrar com medida inválida mostra mensagem própria, não [object Object]", async ({ page }) => {
+  await abrirPlanta(page);
+
+  await t(page, "calibrar").click();
+  const tela = page.locator("#desenho");
+  const caixa = (await tela.boundingBox())!;
+  await tela.click({ position: { x: caixa.width * 0.3, y: caixa.height * 0.5 } });
+
+  page.once("dialog", (dialog) => void dialog.accept("abc"));
+  await tela.click({ position: { x: caixa.width * 0.7, y: caixa.height * 0.5 } });
+
+  const aviso = page.locator("#aviso");
+  await expect(aviso).toContainText(/positiva/i);
+  await expect(aviso).not.toContainText("[object Object]");
+});
+
+/**
+ * O primeiro clique da calibração precisa deixar rastro na tela — hoje nada
+ * marcava o ponto, e o usuário não sabia se o clique tinha pegado.
+ */
+test("o primeiro clique da calibração marca o ponto na tela", async ({ page }) => {
+  await abrirPlanta(page);
+
+  await t(page, "calibrar").click();
+  const tela = page.locator("#desenho");
+  const caixa = (await tela.boundingBox())!;
+  await expect(page.locator(".marca-calibracao")).toHaveCount(0);
+
+  await tela.click({ position: { x: caixa.width * 0.3, y: caixa.height * 0.5 } });
+  await expect(page.locator(".marca-calibracao")).toHaveCount(1);
+
+  page.once("dialog", (dialog) => void dialog.accept("1"));
+  await tela.click({ position: { x: caixa.width * 0.7, y: caixa.height * 0.5 } });
+
+  // Calibração encerrada: as marcas somem, e não ficam órfãs na tela.
+  await expect(page.locator(".marca-calibracao")).toHaveCount(0);
+});
+
+/**
+ * "Descartar abaixo de N mm" perdia casa decimal e as setinhas nativas de
+ * `type="number"` cobriam o texto. Sem `type="number"` não há setinhas, e o
+ * campo mostra pelo menos 2 casas.
+ */
+test("o campo de mm não é type=number e mostra 2 casas decimais", async ({ page }) => {
+  await abrirPlanta(page);
+  const campo = t(page, "min-len");
+  await expect(campo).toHaveAttribute("type", "text");
+  await expect(campo).toHaveValue(/^\d+\.\d{2}$/);
+});
+
 test("as três opções que só tiram redundância abrem ligadas", async ({ page }) => {
   await abrirPlanta(page);
   for (const chave of ["join_polylines", "round_coords", "dedup"]) {

@@ -22,8 +22,43 @@ export function escalaPorDoisPontos(p1: [number, number], p2: [number, number],
                                     medidaReal: number): number {
   const papel = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
   if (papel < 1e-9) throw new Error("Os dois pontos de calibração coincidem.");
-  if (medidaReal <= 0) throw new Error("A medida real deve ser positiva.");
+  // `medidaReal <= 0` deixaria passar `NaN`: em JavaScript `NaN <= 0` é
+  // `false`. É o caso de verdade — um usuário brasileiro digitando "0,50" com
+  // vírgula, que `Number()` lê como `NaN` — e sem a guarda certa ele atravessa
+  // até o `JSON.stringify` da exportação, que o transforma em `null` e o
+  // servidor recusa com um 422 que a tela não sabia explicar. `!(x > 0)`
+  // sozinho ainda deixaria passar `Infinity` (`Infinity > 0` é `true`), então
+  // o `Number.isFinite` entra para barrar esse caso também.
+  if (!(Number.isFinite(medidaReal) && medidaReal > 0)) {
+    throw new Error("A medida real deve ser positiva.");
+  }
   return medidaReal / papel;
+}
+
+/**
+ * Lê a medida que o usuário digitou, aceitando vírgula.
+ *
+ * `Number("0,50")` é `NaN`, e vírgula é como se escreve decimal em português —
+ * ou seja, o jeito natural de digitar era exatamente o que quebrava a
+ * calibração. Devolve `NaN` para entrada que não é número, e quem chama
+ * decide o que fazer com isso.
+ */
+export function medidaDigitada(texto: string): number {
+  return Number(texto.trim().replace(",", "."));
+}
+
+/**
+ * Se `escala` pode ir para o servidor.
+ *
+ * O cinto de segurança do botão Exportar: a guarda de `escalaPorDoisPontos` e o
+ * campo "Escala 1:" (com seu próprio `v > 0`) já não deveriam deixar `NaN` ou
+ * infinito chegar aqui — mas "não deveriam" não é "não podem", e um
+ * `JSON.stringify` de `NaN` vira `null` em silêncio. Melhor recusar na tela,
+ * com uma mensagem que diz o que fazer, do que deixar o servidor recusar com
+ * um 422 sem contexto nenhum.
+ */
+export function escalaValidaParaExportar(escala: number): boolean {
+  return Number.isFinite(escala) && escala > 0;
 }
 
 export function escalaPorEscalaDePlotagem(razao: number,

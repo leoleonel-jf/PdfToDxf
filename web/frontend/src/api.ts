@@ -53,11 +53,32 @@ export type PedidoDeExportacao = {
  * por onde o PDF entra: uma recusa nova escrita só no `pedir` deixaria de fora
  * justamente a porta de entrada.
  */
+/**
+ * As mensagens legíveis de um `detail` de validação (FastAPI/Pydantic).
+ *
+ * Nesse formato `detail` não é texto, é uma lista de erros — um por campo —,
+ * cada um com `msg` explicando o que houve. `String(lista)` não lê nada disso:
+ * ele chama `toString()` de cada item, e um objeto sem `toString()` próprio
+ * vira literalmente `"[object Object]"`. Devolve `null` quando a lista não tem
+ * nenhum `msg` legível, para quem chama cair no status como antes.
+ */
+function mensagensDaListaDeErros(lista: unknown[]): string | null {
+  const msgs = lista
+    .map((item) => item && typeof item === "object" && "msg" in item
+      ? String((item as { msg: unknown }).msg) : null)
+    .filter((m): m is string => Boolean(m));
+  return msgs.length > 0 ? msgs.join("; ") : null;
+}
+
 function erroDaRecusa(status: number, corpoCru: string): ErroDaApi {
   let detalhe = `HTTP ${status}`;
   try {
     const corpo = JSON.parse(corpoCru);
-    if (corpo?.detail) detalhe = String(corpo.detail);
+    if (Array.isArray(corpo?.detail)) {
+      detalhe = mensagensDaListaDeErros(corpo.detail) ?? detalhe;
+    } else if (corpo?.detail) {
+      detalhe = String(corpo.detail);
+    }
   } catch {
     // Resposta sem JSON: fica o status, que já diz o suficiente.
   }

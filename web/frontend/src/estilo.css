@@ -315,6 +315,28 @@ html, body {
   background: var(--fundo-do-desenho);
 }
 
+/* A marca de um ponto já clicado na calibração por 2 pontos. `pointer-events:
+   none` para não roubar o clique seguinte, que é justamente sobre o canvas
+   embaixo dela. */
+.marca-calibracao {
+  position: absolute;
+  left: 0; top: 0;
+  width: 16px; height: 16px;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--destaque);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.marca-calibracao::after {
+  content: "";
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 4px; height: 4px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: var(--destaque);
+}
+
 /* --- progresso ----------------------------------------------------------- */
 
 .progresso { display: flex; flex-direction: column; gap: var(--e1); width: 100%; max-width: 32rem; }

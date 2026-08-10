@@ -50,6 +50,34 @@ describe("api.ts", () => {
       (e: unknown) => e instanceof ErroDaApi && e.status === 404);
   });
 
+  /**
+   * O 422 de validação (FastAPI/Pydantic) devolve `detail` como **lista**, não
+   * texto. `String(lista)` chama `toString()` de cada item, e um objeto sem
+   * `toString()` próprio vira `"[object Object]"` — a mensagem que a tela
+   * mostrava no lugar de dizer o que houve.
+   */
+  it("detail em lista de validação vira mensagem legível, não [object Object]", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => respostaDe({
+      detail: [
+        { loc: ["body", "escala"], msg: "value is not a valid float", type: "type_error" },
+        { loc: ["body", "unidade"], msg: "field required", type: "value_error" },
+      ],
+    }, 422)));
+    await expect(lerEstado("a".repeat(32), 1)).rejects.toSatisfy((e: unknown) =>
+      e instanceof ErroDaApi && e.status === 422 &&
+      !e.message.includes("[object Object]") &&
+      e.message.includes("value is not a valid float") &&
+      e.message.includes("field required"));
+  });
+
+  it("detail em lista sem msg legível cai no status, não em [object Object]", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      respostaDe({ detail: [{ loc: ["body"] }] }, 422)));
+    await expect(lerEstado("a".repeat(32), 1)).rejects.toSatisfy((e: unknown) =>
+      e instanceof ErroDaApi && !e.message.includes("[object Object]") &&
+      e.message.includes("422"));
+  });
+
   it("espera a página sair da fila e avisa a cada mudança", async () => {
     const sequencia = [
       { situacao: "na_fila" },

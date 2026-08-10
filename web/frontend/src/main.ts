@@ -14,7 +14,7 @@ import {
   enviarPdf, esperarPagina, exportar, lerGeometriaBruta, lerMeta,
   pedirExtracao, type Meta,
 } from "./api.js";
-import { enquadrar, type Vista } from "./canvas.js";
+import { enquadrar, pontoDaTela, type Vista } from "./canvas.js";
 import { intercalar, lerGeometria, type Geometria } from "./formato.js";
 import {
   aplicarArrasto, aplicarZoom, centro, distancia, fatorDaRoda,
@@ -22,8 +22,8 @@ import {
 } from "./gestos.js";
 import { avisoDaSituacao, avisoDoErro, type Aviso } from "./estados.js";
 import {
-  escalaPorDoisPontos, iniciarCalibragem, marcarPonto, posicaoDaLupa,
-  type Calibragem,
+  escalaPorDoisPontos, escalaValidaParaExportar, iniciarCalibragem,
+  marcarPonto, medidaDigitada, posicaoDaLupa, type Calibragem,
 } from "./calibrate.js";
 import { ordenarPorComprimento } from "./ordem.js";
 import { criarPintor, passo, type Cena } from "./pintor.js";
@@ -148,13 +148,52 @@ const SEM_COMPACTACAO: Opcoes = {
   dedup: false, join_polylines: false, round_coords: false,
 };
 
+const areaDoDesenho = document.querySelector<HTMLElement>(".area-do-desenho")!;
+
 const lupa = document.createElement("canvas");
 lupa.className = "lupa";
 lupa.width = 120;
 lupa.height = 120;
 lupa.hidden = true;
-document.querySelector(".area-do-desenho")!.append(lupa);
+areaDoDesenho.append(lupa);
 const AUMENTO_DA_LUPA = 3;
+
+/**
+ * As marcas dos pontos já clicados na calibração.
+ *
+ * Sem elas o primeiro clique não deixa rastro nenhum na tela, e o usuário não
+ * sabe se pegou. Vivem fora do motor de desenho — elementos absolutos dentro
+ * de `.area-do-desenho`, como a lupa — porque `calibragem.pontos` guarda
+ * coordenadas de **papel**, e recolocá-las a cada `aoMexer` é mais simples do
+ * que fazer o `pintor.ts` conhecer um estado que não é dele.
+ */
+const marcasDeCalibracao: HTMLElement[] = [];
+
+function redesenharMarcasDeCalibracao(): void {
+  const pontos = calibragem?.pontos ?? [];
+  while (marcasDeCalibracao.length < pontos.length) {
+    const marca = document.createElement("div");
+    marca.className = "marca-calibracao";
+    areaDoDesenho.append(marca);
+    marcasDeCalibracao.push(marca);
+  }
+  while (marcasDeCalibracao.length > pontos.length) {
+    marcasDeCalibracao.pop()!.remove();
+  }
+  const proporcao = window.devicePixelRatio || 1;
+  pontos.forEach((p, i) => {
+    const naTela = pontoDaTela(vista, p[0]!, p[1]!);
+    const marca = marcasDeCalibracao[i]!;
+    marca.style.left = `${naTela.x / proporcao}px`;
+    marca.style.top = `${naTela.y / proporcao}px`;
+  });
+}
+
+/** Limpa as marcas quando a calibração termina ou é cancelada. */
+function limparMarcasDeCalibracao(): void {
+  for (const m of marcasDeCalibracao) m.remove();
+  marcasDeCalibracao.length = 0;
+}
 
 const pintor = criarPintor();
 
@@ -600,11 +639,11 @@ const BUSCA = '[data-teste="busca-camadas"]';
 /**
  * Remonta a tela preservando foco, cursor, rolagem e o filtro de camadas.
  *
- * O painel é reconstruído do zero a cada mudança, e as setas de um campo
- * numérico disparam `change` a cada passo: sem isto, apertar ↑ duas vezes no
- * campo de mm tira o foco do campo já na primeira. Reencontrar o elemento pelo
- * `data-teste` é mais barato do que remontar por partes, e resolve todos os
- * campos de uma vez — inclusive a busca de camadas.
+ * O painel é reconstruído do zero a cada mudança, e um campo perderia o foco
+ * a cada `change` sem isto — trocar de camada ou digitar num campo não pode
+ * devolver o painel inteiro em branco, com o cursor em lugar nenhum.
+ * Reencontrar o elemento pelo `data-teste` é mais barato do que remontar por
+ * partes, e resolve todos os campos de uma vez — inclusive a busca de camadas.
  *
  * Rolagem e filtro andam junto com o foco pelo mesmo motivo: filtrar por
  * "parede" e clicar no olho de uma camada não pode devolver a lista inteira,
@@ -653,6 +692,7 @@ function aoMudarOpcoes(): void {
 }
 
 function iniciarCalibracao(): void {
+  limparMarcasDeCalibracao();
   calibragem = iniciarCalibragem();
   mostrarAviso({ titulo: "Calibração", podeTentarDeNovo: false,
                  detalhe: "Toque nas duas extremidades de uma medida " +
@@ -661,6 +701,18 @@ function iniciarCalibracao(): void {
 }
 
 async function baixar(): Promise<void> {
+  // Cinto de segurança: com as guardas de `calibrate.ts` e do campo "Escala
+  // 1:" a interface não deveria deixar `escala` sair de `NaN` ou infinito,
+  // mas "não deveria" não é "não pode" — e um `JSON.stringify` de `NaN` vira
+  // `null` em silêncio, que o servidor só recusa com um 422 sem contexto.
+  if (!escalaValidaParaExportar(estado.escala)) {
+    mostrarAviso({
+      titulo: "A escala ainda não é válida",
+      detalhe: "Calibre ou digite a escala de plotagem antes de exportar.",
+      podeTentarDeNovo: true,
+    });
+    return;
+  }
   const inicio = Date.now();
   try {
     mostrarProgresso("aviso", "Gerando o DXF", { tipo: "indeterminado", desde: inicio });
@@ -699,6 +751,9 @@ let paradaDoGesto = 0;
  */
 function aoMexer(nova: Vista): void {
   vista = nova;
+  // As marcas de calibração são de papel; sem isto, um zoom entre um clique e
+  // o outro deixaria a marca do primeiro ponto flutuando fora do lugar.
+  redesenharMarcasDeCalibracao();
   // O preparo que este gesto pode disparar começa agora.
   //
   // Sem isto, `inicioDoPreparo` só era gravado em `recalcular()` e, num arrasto
@@ -754,22 +809,30 @@ tela.addEventListener("click", (e) => {
   calibragem = marcarPonto(calibragem, vista,
                            (e.clientX - caixa.left) * proporcao,
                            (e.clientY - caixa.top) * proporcao);
+  redesenharMarcasDeCalibracao();
   if (calibragem.ativa) return;
 
   // Provisório e feio de propósito: uma caixa própria é trabalho de acabamento,
   // e está registrado como dívida no fim da etapa.
   const medida = window.prompt(
     `Quanto mede essa distância na planta, em ${estado.unidade}?`, "1");
-  if (medida === null) { calibragem = null; mostrarAviso(null); return; }
+  if (medida === null) {
+    calibragem = null;
+    limparMarcasDeCalibracao();
+    mostrarAviso(null);
+    return;
+  }
   try {
     estado.escala = escalaPorDoisPontos(calibragem.pontos[0]!,
-                                        calibragem.pontos[1]!, Number(medida));
+                                        calibragem.pontos[1]!,
+                                        medidaDigitada(medida));
     mostrarAviso(null);
   } catch (erro) {
     mostrarAviso({ titulo: "Não deu para calibrar", podeTentarDeNovo: true,
                    detalhe: erro instanceof Error ? erro.message : "" });
   }
   calibragem = null;
+  limparMarcasDeCalibracao();
   montarTudo();
 });
 

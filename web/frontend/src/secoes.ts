@@ -80,7 +80,7 @@ export function secaoEscala(e: EstadoDaTela, temGeometria: boolean,
   // 3 nunca teve: quem já sabe a escala de plotagem não precisa calibrar.
   const porNumero = criarCampoComUnidade({
     valor: Math.round(razaoDeEscala(e.escala, e.unidade)), unidade: "",
-    rotulo: "Escala 1:", teste: "escala-1n", passo: "1",
+    rotulo: "Escala 1:", teste: "escala-1n",
     aoMudar: (v) => {
       if (v > 0) {
         e.escala = escalaPorEscalaDePlotagem(v, e.unidade);
@@ -141,7 +141,7 @@ export function secaoCompactacao(e: EstadoDaTela, repetidos: number | null,
   }
 
   caixa.append(criarCampoComUnidade({
-    valor: e.opcoes.min_len_mm, unidade: "mm",
+    valor: e.opcoes.min_len_mm, unidade: "mm", casas: 2,
     rotulo: "Descartar abaixo de", teste: "min-len",
     aoMudar: (v) => { e.opcoes.min_len_mm = v; aoMudar(); },
   }));

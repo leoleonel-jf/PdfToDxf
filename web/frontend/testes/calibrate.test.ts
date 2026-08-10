@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  escalaPorDoisPontos, escalaPorEscalaDePlotagem, iniciarCalibragem,
-  marcarPonto, posicaoDaLupa, razaoDeEscala, MM_POR_UNIDADE, type Unidade,
+  escalaPorDoisPontos, escalaPorEscalaDePlotagem, escalaValidaParaExportar,
+  iniciarCalibragem, marcarPonto, medidaDigitada, posicaoDaLupa, razaoDeEscala,
+  MM_POR_UNIDADE, type Unidade,
 } from "../src/calibrate.js";
 import { enquadrar } from "../src/canvas.js";
 
@@ -21,6 +22,20 @@ describe("calibrate.ts espelha calibration.py", () => {
   it("recusa medida real não positiva", () => {
     expect(() => escalaPorDoisPontos([0, 0], [10, 0], 0)).toThrow(/positiva/i);
     expect(() => escalaPorDoisPontos([0, 0], [10, 0], -2)).toThrow(/positiva/i);
+  });
+
+  /**
+   * `NaN <= 0` é `false` em JavaScript — a guarda antiga (`medidaReal <= 0`)
+   * deixava um `NaN` atravessar e devolver `NaN` como fator de escala. É o
+   * caso de verdade: um usuário brasileiro digitando "0,50" com vírgula, que
+   * `Number()` lê como `NaN`, sem nenhuma exceção para avisar.
+   */
+  it("recusa medida real NaN ou infinita, e não só zero ou negativa", () => {
+    expect(() => escalaPorDoisPontos([0, 0], [10, 0], NaN)).toThrow(/positiva/i);
+    expect(() => escalaPorDoisPontos([0, 0], [10, 0], Infinity))
+      .toThrow(/positiva/i);
+    expect(() => escalaPorDoisPontos([0, 0], [10, 0], -Infinity))
+      .toThrow(/positiva/i);
   });
 
   it("escala de plotagem 1:50 em metros", () => {
@@ -72,6 +87,47 @@ describe("razão de plotagem: ida e volta", () => {
     // O mesmo comprimento, dito em outra unidade: a razão de plotagem não muda.
     expect(razaoDeEscala(emMilimetros, "mm")).toBeCloseTo(50, 9);
     expect(converter(emMilimetros, "mm", "m")).toBeCloseTo(emMetros, 12);
+  });
+});
+
+/**
+ * `Number("0,50")` é `NaN`: vírgula é como se escreve decimal em português, e
+ * era exatamente o jeito natural de digitar que quebrava a calibração.
+ */
+describe("medidaDigitada aceita vírgula", () => {
+  it("vírgula e ponto valem o mesmo", () => {
+    expect(medidaDigitada("0,50")).toBeCloseTo(0.5, 12);
+    expect(medidaDigitada("0.50")).toBeCloseTo(0.5, 12);
+  });
+
+  it("ignora espaço nas pontas", () => {
+    expect(medidaDigitada(" 2 ")).toBe(2);
+  });
+
+  it("texto que não é número vira NaN", () => {
+    expect(medidaDigitada("abc")).toBeNaN();
+  });
+
+  // `Number("")` é `0`, não `NaN` — comportamento do próprio `Number()`, não
+  // desta função. É por isso que `escalaPorDoisPontos` guarda com `> 0`, e
+  // não só com `Number.isFinite`: uma medida vazia também precisa ser
+  // recusada, e `0` já cai fora da guarda sozinho.
+  it("string vazia vira 0, e a guarda de escalaPorDoisPontos recusa 0 do mesmo jeito", () => {
+    expect(medidaDigitada("")).toBe(0);
+  });
+});
+
+describe("escalaValidaParaExportar: o cinto de segurança do botão Exportar", () => {
+  it("aceita um número finito e positivo", () => {
+    expect(escalaValidaParaExportar(0.01)).toBe(true);
+  });
+
+  it("recusa NaN, infinito, zero e negativo", () => {
+    expect(escalaValidaParaExportar(NaN)).toBe(false);
+    expect(escalaValidaParaExportar(Infinity)).toBe(false);
+    expect(escalaValidaParaExportar(-Infinity)).toBe(false);
+    expect(escalaValidaParaExportar(0)).toBe(false);
+    expect(escalaValidaParaExportar(-1)).toBe(false);
   });
 });
 

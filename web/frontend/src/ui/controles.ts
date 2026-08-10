@@ -6,6 +6,7 @@
  * um vetor de injeção. O texto vai por `textContent`, sempre.
  */
 import { caminho } from "./icones.js";
+import { medidaDigitada } from "../calibrate.js";
 import { porcentagem, tempoDecorrido, type Progresso } from "../progresso.js";
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -80,10 +81,31 @@ export function criarInterruptor(o: {
   return b;
 }
 
+/**
+ * O valor do campo, formatado com o número de casas decimais pedido.
+ *
+ * Extraída como função pura porque é a única parte de `criarCampoComUnidade`
+ * capaz de ter teste em Node: o resto usa `document.createElement`, e o
+ * ambiente de teste (`vite.config.ts`) roda sem DOM.
+ */
+export function formatarComCasas(valor: number, casas: number): string {
+  return valor.toFixed(casas);
+}
+
+/**
+ * Campo numérico com unidade ao lado.
+ *
+ * `type="text"` com `inputmode="decimal"`, e não `type="number"`: o campo
+ * nativo tem setinhas que cobrem o texto num campo estreito, e não aceita
+ * vírgula — o jeito como um usuário brasileiro digita decimal. A leitura
+ * reaproveita `medidaDigitada`, que troca a vírgula por ponto antes de
+ * `Number()`.
+ */
 export function criarCampoComUnidade(o: {
   valor: number; unidade: string; rotulo: string; teste: string;
-  passo?: string; aoMudar: (v: number) => void;
+  casas?: number; aoMudar: (v: number) => void;
 }): HTMLElement {
+  const casas = o.casas ?? 0;
   const caixa = document.createElement("label");
   caixa.className = "com-unidade apoio";
 
@@ -91,14 +113,15 @@ export function criarCampoComUnidade(o: {
   rotulo.textContent = o.rotulo;
 
   const campo = document.createElement("input");
-  campo.type = "number";
+  campo.type = "text";
+  campo.inputMode = "decimal";
   campo.className = "campo";
-  campo.min = "0";
-  campo.step = o.passo ?? "0.1";
-  campo.value = String(o.valor);
+  campo.value = formatarComCasas(o.valor, casas);
   campo.dataset["teste"] = o.teste;
   campo.addEventListener("change", () => {
-    o.aoMudar(Math.max(0, Number(campo.value) || 0));
+    // Entrada vazia ou inválida cai para 0, como o campo `type="number"` já
+    // fazia: `medidaDigitada` devolve `NaN`, e `NaN || 0` é `0`.
+    o.aoMudar(Math.max(0, medidaDigitada(campo.value) || 0));
   });
 
   const unidade = document.createElement("span");

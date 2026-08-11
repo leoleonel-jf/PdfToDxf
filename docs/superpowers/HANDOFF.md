@@ -1,17 +1,29 @@
 # Handoff — versão web do PdfToDxf
 
-Estado em 2026-08-09. Leia isto primeiro ao retomar em sessão nova.
+Estado em 2026-08-10. Leia isto primeiro ao retomar em sessão nova.
 
 > ## Se o pedido foi só "continuar", faça isto
 >
-> **Execute a etapa 4 — contas, cotas e registros.** A spec e o desenho já
-> existem (`docs/superpowers/specs/2026-08-09-contas-cotas-registros-design.md`);
-> falta o **plano de implementação**. Comece por `superpowers:writing-plans`
-> sobre essa spec, e depois execute com `superpowers:subagent-driven-development`.
-> **Não peça confirmação para começar.**
+> **Primeiro, uma pergunta ao usuário, e só ela** — há uma investigação aberta
+> esperando dois números que só ele tem. Está descrita logo abaixo, em "A
+> questão aberta do ×100". Pergunte o valor de `DIMLFAC` e o que o `DIST`
+> mediu; **não recomece a investigação**, porque a cadeia inteira do app já foi
+> medida e está registrada lá.
 >
-> Antes de propor qualquer coisa, leia a spec da etapa 4 e a seção "O que falta"
-> abaixo.
+> **Depois — ou se ele disser que o ×100 está resolvido, ou mandar seguir —
+> execute a etapa 4: contas, cotas e registros.** A spec já existe
+> (`docs/superpowers/specs/2026-08-09-contas-cotas-registros-design.md`); falta
+> o **plano de implementação**. Comece por `superpowers:writing-plans` sobre
+> essa spec, e depois execute com `superpowers:subagent-driven-development`.
+> **Não peça confirmação para começar a etapa 4.**
+>
+> **Para subir a tela**, quando ele pedir ou quando você precisar conferir algo:
+> existe `.claude/launch.json` com dois alvos. Use a ferramenta de preview, não
+> o Bash: `preview_start` com `pdftodxf-api` e depois com `pdftodxf-web`. A tela
+> abre em `http://localhost:5173` — com `localhost`, **nunca** `127.0.0.1`, que
+> o Vite recusa. Os servidores caem quando a sessão anterior encerra; se o
+> usuário disser "deu erro" com `ERR_CONNECTION_REFUSED`, é isso, e a correção é
+> subir os dois de novo.
 >
 > **Três coisas que não são para você fazer nem esperar:**
 >
@@ -23,16 +35,17 @@ Estado em 2026-08-09. Leia isto primeiro ao retomar em sessão nova.
 > - Os itens que "dependem de você" em "O que falta" são do humano. Não os
 >   execute por conta própria.
 >
-> **Pendência de olho humano, e é a mais importante:** a etapa 3.5 redesenhou a
-> interface inteira e **ninguém a viu com planta real na tela**. Nenhum agente
-> tem olhos. Dos três defeitos da etapa 3, dois só apareceram assim.
->
-> As etapas 3, 3.5 e 3.6 estão prontas: **2162 testes de unidade, 17 de ponta a
+> As etapas 3, 3.5 e 3.6 estão prontas: **2174 testes de unidade, 21 de ponta a
 > ponta**, 15 arquivos de teste Python, e **integração contínua verde no
-> GitHub**. O
-> desenho do canvas foi **refeito no meio da etapa 3**, depois de três medições
-> derrubarem três arquiteturas — se for mexer no canvas, leia
+> GitHub**. O desenho do canvas foi **refeito no meio da etapa 3**, depois de
+> três medições derrubarem três arquiteturas — se for mexer no canvas, leia
 > `web/frontend/medicao/RESULTADO.md` antes.
+>
+> **A conferência na tela já aconteceu, e valeu o que se esperava:** o usuário
+> abriu com planta real em 2026-08-10 e achou três defeitos que teste nenhum
+> pegava — as setinhas do campo de mm cobrindo o texto e sem casa decimal, a
+> calibração virando `NaN` quando a medida era digitada com vírgula, e os
+> pontos clicados não aparecendo na tela. **Os três estão corrigidos.**
 >
 > **A lição mais cara da etapa 3.5, para não se repetir:** o plano mandou
 > reimplementar à mão duas conversões que o projeto já tinha prontas e testadas
@@ -40,6 +53,82 @@ Estado em 2026-08-09. Leia isto primeiro ao retomar em sessão nova.
 > com 11,34 m onde a parede tem 10,00 m. Sete revisões por tarefa não pegaram,
 > porque cada uma só via o seu pedaço; a revisão final do branch pegou. **Antes
 > de escrever qualquer conversão, procure se ela já existe no núcleo.**
+
+## Duas armadilhas de ambiente, para não perder tempo
+
+**A porta 8000 pode estar ocupada por outro aplicativo do usuário.** Em
+2026-08-11 havia um servidor `waitress` nela, redirecionando para `/login/` —
+nada a ver com este projeto. O `playwright.config.ts` aponta para a 8000, então
+`npm run e2e` fica esperando um servidor que nunca responde o que ele quer, e
+morre com `Timed out waiting 60000ms from config.webServer`. **Não é defeito do
+código.** Confira antes de investigar:
+
+```
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/openapi.json
+```
+
+`200` é a nossa API; `404` ou um redirecionamento é outra coisa. Derrubar o
+processo alheio **é decisão do usuário** — pergunte, não mate.
+
+**O Vite precisa escutar nos dois endereços.** Por padrão ele sobe só em
+`localhost` (IPv6) e recusa `127.0.0.1`, que é justamente onde o Playwright
+procura. O `.claude/launch.json` já passa `--host` por causa disso, e com ele
+tanto `http://localhost:5173` quanto `http://127.0.0.1:5173` funcionam.
+
+## A questão aberta do ×100
+
+**Estado: esperando dois números do usuário.** Não recomece a investigação — a
+cadeia inteira do app já foi medida, e está tudo aqui.
+
+### O sintoma
+
+O usuário calibrou a planta real (`Input/LAY-1031.26.00_REV 00.pdf`) numa cota
+de **6,06 m**, com a escala em **1:40** e a unidade em **m**, exportou, e o
+AutoCAD mostrou **606,00** na mesma cota. Fator 100, que é metro→centímetro.
+Ele confirmou que **não muda nada** escrever a medida com vírgula ou com ponto,
+e que trocar m/cm/mm não altera o que ele vê.
+
+### O que já foi medido, e fecha
+
+| Trecho | Como foi medido | Resultado |
+|---|---|---|
+| Calibração por 2 cliques | Playwright na planta real, lendo a tela e o corpo do POST | mostra `1:23` e "8,13 mm reais", envia `escala 0,008128` + `"m"` — os três concordam |
+| Campo "Escala 1:" | idem, com 1:50 | envia `0,017638` + `"m"` |
+| Seletor de unidade | idem, as três | `0,0176` (m) · `1,7639` (cm) · `17,6389` (mm) — razão 1:100:1000, tamanho físico preservado |
+| Cache da exportação | `web/api/exportacao.py::chave` | inclui escala **e** unidade; não há reentrega de arquivo errado |
+| Escrita do DXF | `pdftodxf/dxf_writer.py::write_dxf` | coordenadas = `ponto × escala`; `$INSUNITS` = 6/5/4 conferido com o próprio ezdxf |
+| A planta real, 1:40 em m | gerada pela API e medida com ezdxf | extensão **22,96 × 16,60 m** — ordem de grandeza certa para um prédio a 1:40 numa folha A2 (1684 × 1191 pt) |
+
+Três arquivos de prova ficaram em `output/diag/`: `m.dxf`, `cm.dxf` e `mm.dxf`,
+o mesmo desenho nas três unidades, mais `real-m.dxf`, a planta do usuário a 1:40
+em metros. **São locais** — `output/` está no `.gitignore`, então não vieram do
+repositório e podem não existir noutra máquina; regerá-los é um `curl` contra a
+API, como descrito acima. Medidos com ezdxf, a mesma linha dá
+`5,2917 m` · `529,1667 cm` · `5291,6667 mm`. O usuário mediu **outra** linha no
+AutoCAD e obteve `529,17` · `52.916,67` · `529.166,67` — números diferentes dos
+meus porque é outra linha, mas com **a mesma razão 1:100:1000**. Ou seja, a
+conversão de unidade funciona, e o CAD dele não normaliza: mostra unidade crua.
+
+### A hipótese que falta testar, e o teste
+
+Se o arquivo tem 23 unidades de extensão e a cota mostra 606 sobre um vão de
+6,06, quem multiplica por 100 é o AutoCAD. O suspeito nomeado é o **`DIMLFAC`**,
+o fator de escala linear do estilo de cota — vale 100 em escritório que trabalha
+em centímetro.
+
+O teste separa os dois casos porque **`DIST` não sofre `DIMLFAC` e a cota
+sofre**:
+
+1. `DIMLFAC` na linha de comando → o valor.
+2. `DIST` nas mesmas duas extremidades → o comprimento.
+
+- `DIST` = **6,06** e cota = 606 → é o `DIMLFAC`. O app está certo, e não há
+  nada a corrigir no código.
+- `DIST` = **606** → a geometria está mesmo 100× e o defeito é nosso. Nesse
+  caso **não procure nos trechos da tabela acima** — todos foram medidos e
+  fecham. Comece pelo que não foi medido: o que o `extractor` devolve como
+  coordenada (a suposição não verificada é que são pontos de PDF), e a
+  `Vista`/`pontoDoPapel` do `canvas.ts` na conversão tela→papel.
 
 ## O projeto em uma frase
 
@@ -362,6 +451,10 @@ trabalho de sessão, e **não esperam pelos primeiros**.
 
 ### Depende de você
 
+0. **Os dois números do AutoCAD** que fecham a questão do ×100: `DIMLFAC` e o
+   que o `DIST` mede na cota de 6,06. É o item mais urgente, e está detalhado
+   na seção "A questão aberta do ×100", no topo deste documento.
+
 1. **Conferência manual do app desktop.** Só um humano pode fazer. A etapa 1
    mexeu em `pdftodxf/gui.py` e nenhum teste exercita a integração do painel de
    exportação com o canvas.
@@ -395,10 +488,11 @@ trabalho de sessão, e **não esperam pelos primeiros**.
 5. **Decidir o que fazer com o teto de 3 milhões de entidades**, agora que se
    sabe que uma planta comum do acervo chega a 2,33 milhões (ver a seção acima).
 
-6. **Revisar e mesclar o PR #3**, que leva a etapa 3 inteira:
-   `https://github.com/leoleonel-jf/PdfToDxf/pull/3` — 62 arquivos, 32 commits.
-   O corpo dele conta a história das três medições e lista o que ficou
-   pendente. A mescla é sua; nenhum trabalho de sessão depende dela.
+6. **Revisar e mesclar o PR #3**, que hoje leva as etapas **3, 3.5 e 3.6**:
+   `https://github.com/leoleonel-jf/PdfToDxf/pull/3`. O corpo dele conta a
+   história das três medições do canvas e lista o que ficou pendente — está
+   desatualizado quanto às etapas 3.5 e 3.6, que vieram depois. **O CI está
+   verde.** A mescla é sua; nenhum trabalho de sessão depende dela.
 
 7. **Construir a imagem Docker**, quando houver `docker` na máquina. É o único
    item da etapa 3 que sobrou:

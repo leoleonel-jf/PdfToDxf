@@ -27,9 +27,9 @@ Estado em 2026-08-10. Leia isto primeiro ao retomar em sessão nova.
 >
 > **Três coisas que não são para você fazer nem esperar:**
 >
-> - O **PR #3** (`https://github.com/leoleonel-jf/PdfToDxf/pull/3`) está aberto
->   com as etapas 3 e 3.5, esperando a revisão do usuário. **Não mescle por
->   conta própria** e não fique bloqueado nele.
+> - O **PR #3 já foi mesclado** em 2026-08-11, com commit de mescla (`0040dfc`),
+>   levando as etapas 3, 3.5 e 3.6 para a `main`. Não há PR aberto. O branch
+>   `frontend-canvas` foi preservado, como os outros branches de etapa.
 > - A **imagem Docker** não foi construída porque o `docker` não existe nesta
 >   máquina. Se o usuário instalar, é um comando; até lá, não tente.
 > - Os itens que "dependem de você" em "O que falta" são do humano. Não os
@@ -171,16 +171,17 @@ si: não é preciso resgatar a conversa que os originou.
 
 ## Onde o código está
 
-**Tudo está na `main` desde 2026-08-08.** As etapas 1, 2 e 2.5 e a validação de
-entradas foram mescladas em cascata, e a bateria dos treze arquivos de teste foi
-conferida no resultado. Os branches de etapa foram **preservados**, a pedido do
-usuário, para o caso de a revisão pendente da etapa 2 exigir olhar um ponto da
-história isolado:
+**Tudo está na `main` desde 2026-08-11**, quando o PR #3 foi mesclado com commit
+de mescla (`0040dfc`), levando as etapas 3, 3.5 e 3.6. Antes dele, as etapas 1,
+2 e 2.5 e a validação de entradas já tinham sido mescladas em cascata. A bateria
+foi conferida **sobre o resultado da mescla**: 15 arquivos de teste Python,
+2174 testes de frontend e build limpo. Os branches de etapa são **preservados**,
+a pedido do usuário:
 
 | Branch | Conteúdo | Situação |
 |---|---|---|
-| `main` | tudo, até a etapa 2.5 | **em dia** |
-| `frontend-canvas` | etapa 3 inteira | **pronta**, não mesclada, falta o Docker |
+| `main` | tudo, até a etapa 3.6 | **em dia** |
+| `frontend-canvas` | etapas 3, 3.5 e 3.6 (PR #3) | mesclada, branch guardado |
 | `nucleo-classify-select` | etapa 1 | mesclada, branch guardado |
 | `api-de-conversao` | etapa 2 | mesclada, branch guardado |
 | `linha-de-comando` | etapa 2.5 (PR #1) | mesclada, branch guardado |
@@ -488,11 +489,8 @@ trabalho de sessão, e **não esperam pelos primeiros**.
 5. **Decidir o que fazer com o teto de 3 milhões de entidades**, agora que se
    sabe que uma planta comum do acervo chega a 2,33 milhões (ver a seção acima).
 
-6. **Revisar e mesclar o PR #3**, que hoje leva as etapas **3, 3.5 e 3.6**:
-   `https://github.com/leoleonel-jf/PdfToDxf/pull/3`. O corpo dele conta a
-   história das três medições do canvas e lista o que ficou pendente — está
-   desatualizado quanto às etapas 3.5 e 3.6, que vieram depois. **O CI está
-   verde.** A mescla é sua; nenhum trabalho de sessão depende dela.
+6. ~~Revisar e mesclar o PR #3.~~ **Feito em 2026-08-11**, com commit de mescla
+   e a bateria conferida sobre o resultado.
 
 7. **Construir a imagem Docker**, quando houver `docker` na máquina. É o único
    item da etapa 3 que sobrou:

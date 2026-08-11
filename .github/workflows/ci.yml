@@ -1,0 +1,159 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# Um push em cima do outro cancela a execução anterior: o interesse é no estado
+# atual do branch, não na fila.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Os testes Python. Não há pytest neste projeto de propósito: cada arquivo é
+  # um programa com funções `assert` e um `if __name__ == "__main__":` no fim, e
+  # roda sozinho. O laço abaixo respeita esse padrão e usa glob — arquivo de
+  # teste novo entra na bateria sem ninguém precisar editar este workflow.
+  # ---------------------------------------------------------------------------
+  testes-python:
+    name: Testes Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            web/requirements.txt
+
+      # `test_preview.py` e `test_entradas_gui.py` abrem uma janela Tk de
+      # verdade. Num runner sem tela isso precisa de duas coisas: as bibliotecas
+      # do Tcl/Tk (o `_tkinter` do Python do setup-python liga contra
+      # libtcl8.6/libtk8.6, que o `python3-tk` traz) e um servidor X falso, o
+      # Xvfb. Não são dependências do projeto — são do ambiente do runner, e por
+      # isso não entram em requirements.txt nenhum.
+      - name: Tcl/Tk e servidor X falso, para os testes de janela
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb python3-tk
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r web/requirements.txt
+
+      # Falhar cedo e com nome: se o Tk não estiver montado, é melhor saber
+      # aqui do que dentro de um teste de janela, cuja mensagem não diria isso.
+      - name: Conferir que tkinter e fitz importam
+        run: xvfb-run -a python -c "import tkinter, fitz; print(tkinter.TkVersion, fitz.__doc__)"
+
+      - name: Rodar cada arquivo de teste
+        run: |
+          for arquivo in tests/test_*.py; do
+            echo "::group::$arquivo"
+            xvfb-run -a python "$arquivo"
+            echo "::endgroup::"
+          done
+
+  # ---------------------------------------------------------------------------
+  # O frontend. Job separado porque não depende de Python nenhum e falha por
+  # motivos completamente diferentes — misturar os dois esconderia qual metade
+  # quebrou.
+  # ---------------------------------------------------------------------------
+  frontend:
+    name: Frontend (vitest e build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node 22 (LTS) é a versão em que o projeto é desenvolvido hoje, e está
+      # dentro do que Vite 5 e vitest 2 suportam.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Testes de unidade
+        run: npm test
+
+      # `npm run build` é `tsc --noEmit && vite build`: também é a conferência
+      # de tipos.
+      - name: Compilar
+        run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # Ponta a ponta. Precisa das duas metades de pé — a API em uvicorn e o dev
+  # server do Vite — e é o único job que baixa navegador. Fica separado para que
+  # uma falha aqui não deixe dúvida sobre unidade: se este ficar vermelho e os
+  # outros dois verdes, o defeito é de integração.
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: Ponta a ponta (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            web/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/frontend/package-lock.json
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r web/requirements.txt
+
+      - run: npm ci
+        working-directory: web/frontend
+
+      # Só o Chromium: a configuração do Playwright não declara `projects`, então
+      # roda no navegador padrão.
+      - name: Instalar o Chromium do Playwright
+        run: npx playwright install --with-deps chromium
+        working-directory: web/frontend
+
+      # `PDFTODXF_PYTHON` é o que substitui o `.venv/Scripts/python.exe` do
+      # Windows, tanto no `webServer` quanto no globalSetup que gera o PDF de
+      # teste. O PDF é gerado na hora, nunca versionado: `*.pdf` está no
+      # .gitignore para que planta de cliente não vá ao GitHub.
+      #
+      # Sem `--retries`: `retries: 0` é decisão do projeto, e teste que só passa
+      # na segunda tentativa esconde defeito.
+      - name: Rodar o e2e
+        run: npm run e2e
+        working-directory: web/frontend
+        env:
+          PDFTODXF_PYTHON: python
+
+      - name: Guardar o relatório quando falhar
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            web/frontend/playwright-report
+            web/frontend/test-results
+          retention-days: 7

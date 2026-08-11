@@ -18,8 +18,19 @@ venv/
 *.egg-info/
 .pytest_cache/
 
+# Node / frontend
+node_modules/
+web/frontend/dist/
+
 # Editores / SO
 .vscode/
 .idea/
 Thumbs.db
 desktop.ini
+
+# Playwright
+web/frontend/test-results/
+web/frontend/playwright-report/
+
+# Dados de trabalho do serviço web (PDFs enviados, DXFs gerados)
+dados/

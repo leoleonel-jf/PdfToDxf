@@ -1,0 +1,15 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+node_modules
+web/frontend/dist
+web/frontend/node_modules
+web/frontend/test-results
+web/frontend/playwright-report
+dados
+Input
+input
+output
+.superpowers

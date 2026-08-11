@@ -2093,9 +2093,12 @@ describe("calibrate.ts espelha calibration.py", () => {
   });
 
   it("escala de plotagem 1:50 em metros", () => {
-    // 1 pt = 25.4/72 mm de papel = 0.352777… mm; ×50 = 17.638… mm reais
-    expect(escalaPorEscalaDePlotagem(50, "m")).toBeCloseTo(0.0176388888, 10);
-    expect(escalaPorEscalaDePlotagem(50, "mm")).toBeCloseTo(17.6388888888, 8);
+    // 1 pt = 25.4/72 mm de papel = 0.352777… mm; ×50 = 17.638… mm reais.
+    // O esperado precisa de dígitos suficientes para a precisão pedida: com
+    // `0.0176388888` e 10 casas o teste falha por 8,9e-11, e o culpado é o
+    // literal truncado, não a conta. Corrigido em 2026-08-09, ao executar.
+    expect(escalaPorEscalaDePlotagem(50, "m")).toBeCloseTo(0.0176388888888889, 10);
+    expect(escalaPorEscalaDePlotagem(50, "mm")).toBeCloseTo(17.6388888888889, 8);
   });
 
   it("recusa razão não positiva", () => {
@@ -2324,6 +2327,17 @@ import { describe, expect, it } from "vitest";
 import { ErroDaApi } from "../src/api.js";
 import { avisoDaSituacao, avisoDoErro } from "../src/estados.js";
 
+/**
+ * A mensagem inteira, que é o que o usuário lê.
+ *
+ * Verificar só o `detalhe` deixaria passar um aviso cuja informação está toda
+ * no título. Corrigido em 2026-08-09, ao executar: as asserções procuravam
+ * "expirou" e "vetorial" no detalhe, e essas palavras estão no título.
+ */
+function tudo(a: { titulo: string; detalhe: string }): string {
+  return `${a.titulo} ${a.detalhe}`;
+}
+
 describe("estados.ts", () => {
   it("página pronta não gera aviso", () => {
     expect(avisoDaSituacao("pronta")).toBeNull();
@@ -2341,8 +2355,8 @@ describe("estados.ts", () => {
       expect(aviso.titulo.length).toBeGreaterThan(0);
       expect(aviso.detalhe.length).toBeGreaterThan(0);
     }
-    expect(avisoDaSituacao("erro", "sem_vetores")!.detalhe).toMatch(/vetorial/i);
-    expect(avisoDaSituacao("erro", "entidades_demais")!.detalhe).toMatch(/grande/i);
+    expect(tudo(avisoDaSituacao("erro", "sem_vetores")!)).toMatch(/vetorial/i);
+    expect(tudo(avisoDaSituacao("erro", "entidades_demais")!)).toMatch(/grande/i);
   });
 
   it("erro desconhecido não fica sem mensagem", () => {
@@ -2351,8 +2365,8 @@ describe("estados.ts", () => {
   });
 
   it("404 vira 'a planta expirou' e 413 vira 'grande demais'", () => {
-    expect(avisoDoErro(new ErroDaApi(404, "não achei")).detalhe).toMatch(/expir/i);
-    expect(avisoDoErro(new ErroDaApi(413, "grande")).detalhe).toMatch(/tamanho|limite/i);
+    expect(tudo(avisoDoErro(new ErroDaApi(404, "não achei")))).toMatch(/expir/i);
+    expect(tudo(avisoDoErro(new ErroDaApi(413, "grande")))).toMatch(/tamanho|limite/i);
   });
 
   it("queda de rede não vira tela em branco", () => {

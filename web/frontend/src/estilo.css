@@ -1,0 +1,368 @@
+/* Moldura escura, papel claro: a interface não compete com o desenho.
+
+   Uma escala de cinza de verdade no lugar de dois tons chapados, e o azul de
+   destaque em exatamente três lugares — controle ligado, botão principal e anel
+   de foco. Fora daí, cinza. */
+:root {
+  --c0: #101216;   /* fundo mais fundo: campos e recuos */
+  --c1: #171a1f;   /* fundo da moldura */
+  --c2: #1e2128;   /* barra e painel */
+  --c3: #262a32;   /* controle em repouso */
+  --c4: #333945;   /* borda */
+  --c5: #49515f;   /* borda em foco do mouse */
+  --c6: #7b8492;   /* texto de apoio */
+  --c7: #b9c0cb;   /* texto secundário */
+  --c8: #e8ebf0;   /* texto principal */
+
+  --destaque: #3d7eff;
+  --destaque-fundo: #1d3563;
+  --destaque-texto: #cfe0fb;
+  --alerta: #e2564f;
+
+  /* Uma variável só: inverter o desenho depois é uma linha. */
+  --fundo-do-desenho: #f7f7f5;
+
+  --t-menor: 11px;
+  --t-apoio: 12px;
+  --t-corpo: 13px;
+  --t-maior: 18px;
+
+  --e1: 4px;
+  --e2: 8px;
+  --e3: 12px;
+  --e4: 16px;
+
+  --raio: 6px;
+  --painel: 260px;
+  --painel-recolhido: 48px;
+}
+
+* { box-sizing: border-box; }
+
+/* O atributo `hidden` precisa ganhar de qualquer `display` do autor. A regra do
+   navegador para `[hidden]` é fraca, e o `display: grid` do `.aviso` a
+   atropelava em silêncio: o painel ficava sempre visível e, tendo fundo escuro
+   semitransparente, cobria a planta inteira. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--c1);
+  color: var(--c8);
+  font: var(--t-corpo)/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+#app { display: flex; flex-direction: column; height: 100%; }
+
+/* --- barra superior ------------------------------------------------------ */
+
+.barra {
+  display: flex;
+  align-items: center;
+  gap: var(--e3);
+  padding: var(--e2) var(--e3);
+  background: var(--c2);
+  border-bottom: 1px solid var(--c4);
+  min-height: 48px;
+}
+.barra .direita { margin-left: auto; display: flex; align-items: center; gap: var(--e3); }
+
+/* --- controles ----------------------------------------------------------- */
+
+.botao {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  color: var(--c8);
+  background: var(--c3);
+  border: 1px solid var(--c4);
+  border-radius: var(--raio);
+  padding: 6px 10px;
+  min-height: 32px;
+  cursor: pointer;
+}
+.botao:hover { border-color: var(--c5); }
+.botao:disabled { opacity: 0.4; cursor: default; }
+.botao.principal {
+  background: var(--destaque);
+  border-color: var(--destaque);
+  color: #fff;
+}
+.botao.discreto { background: transparent; border-color: transparent; }
+.botao.discreto:hover { background: var(--c3); }
+
+/* Alvo de toque confortável: no celular tudo cresce. */
+@media (pointer: coarse) {
+  .botao { min-height: 40px; padding: 8px 12px; }
+}
+
+:where(button, input, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--destaque);
+  outline-offset: 1px;
+}
+
+.icone { width: 16px; height: 16px; flex: none; }
+
+.rotulo {
+  font-size: var(--t-menor);
+  color: var(--c6);
+  letter-spacing: 0.02em;
+}
+.apoio { font-size: var(--t-apoio); color: var(--c6); }
+.secundario { color: var(--c7); }
+.destaque-numero { font-size: var(--t-maior); }
+
+.campo {
+  font: inherit;
+  color: var(--c8);
+  background: var(--c0);
+  border: 1px solid var(--c4);
+  border-radius: var(--raio);
+  padding: 5px 8px;
+  min-height: 32px;
+  width: 6ch;
+}
+.campo-largo { width: 100%; }
+.com-unidade { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Interruptor: a forma já diz que tem dois estados, o que o botão azul chapado
+   do cabeçalho antigo não dizia. */
+.interruptor {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--e2);
+  background: none;
+  border: none;
+  padding: var(--e1) 0;
+  font: inherit;
+  color: var(--c8);
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+.interruptor .trilho {
+  position: relative;
+  width: 28px; height: 16px;
+  flex: none;
+  margin-top: 2px;
+  border-radius: 8px;
+  background: var(--c4);
+  transition: background 120ms;
+}
+.interruptor .botaozinho {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--c6);
+  transition: transform 120ms, background 120ms;
+}
+.interruptor[aria-pressed="true"] .trilho { background: var(--destaque); }
+.interruptor[aria-pressed="true"] .botaozinho {
+  transform: translateX(12px);
+  background: #fff;
+}
+.interruptor[aria-pressed="false"] .nome { color: var(--c7); }
+.interruptor .explica {
+  display: block;
+  font-size: var(--t-menor);
+  color: var(--c6);
+}
+
+/* --- painel lateral ------------------------------------------------------ */
+
+.corpo { display: flex; flex: 1; min-height: 0; }
+
+.painel {
+  width: var(--painel);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--e4);
+  padding: var(--e3);
+  background: var(--c2);
+  border-right: 1px solid var(--c4);
+  overflow-y: auto;
+}
+.painel[data-modo="recolhido"] {
+  width: var(--painel-recolhido);
+  padding: var(--e2) 0;
+  align-items: center;
+  gap: var(--e2);
+  overflow: hidden;
+}
+.painel[data-modo="recolhido"] .secao { display: none; }
+.painel[data-modo="recolhido"] .atalho { display: flex; }
+.atalho { display: none; justify-content: center; width: 32px; height: 32px; }
+
+.secao { display: flex; flex-direction: column; gap: var(--e2); }
+.secao > header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: space-between;
+}
+
+.lista-de-camadas {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.camada {
+  display: flex;
+  align-items: center;
+  gap: var(--e2);
+  background: none;
+  border: none;
+  border-radius: var(--raio);
+  padding: 5px 6px;
+  font: inherit;
+  color: var(--c8);
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+.camada:hover { background: var(--c3); }
+.camada[aria-pressed="false"] { color: var(--c6); }
+.camada .cor {
+  width: 9px; height: 9px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--c4);
+}
+.camada .nome {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.camada .quantas { font-size: var(--t-menor); color: var(--c6); }
+
+/* Gaveta: em tela estreita o painel flutua sobre o desenho em vez de espremer
+   tudo. Não é `position: fixed` — dentro do fluxo do `.corpo` basta absoluto. */
+.corpo { position: relative; }
+.painel[data-modo="gaveta"] {
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  z-index: 2;
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.45);
+}
+
+/* --- área do desenho ----------------------------------------------------- */
+
+.area-do-desenho { position: relative; flex: 1; min-width: 0; min-height: 0; }
+#desenho {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--fundo-do-desenho);
+  touch-action: none;   /* os gestos são nossos, não do navegador */
+}
+
+.aviso {
+  position: absolute;
+  inset: 0;
+  /* O aviso cobre o desenho inteiro, e a calibração por 2 pontos é justamente
+     um aviso pedindo dois cliques no canvas: sem isto os cliques morrem nesta
+     div e a calibração nunca fecha. O que é clicável aqui dentro — hoje o botão
+     de cancelar o envio — recebe o ponteiro de volta na regra abaixo. */
+  pointer-events: none;
+  display: grid;
+  place-content: center;
+  gap: var(--e2);
+  text-align: center;
+  padding: var(--e4);
+  background: color-mix(in srgb, var(--c1) 88%, transparent);
+}
+.aviso h2 { margin: 0; font-size: var(--t-maior); font-weight: 500; }
+.aviso p { margin: 0; max-width: 46ch; color: var(--c7); }
+
+/* O `.aviso` não recebe ponteiro para não engolir os cliques do canvas — mas o
+   que é clicável dentro dele precisa receber, senão o botão de cancelar nasce
+   morto. */
+.aviso button { pointer-events: auto; }
+
+.faixa-detalhe {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: var(--e1) var(--e3);
+  font-size: var(--t-apoio);
+  color: var(--c7);
+  background: var(--c2);
+  border-top: 1px solid var(--c4);
+}
+
+.rodape {
+  padding: 6px var(--e3);
+  font-size: var(--t-apoio);
+  color: var(--c6);
+  background: var(--c2);
+  border-top: 1px solid var(--c4);
+}
+.rodape a { color: var(--c6); }
+
+.lupa {
+  position: absolute;
+  width: 120px; height: 120px;
+  border: 2px solid var(--destaque);
+  border-radius: 50%;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--fundo-do-desenho);
+}
+
+/* A marca de um ponto já clicado na calibração por 2 pontos. `pointer-events:
+   none` para não roubar o clique seguinte, que é justamente sobre o canvas
+   embaixo dela. */
+.marca-calibracao {
+  position: absolute;
+  left: 0; top: 0;
+  width: 16px; height: 16px;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--destaque);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.marca-calibracao::after {
+  content: "";
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 4px; height: 4px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: var(--destaque);
+}
+
+/* --- progresso ----------------------------------------------------------- */
+
+.progresso { display: flex; flex-direction: column; gap: var(--e1); width: 100%; max-width: 32rem; }
+.progresso > .apoio { display: flex; justify-content: space-between; }
+/* A linha que explica a espera: "Plantas grandes levam alguns minutos". Sem
+   ela, uma espera de minutos é uma barra andando sem motivo declarado. */
+.progresso .explica { margin: 0; font-size: var(--t-apoio); color: var(--c6); }
+
+.progresso-trilho {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--c0);
+  overflow: hidden;
+}
+.progresso-trecho { height: 100%; background: var(--destaque); transition: width 120ms linear; }
+
+/* Indeterminado: um trecho que vai e volta. Não finge saber quanto falta —
+   só diz que alguma coisa continua acontecendo. */
+.progresso-trecho.indeterminado {
+  width: 35%;
+  animation: vaivem 1.4s ease-in-out infinite;
+}
+@keyframes vaivem {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(286%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progresso-trecho.indeterminado { animation: none; width: 100%; opacity: 0.4; }
+}

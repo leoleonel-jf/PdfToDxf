@@ -1,13 +1,134 @@
 # Handoff — versão web do PdfToDxf
 
-Estado em 2026-08-08. Leia isto primeiro ao retomar em sessão nova.
+Estado em 2026-08-10. Leia isto primeiro ao retomar em sessão nova.
 
-> **Se o pedido foi só "continuar":** execute o plano da etapa 3,
-> `docs/superpowers/plans/2026-08-04-frontend-canvas.md` — 15 tarefas, e a
-> primeira **não é código**: é a medição no navegador que decide a arquitetura.
-> Ele é o próximo trabalho que uma sessão consegue fazer sozinha. Os itens 1 a 5
-> da lista "O que falta" **dependem de você, humano**, e não são pré-requisito
-> para a etapa 3: não fique bloqueado neles nem os execute por conta própria.
+> ## Se o pedido foi só "continuar", faça isto
+>
+> **Primeiro, uma pergunta ao usuário, e só ela** — há uma investigação aberta
+> esperando dois números que só ele tem. Está descrita logo abaixo, em "A
+> questão aberta do ×100". Pergunte o valor de `DIMLFAC` e o que o `DIST`
+> mediu; **não recomece a investigação**, porque a cadeia inteira do app já foi
+> medida e está registrada lá.
+>
+> **Depois — ou se ele disser que o ×100 está resolvido, ou mandar seguir —
+> execute a etapa 4: contas, cotas e registros.** A spec já existe
+> (`docs/superpowers/specs/2026-08-09-contas-cotas-registros-design.md`); falta
+> o **plano de implementação**. Comece por `superpowers:writing-plans` sobre
+> essa spec, e depois execute com `superpowers:subagent-driven-development`.
+> **Não peça confirmação para começar a etapa 4.**
+>
+> **Para subir a tela**, quando ele pedir ou quando você precisar conferir algo:
+> existe `.claude/launch.json` com dois alvos. Use a ferramenta de preview, não
+> o Bash: `preview_start` com `pdftodxf-api` e depois com `pdftodxf-web`. A tela
+> abre em `http://localhost:5173` — com `localhost`, **nunca** `127.0.0.1`, que
+> o Vite recusa. Os servidores caem quando a sessão anterior encerra; se o
+> usuário disser "deu erro" com `ERR_CONNECTION_REFUSED`, é isso, e a correção é
+> subir os dois de novo.
+>
+> **Três coisas que não são para você fazer nem esperar:**
+>
+> - O **PR #3** (`https://github.com/leoleonel-jf/PdfToDxf/pull/3`) está aberto
+>   com as etapas 3 e 3.5, esperando a revisão do usuário. **Não mescle por
+>   conta própria** e não fique bloqueado nele.
+> - A **imagem Docker** não foi construída porque o `docker` não existe nesta
+>   máquina. Se o usuário instalar, é um comando; até lá, não tente.
+> - Os itens que "dependem de você" em "O que falta" são do humano. Não os
+>   execute por conta própria.
+>
+> As etapas 3, 3.5 e 3.6 estão prontas: **2174 testes de unidade, 21 de ponta a
+> ponta**, 15 arquivos de teste Python, e **integração contínua verde no
+> GitHub**. O desenho do canvas foi **refeito no meio da etapa 3**, depois de
+> três medições derrubarem três arquiteturas — se for mexer no canvas, leia
+> `web/frontend/medicao/RESULTADO.md` antes.
+>
+> **A conferência na tela já aconteceu, e valeu o que se esperava:** o usuário
+> abriu com planta real em 2026-08-10 e achou três defeitos que teste nenhum
+> pegava — as setinhas do campo de mm cobrindo o texto e sem casa decimal, a
+> calibração virando `NaN` quando a medida era digitada com vírgula, e os
+> pontos clicados não aparecendo na tela. **Os três estão corrigidos.**
+>
+> **A lição mais cara da etapa 3.5, para não se repetir:** o plano mandou
+> reimplementar à mão duas conversões que o projeto já tinha prontas e testadas
+> (`escalaPorEscalaDePlotagem` e `corDeInteiro`), e errou as duas — o DXF sairia
+> com 11,34 m onde a parede tem 10,00 m. Sete revisões por tarefa não pegaram,
+> porque cada uma só via o seu pedaço; a revisão final do branch pegou. **Antes
+> de escrever qualquer conversão, procure se ela já existe no núcleo.**
+
+## Duas armadilhas de ambiente, para não perder tempo
+
+**A porta 8000 pode estar ocupada por outro aplicativo do usuário.** Em
+2026-08-11 havia um servidor `waitress` nela, redirecionando para `/login/` —
+nada a ver com este projeto. O `playwright.config.ts` aponta para a 8000, então
+`npm run e2e` fica esperando um servidor que nunca responde o que ele quer, e
+morre com `Timed out waiting 60000ms from config.webServer`. **Não é defeito do
+código.** Confira antes de investigar:
+
+```
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/openapi.json
+```
+
+`200` é a nossa API; `404` ou um redirecionamento é outra coisa. Derrubar o
+processo alheio **é decisão do usuário** — pergunte, não mate.
+
+**O Vite precisa escutar nos dois endereços.** Por padrão ele sobe só em
+`localhost` (IPv6) e recusa `127.0.0.1`, que é justamente onde o Playwright
+procura. O `.claude/launch.json` já passa `--host` por causa disso, e com ele
+tanto `http://localhost:5173` quanto `http://127.0.0.1:5173` funcionam.
+
+## A questão aberta do ×100
+
+**Estado: esperando dois números do usuário.** Não recomece a investigação — a
+cadeia inteira do app já foi medida, e está tudo aqui.
+
+### O sintoma
+
+O usuário calibrou a planta real (`Input/LAY-1031.26.00_REV 00.pdf`) numa cota
+de **6,06 m**, com a escala em **1:40** e a unidade em **m**, exportou, e o
+AutoCAD mostrou **606,00** na mesma cota. Fator 100, que é metro→centímetro.
+Ele confirmou que **não muda nada** escrever a medida com vírgula ou com ponto,
+e que trocar m/cm/mm não altera o que ele vê.
+
+### O que já foi medido, e fecha
+
+| Trecho | Como foi medido | Resultado |
+|---|---|---|
+| Calibração por 2 cliques | Playwright na planta real, lendo a tela e o corpo do POST | mostra `1:23` e "8,13 mm reais", envia `escala 0,008128` + `"m"` — os três concordam |
+| Campo "Escala 1:" | idem, com 1:50 | envia `0,017638` + `"m"` |
+| Seletor de unidade | idem, as três | `0,0176` (m) · `1,7639` (cm) · `17,6389` (mm) — razão 1:100:1000, tamanho físico preservado |
+| Cache da exportação | `web/api/exportacao.py::chave` | inclui escala **e** unidade; não há reentrega de arquivo errado |
+| Escrita do DXF | `pdftodxf/dxf_writer.py::write_dxf` | coordenadas = `ponto × escala`; `$INSUNITS` = 6/5/4 conferido com o próprio ezdxf |
+| A planta real, 1:40 em m | gerada pela API e medida com ezdxf | extensão **22,96 × 16,60 m** — ordem de grandeza certa para um prédio a 1:40 numa folha A2 (1684 × 1191 pt) |
+
+Três arquivos de prova ficaram em `output/diag/`: `m.dxf`, `cm.dxf` e `mm.dxf`,
+o mesmo desenho nas três unidades, mais `real-m.dxf`, a planta do usuário a 1:40
+em metros. **São locais** — `output/` está no `.gitignore`, então não vieram do
+repositório e podem não existir noutra máquina; regerá-los é um `curl` contra a
+API, como descrito acima. Medidos com ezdxf, a mesma linha dá
+`5,2917 m` · `529,1667 cm` · `5291,6667 mm`. O usuário mediu **outra** linha no
+AutoCAD e obteve `529,17` · `52.916,67` · `529.166,67` — números diferentes dos
+meus porque é outra linha, mas com **a mesma razão 1:100:1000**. Ou seja, a
+conversão de unidade funciona, e o CAD dele não normaliza: mostra unidade crua.
+
+### A hipótese que falta testar, e o teste
+
+Se o arquivo tem 23 unidades de extensão e a cota mostra 606 sobre um vão de
+6,06, quem multiplica por 100 é o AutoCAD. O suspeito nomeado é o **`DIMLFAC`**,
+o fator de escala linear do estilo de cota — vale 100 em escritório que trabalha
+em centímetro.
+
+O teste separa os dois casos porque **`DIST` não sofre `DIMLFAC` e a cota
+sofre**:
+
+1. `DIMLFAC` na linha de comando → o valor.
+2. `DIST` nas mesmas duas extremidades → o comprimento.
+
+- `DIST` = **6,06** e cota = 606 → é o `DIMLFAC`. O app está certo, e não há
+  nada a corrigir no código.
+- `DIST` = **606** → a geometria está mesmo 100× e o defeito é nosso. Nesse
+  caso **não procure nos trechos da tabela acima** — todos foram medidos e
+  fecham. Comece pelo que não foi medido: o que o `extractor` devolve como
+  coordenada (a suposição não verificada é que são pontos de PDF), e a
+  `Vista`/`pontoDoPapel` do `canvas.ts` na conversão tela→papel.
 
 ## O projeto em uma frase
 
@@ -25,6 +146,12 @@ Documentos que governam o trabalho:
 - **Desenho da etapa 2.5:** `docs/superpowers/specs/2026-08-04-cli-design.md`
 - **Plano da etapa 2.5:** `docs/superpowers/plans/2026-08-04-cli.md`
 - **Plano da etapa 3:** `docs/superpowers/plans/2026-08-04-frontend-canvas.md`
+- **Redesenho do canvas (2026-08-09), que substitui a arquitetura do desenho da
+  etapa 3:** `docs/superpowers/specs/2026-08-09-canvas-redesenho-design.md`
+- **Plano do redesenho:** `docs/superpowers/plans/2026-08-09-canvas-redesenhado.md`
+  — é um *delta* sobre o plano de 2026-08-04, e a tabela no topo dele diz qual
+  tarefa vem de qual documento
+- **Medições que governam o canvas:** `web/frontend/medicao/RESULTADO.md`
 - **Achados sobre auto-escala e medição:**
   `docs/superpowers/specs/2026-08-08-auto-escala-e-medicao-achados.md` — duas
   features futuras, decididas para **depois** da etapa 3. Não é spec; é o que se
@@ -34,9 +161,13 @@ O projeto está dividido em 5 etapas: **1** núcleo, **2** API de conversão,
 **3** frontend, **4** contas/cotas/registros, **5** deploy, mais uma **2.5**
 curta que entrou depois: a linha de comando.
 
-As etapas 1, 2 e 2.5 estão planejadas e implementadas. A **3** tem desenho e
-plano prontos e nenhuma linha de código escrita. Todos os documentos foram
-escritos para bastar por si: não é preciso resgatar a conversa que os originou.
+As etapas 1, 2, 2.5 e **3** estão planejadas e implementadas — a 3 com um passo
+pendente, a imagem Docker. Todos os documentos foram escritos para bastar por
+si: não é preciso resgatar a conversa que os originou.
+
+> A etapa 3 é governada por **dois** documentos, e o segundo manda: o desenho de
+> 2026-08-04 e o **redesenho de 2026-08-09**, que substituiu a arquitetura
+> depois de a medição derrubá-la. O mesmo vale para os planos.
 
 ## Onde o código está
 
@@ -48,7 +179,8 @@ história isolado:
 
 | Branch | Conteúdo | Situação |
 |---|---|---|
-| `main` | tudo | **em dia** |
+| `main` | tudo, até a etapa 2.5 | **em dia** |
+| `frontend-canvas` | etapa 3 inteira | **pronta**, não mesclada, falta o Docker |
 | `nucleo-classify-select` | etapa 1 | mesclada, branch guardado |
 | `api-de-conversao` | etapa 2 | mesclada, branch guardado |
 | `linha-de-comando` | etapa 2.5 (PR #1) | mesclada, branch guardado |
@@ -142,6 +274,104 @@ da tabela de estimativa não cabe no cp1252 do console do Windows, e o
 página não tem desenho vetorial", com código de saída 0. Hoje só a extração fica
 dentro do `try`, e o retrato roda fora dele.
 
+### Etapa 3 — frontend (branch `frontend-canvas`, em andamento)
+
+A medição derrubou a arquitetura do plano de 2026-08-04, o desenho foi refeito,
+e a etapa passou a ser governada pelo plano de 2026-08-09 — **5 das 12 tarefas
+dele estão prontas**, com 2086 testes verdes:
+
+| Arquivo | O que faz |
+|---|---|
+| `select.ts`, `estimativa.ts`, `formato.ts` | espelhos do Python e o leitor do binário |
+| `ordem.ts` | ordem por comprimento decrescente, radix estável |
+| `canvas.ts` | vista papel↔tela e o traçado de um lote |
+| `lista.ts` | a lista de desenho preparada por janela, retomável |
+| `pintor.ts` | o laço de quadro: orçamento e quando preparar de novo |
+| `api.ts` | cliente HTTP com recuo crescente e aborto por página |
+
+A interface também está pronta: `gestos.ts`, `calibrate.ts`, `estados.ts`,
+`estilo.css`, `toolbar.ts`, `main.ts`, a calibração com lupa, o Playwright de
+ponta a ponta e os estáticos servidos pelo FastAPI. **Só a imagem Docker não foi
+construída** — falta o `docker` na máquina.
+
+**Três defeitos que só apareceram com planta real na tela**, e que nenhum teste
+de unidade pegaria:
+
+1. **O eixo Y estava sem inverter.** O extractor entrega Y para cima, padrão de
+   CAD; o canvas tem Y para baixo. A prévia saía de cabeça para baixo, com todo
+   texto invertido. A inversão entrou na `Vista` — é o mesmo que a prévia do
+   desktop faz com `(H - p[1])`.
+2. **`Path2D.arc()` liga o ponto atual ao início do arco com uma reta.** Como os
+   caminhos são agrupados por (layer, cor), cada arco ficava amarrado ao fim da
+   entidade anterior: a planta aparecia coberta de linhas atravessando, que
+   mudavam a cada zoom. Hoje o arco é tesselado em segmentos, com o mesmo
+   `sweep = (fim - início) % 360 or 360` do desktop.
+3. **`display: grid` atropela o atributo `hidden`.** O painel de aviso ficava
+   sempre visível e, tendo fundo escuro semitransparente, cobria a planta
+   inteira. Consertado com `[hidden] { display: none !important; }`.
+
+O terceiro foi pego pelo Playwright; os dois primeiros, pelo olho do usuário —
+e é por isso que a conferência com planta real continua valendo mais do que
+qualquer suíte.
+
+**As constantes do desenho foram medidas e mudadas:** região de 8 px, teto 2,
+folga 0,25 — o spec fixava 4 e 4 a partir de um protótipo, e medido com a
+implementação de verdade aquele par dava 143 ms por quadro contra 31 ms deste.
+**Nenhuma combinação fecha o alvo de 33 ms nos três zooms**, e o motivo está no
+RESULTADO: o custo do quadro segue a **tinta rasterizada**, não a contagem de
+entidades, e os três parâmetros só controlam contagem. O ajuste fino, e a
+decisão sobre um cache de imagem para o pan, esperam **planta real na tela** —
+é quando a qualidade do desenho pode ser vista em vez de suposta.
+
+**Leia `docs/superpowers/specs/2026-08-09-canvas-redesenho-design.md`** — ele
+substitui a seção de arquitetura do desenho de 2026-08-04 e é o que governa
+daqui para a frente. Em uma frase: nada proporcional ao número de entidades
+pode acontecer a cada quadro; a lista de desenho é preparada uma vez, com teto
+por região de papel escolhendo os mais longos, e pan e zoom só re-traçam.
+
+| Tarefa | O que faz | Situação |
+|---|---|---|
+| 1 | andaime do Vite e a medição do custo | pronta |
+| 2 | `select.ts` contra os 1024 casos | pronta |
+| 3 | `estimativa.ts`, mesmo contrato | pronta |
+| 4 | `formato.ts`, leitor do binário | pronta |
+| 5 | `intercalar()` e o achado do dedup | pronta |
+| 6 a 15 | worker, canvas, calibração, tela | **paradas** |
+
+**As três medições, e o que cada uma derrubou** — detalhe em
+`web/frontend/medicao/RESULTADO.md`:
+
+- O `select()` sobre 3 milhões de entidades custa **~12 ms**. Cabe folgado num
+  quadro de 16 ms, na thread principal, a cada clique numa opção.
+- Reconstruir os `Path2D` no pior caso custa **de 300 a 840 ms**.
+- `Path2D` é API de DOM e **não existe dentro de um Web Worker**. Ou seja: a
+  arquitetura de duas threads move para fora os 12 ms e deixa dentro os 800 ms.
+  O worker das tarefas 5 e 6 do plano protege a interface de uma pausa que não
+  acontece.
+- **Traçar** 3 milhões custa de 750 a 1290 ms **por quadro**, e pan e zoom não
+  reconstroem nada — o custo dominante é por quadro, não por clique. Nem 500
+  mil dão folga: 173 a 341 ms.
+- Traçar 57 mil de uma **lista pronta** custa **15 ms**; selecionar esses mesmos
+  57 mil varrendo 3 milhões a cada quadro custa 500. Vinte vezes, com o mesmo
+  desenho na tela. É esta medida que governa o desenho novo — e ela derrubou
+  também a grade espacial, que chegou a ser construída e medida.
+
+Duas correções na própria medição, ambas registradas no RESULTADO, porque sem
+elas a conclusão sairia invertida: recarregar a página **não** aquece o JIT
+(cada carga é um contexto novo, e a mesma fase variou por um fator de dois), e o
+cenário do plano só media o caso **já deduplicado** — 500 mil sobreviventes,
+47–104 ms, abaixo do limiar de 200 ms do próprio plano. O padrão da tela é *sem*
+dedup, e é aí que as 3 milhões chegam ao canvas.
+
+O que existe de código, tudo espelho do Python e válido em qualquer arquitetura:
+`web/frontend/src/{select,estimativa,formato}.ts`, os testes em
+`web/frontend/testes/`, e as duas fixtures novas geradas pelo Python
+(`tests/gerar_fixture_geometria.py`, `tests/gerar_fixture_intercalacao.py`).
+
+Duas coisas que os passos de mutação provaram, e não são teatro: trocar
+`Math.round` por `Math.trunc` no `min_len_um` **quebra** casos do contrato, e
+concatenar em vez de intercalar **quebra** o teste da ordem e o do dedup.
+
 ## O que está verificado
 
 Rodados em 2026-08-08, todos passando com saída limpa:
@@ -160,10 +390,27 @@ Rodados em 2026-08-08, todos passando com saída limpa:
 ./.venv/Scripts/python.exe tests/test_cli.py
 ./.venv/Scripts/python.exe tests/test_numeros.py
 ./.venv/Scripts/python.exe tests/test_entradas_gui.py
+./.venv/Scripts/python.exe tests/test_fixture_geometria.py
+./.venv/Scripts/python.exe tests/test_api_estaticos.py
 ```
 
-Os treze foram rodados de novo **sobre a `main` já mesclada**, e passam. Mesclar
-sem conferir o resultado não prova nada: cada branch passava sozinho.
+Os treze primeiros foram rodados de novo **sobre a `main` já mesclada**, e
+passam. Mesclar sem conferir o resultado não prova nada: cada branch passava
+sozinho. O décimo quarto é da etapa 3 e roda no branch `frontend-canvas`, onde
+os quatorze passam juntos (2026-08-09).
+
+Do lado TypeScript, no mesmo branch, **2110 testes de unidade e 2 de ponta a
+ponta**, os últimos rodados três vezes seguidas sem falha:
+
+```
+cd web/frontend && npm test
+cd web/frontend && npm run build
+cd web/frontend && npm run e2e
+```
+
+**Para abrir a tela à mão, use `http://localhost:5173`, não `127.0.0.1`:** o
+Vite escuta em `localhost` (IPv6) por padrão e recusa a conexão no IPv4. Foi o
+que fez a tela "dar erro" numa conferência.
 
 A bateria inteira foi rodada três vezes seguidas, sem falha nenhuma. Isso
 importa: até a correção do commit `1687cef` ela era intermitente — uma página
@@ -198,11 +445,15 @@ acima são o que sobrou dela, e são o que interessa.
 
 ## O que falta
 
-Os cinco primeiros itens **dependem do humano** — conferir na tela, decidir, ou
-trazer um revisor de fora. Os dois últimos são trabalho de sessão, e não esperam
-pelos primeiros.
+Os itens 1 a 7 **dependem do humano** — conferir na tela, decidir, trazer um
+revisor de fora, ou instalar o que falta na máquina. Os itens 8 a 10 são
+trabalho de sessão, e **não esperam pelos primeiros**.
 
 ### Depende de você
+
+0. **Os dois números do AutoCAD** que fecham a questão do ×100: `DIMLFAC` e o
+   que o `DIST` mede na cota de 6,06. É o item mais urgente, e está detalhado
+   na seção "A questão aberta do ×100", no topo deste documento.
 
 1. **Conferência manual do app desktop.** Só um humano pode fazer. A etapa 1
    mexeu em `pdftodxf/gui.py` e nenhum teste exercita a integração do painel de
@@ -237,23 +488,150 @@ pelos primeiros.
 5. **Decidir o que fazer com o teto de 3 milhões de entidades**, agora que se
    sabe que uma planta comum do acervo chega a 2,33 milhões (ver a seção acima).
 
+6. **Revisar e mesclar o PR #3**, que hoje leva as etapas **3, 3.5 e 3.6**:
+   `https://github.com/leoleonel-jf/PdfToDxf/pull/3`. O corpo dele conta a
+   história das três medições do canvas e lista o que ficou pendente — está
+   desatualizado quanto às etapas 3.5 e 3.6, que vieram depois. **O CI está
+   verde.** A mescla é sua; nenhum trabalho de sessão depende dela.
+
+7. **Construir a imagem Docker**, quando houver `docker` na máquina. É o único
+   item da etapa 3 que sobrou:
+
+   ```
+   docker build -f deploy/Dockerfile -t pdftodxf .
+   docker run --rm -p 8000:8000 pdftodxf
+   ```
+
+### Etapa 3.5 — interface redesenhada (2026-08-09, pronta)
+
+Não estava no plano de cinco etapas. Entrou depois de o usuário ver o cabeçalho
+de duas faixas com planta real e dizer que não dava para entender nada e que
+estava com "cara de sistema de prefeitura". Três direções foram desenhadas e
+comparadas; ganhou o **painel lateral recolhível**.
+
+- **Desenho:** `docs/superpowers/specs/2026-08-09-interface-redesenho-design.md`
+- **Plano:** `docs/superpowers/plans/2026-08-09-interface-redesenhada.md`
+
+O que mudou: barra superior fina (abrir, página, estimativa, exportar) e painel
+de 260 px com Escala, Compactação e Camadas — recolhe para uma faixa de ícones
+de 48 px, e vira gaveta abaixo de 900 px. Cada opção de compactação ganhou uma
+linha explicando o efeito, e "remover duplicados" mostra a proporção real da
+planta aberta. As camadas ganharam olho, bolinha de cor e contagem, tudo
+calculado no navegador a partir do binário que já chega. A estimativa mostra
+`12,3 MB → 4,1 MB · −67%` em vez de um número solto. Paleta e tipografia
+refeitas, dez ícones Tabler colados inline, zero dependência nova.
+
+**Três opções de compactação passaram a vir ligadas por padrão** — unir,
+arredondar e remover duplicados, que só tiram redundância. "Remover
+preenchimentos" fica desligada de propósito: ela apaga hachuras e áreas
+pintadas do desenho.
+
+Arquivos novos: `camadas.ts`, `painel.ts`, `secoes.ts`, `barra.ts`,
+`ui/icones.ts`, `ui/controles.ts`. O motor de desenho não foi tocado.
+
+**O que a revisão final pegou e as sete revisões por tarefa não:** a escala de
+plotagem e a troca de unidade estavam sendo calculadas à mão, erradas, em vez de
+usarem as funções já testadas do núcleo; a bolinha de cor não tratava a
+sentinela `0xFFFFFFFF` e pintava branco onde o desenho é preto; e o painel de
+aviso, sem `pointer-events: none`, engolia os cliques do canvas e impedia a
+calibração por dois pontos de completar. Tudo corrigido, com teste de ida e
+volta da escala que não existia.
+
+### Defeito de ambiente que já passou (2026-08-09 → 2026-08-10)
+
+> **Resolvido por um reinício da máquina.** Hoje a bateria dá **17 de 17** aqui,
+> em 36 s. Fica registrado porque o diagnóstico é reaproveitável: se o mesmo
+> sintoma voltar, comece pelo reinício em vez de caçar defeito no código.
+
+Durante algumas horas, `npm run e2e` dava 9 de 10 nesta máquina e 10 de 10 no
+CI. O que falhava era "converte uma planta de ponta a ponta", em
+`download.path()`, com `canceled`. O navegador começava o download com o nome
+certo e depois o cancelava.
+
+**Não é do código**, e isto foi verificado, não suposto:
+
+- o servidor está correto — exportação em 0,137 s e a rota de download devolve
+  44.819 bytes de `application/dxf`, conferido com `curl` fora do navegador;
+- voltar o `api.ts` à versão anterior à etapa 3.6 **não** muda nada;
+- apagar as 111 pastas acumuladas em `dados/` **não** muda nada;
+- tirar por completo o `link.remove()` depois do clique **não** muda nada;
+- reinstalar o Chromium do Playwright **não** muda nada;
+- o mesmo teste passava 10/10 nesta máquina duas horas antes;
+- **o CI no Linux roda os dez e passa.**
+
+Sintoma de apoio: a bateria caiu de 25 s para 2,7 min, e um `du` no `%TEMP%`
+(2941 entradas) estourou dois minutos sem terminar. Reinstalar o Chromium do
+Playwright não resolveu; **reiniciar o Windows resolveu.**
+
+### Etapa 3.6 — indicadores de progresso (2026-08-10, pronta)
+
+Entrou depois da 3.5, a pedido do usuário: a tela não contava o que estava
+acontecendo nos momentos em que ficava parada.
+
+- **Desenho:** `docs/superpowers/specs/2026-08-09-progresso-design.md`
+- **Plano:** `docs/superpowers/plans/2026-08-09-progresso.md`
+
+Cinco momentos ganharam indicador: envio do PDF (determinado, com botão de
+cancelar), extração (indeterminado, com tempo decorrido), download da geometria
+(determinado), pintura no canvas (indeterminado) e geração do DXF
+(indeterminado). `enviarPdf` trocou `fetch` por `XMLHttpRequest`, que é o único
+jeito de saber quantos bytes subiram; `lerGeometriaBruta` passou a ler o corpo
+em pedaços. Nenhuma dependência nova.
+
+**A regra que governa: nunca inventar porcentagem.** Sem número real, a barra é
+indeterminada e mostra o tempo decorrido, que é verdade.
+
+**O que a revisão final pegou, e as revisões por tarefa não:** o plano pôs
+**cinco produtores disputando um slot só**, sem arbitragem. Disso saíam três
+defeitos — a porcentagem de "Desenhando" era falsa (numerador contava a janela
+visível, denominador contava a página inteira, então em qualquer zoom a barra
+mentia); um tique da faixa apagava um aviso vivo na sobreposição, inclusive a
+instrução da calibração e mensagens de erro; e o botão Cancelar era destruído e
+recriado a cada ~50 ms, o que **engolia o clique** entre o apertar e o soltar.
+Hoje são **dois indicadores independentes**, um por lugar, o aviso ganha do
+progresso na sobreposição, e a barra é criada uma vez e só atualizada.
+
+### Integração contínua (2026-08-09)
+
+`.github/workflows/ci.yml`, três jobs em `push` e `pull_request`: testes Python
+(um arquivo por vez, sob `xvfb`), frontend (`npm test` + `npm run build`) e
+ponta a ponta (Playwright com Chromium). **Verde.**
+
+Ao montá-la apareceu um defeito antigo: o `playwright.config.ts` subia o
+servidor com `.venv/Scripts/python.exe`, e o `cmd.exe` corta no primeiro `/` —
+as execuções verdes anteriores só passavam porque `reuseExistingServer` achava
+um uvicorn já de pé. Hoje o caminho vem de `PDFTODXF_PYTHON`, com padrão certo
+por plataforma.
+
 ### Trabalho de sessão
 
-6. **Executar o plano da etapa 3**, `docs/superpowers/plans/2026-08-04-frontend-canvas.md`
-   — 15 tarefas. Comece pela tarefa 1, que **não é código**: é uma medição no
-   navegador do custo do `select()` e da reconstrução dos `Path2D` em 3 milhões
-   de entidades. A escolha pelo Web Worker é hipótese fundamentada, não número
-   medido, e o plano diz em que resultado parar e reabrir a arquitetura antes de
-   seguir. Não pule essa tarefa: as tarefas 5 e 6 dependem do que ela decidir.
+8. **Executar a etapa 4 — contas, cotas e registros.** A spec está pronta em
+   `docs/superpowers/specs/2026-08-09-contas-cotas-registros-design.md`; falta
+   o plano. É o que "continuar" significa.
 
-7. **Planejar as etapas 4 e 5.**
+   **Por que a etapa 4 antes da auto-escala**, decidido em 2026-08-09: as
+   etapas 4 e 5 são o que leva o projeto ao objetivo declarado — versão web
+   pública numa VPS. A auto-escala é melhoria de um conversor que já funciona,
+   e os próprios achados de 2026-08-08 mostram que ela provavelmente precisa de
+   OCR ou IA para ler o carimbo, o que é trabalho maior e mais incerto. Melhor
+   depois de o produto estar no ar.
 
-8. **Auto-escala e ferramentas de medição**, nessa ordem, **depois da etapa 3** —
-   decisão de 2026-08-08. Os achados e as decisões já tomadas estão em
-   `docs/superpowers/specs/2026-08-08-auto-escala-e-medicao-achados.md`. Comece
-   por ele: a ideia original era deduzir a escala medindo uma cota, e a sondagem
-   mostrou que nas plantas deste acervo a escala está escrita no carimbo e as
-   cotas viraram desenho, sem texto para ler.
+   O escopo da etapa 4 está na spec geral,
+   `docs/superpowers/specs/2026-08-01-pdftodxf-web-design.md`. O desenho da
+   etapa 3 deixou explicitamente de fora, para cá: o canto da conta na faixa 1,
+   o indicador de cota restante, as cinco linhas de erro sobre cota esgotada, e
+   a `privacidade.html` que o rodapé já referencia e que ainda não existe.
+
+9. **Planejar a etapa 5 — deploy.** Depois da 4.
+
+
+10. **Auto-escala e ferramentas de medição**, nessa ordem. A decisão de
+    2026-08-08 dizia "depois da etapa 3"; em 2026-08-09 ficou **depois também
+    das etapas 4 e 5**, pela razão do item 8. Os achados estão em
+    `docs/superpowers/specs/2026-08-08-auto-escala-e-medicao-achados.md`.
+    Comece por ele: a ideia original era deduzir a escala medindo uma cota, e a
+    sondagem mostrou que nas plantas deste acervo a escala está escrita no
+    carimbo e as cotas viraram desenho, sem texto para ler.
 
 O que as revisões e a execução da etapa 2 pegaram, para não se perder: o PDF
 original era apagado assim que a fila esvaziava, o que tornava impossível
@@ -279,6 +657,12 @@ pontos, porque quem especificou errado foi o plano. Detalhe em
   `full` e `starlette/testclient.py` faz `import httpx2 as httpx`. Verificado.
 - **Sem pytest.** Os testes deste projeto são funções com `assert` e um bloco
   `if __name__ == "__main__":`. Mantenha o padrão.
+- **Integração contínua em `.github/workflows/ci.yml`**, três jobs em paralelo:
+  os arquivos `tests/test_*.py` um a um (sob Xvfb, por causa das duas suítes de
+  janela Tk), `npm test` + `npm run build`, e o Playwright. O runner não tem
+  `.venv` — o `playwright.config.ts` e o `e2e/preparar.ts` aceitam
+  **`PDFTODXF_PYTHON`** no lugar do `.venv/Scripts/python.exe`, e o padrão
+  continua sendo o `.venv` local.
 
 ## Dívida conhecida
 
@@ -300,6 +684,21 @@ Nada disso bloqueia; está registrado para não se perder.
   silenciosamente o que o servidor manda, e prévia e DXF continuam concordando
   entre si, mas com o comportamento anterior. O controle hoje é de processo
   (regerar e conferir o diff), não de teste.
+- **A caixa da calibração é um `window.prompt`.** Feio de propósito: trocá-lo
+  por uma caixa própria é acabamento, e prendê-lo na tarefa teria deixado a
+  revisão grande demais.
+- **O plano de 2026-08-04 tinha quatro testes errados**, todos corrigidos nele e
+  no código ao executar: o literal truncado da escala de plotagem, as asserções
+  do `estados.ts` procurando palavras no campo errado, `1.500.000` bytes dando
+  "1,4 MB" em vez de 1,5, e a configuração do Playwright esperando `/docs` numa
+  API que sobe com `docs_url=None`. Nenhum era de implementação — todos de
+  expectativa escrita à mão sem rodar.
+- **O `npm audit` do frontend acusa 5 vulnerabilidades, todas a mesma raiz.** É
+  o aviso do `esbuild` que permite a qualquer site fazer pedido ao servidor de
+  desenvolvimento do Vite e ler a resposta. Só afeta `npm run dev`, que escuta
+  em localhost, e nada disso vai ao navegador do usuário — o projeto não tem
+  dependência de produção. Fechar exigiria Vite 8, que é mudança quebrando
+  compatibilidade e diverge do plano; ficou registrado em vez de aplicado.
 - **`EntityAttrs.kind` é lista de strings** e o laço quente do `select()` compara
   string por entidade. Em 3 milhões de entidades no navegador isso pesa. O
   formato binário da etapa 2 já grava código numérico; falta reconciliar.

@@ -68,3 +68,31 @@ Linux dentro de contêiner, onde valem.
 A **exportação não tem esses limites**: ela roda no processo que atende o site.
 Uma planta no teto de 3 milhões de entidades carrega o cache inteiro e escreve o
 DXF ali mesmo. Está registrado como dívida no handoff.
+
+## Frontend
+
+Em desenvolvimento, dois servidores:
+
+```powershell
+./.venv/Scripts/python.exe -m uvicorn web.api.main:app --port 8000
+cd web/frontend; npm run dev
+```
+
+O Vite serve em `http://localhost:5173` e repassa `/api` para o uvicorn.
+**Use `localhost`, não `127.0.0.1`:** o Vite escuta em `localhost` (IPv6) por
+padrão, e `127.0.0.1` recusa a conexão. Para escutar nos dois, passe
+`--host 127.0.0.1`.
+
+Em produção não há Vite: o `npm run build` gera `web/frontend/dist` e o próprio
+FastAPI o serve na raiz. O `deploy/Dockerfile` compila num estágio à parte,
+então a máquina de produção nunca instala `node`.
+
+```powershell
+cd web/frontend; npm test        # vitest: contrato, formato, canvas, lista
+cd web/frontend; npm run e2e     # Playwright de ponta a ponta
+```
+
+O PDF que o teste de ponta a ponta envia é **sintético e não versionado**:
+`*.pdf` está no `.gitignore` para que planta de cliente nunca vá ao GitHub, e o
+`globalSetup` do Playwright o gera a cada execução por
+`tests/gerar_pdf_de_teste.py`.

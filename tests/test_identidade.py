@@ -97,6 +97,26 @@ def test_logado_tem_um_balde_so():
     print("OK: logado consome um balde só; IP e impressão não entram")
 
 
+def test_o_primeiro_balde_do_visitante_e_o_do_cookie():
+    """A ordem é contrato: `quotas` usa `baldes[0]` como chave de idempotência.
+
+    Se um balde compartilhado (IP ou impressão) viesse primeiro, dois
+    visitantes do mesmo escritório dividiriam a idempotência um do outro.
+    """
+    p = PedidoFalso(cabecalhos={"X-Impressao": "d" * 64}, cliente="203.0.113.9")
+    primeiro = identidade.resolver(p)
+    outro_ip = PedidoFalso(cabecalhos={"X-Impressao": "d" * 64},
+                           cookies={identidade.COOKIE: primeiro.cookie_novo},
+                           cliente="198.51.100.7")
+    segundo = identidade.resolver(outro_ip)
+    assert primeiro.baldes[0].chave == segundo.baldes[0].chave, \
+        "o primeiro balde é o do cookie, e ele não muda com o IP"
+    assert primeiro.baldes[0].folga == 1, primeiro.baldes[0]
+    assert primeiro.baldes[1].chave != segundo.baldes[1].chave, \
+        "o segundo é o do IP, e ele muda com o IP"
+    print("OK: o primeiro balde do visitante é o do cookie")
+
+
 def test_conta_sem_confirmar_continua_identificada():
     p = PedidoFalso()
     ident = identidade.resolver(p, dono=identidade.Dono(id=7, confirmado=False))
@@ -112,5 +132,6 @@ if __name__ == "__main__":
     test_x_forwarded_for_com_um_proxy()
     test_impressao_malformada_e_ignorada_sem_erro()
     test_logado_tem_um_balde_so()
+    test_o_primeiro_balde_do_visitante_e_o_do_cookie()
     test_conta_sem_confirmar_continua_identificada()
     print("Todos os testes de identidade passaram.")

@@ -10,6 +10,11 @@ anunciada, e IP e impressão são tetos folgados (`PDFTODXF_COTA_FOLGA`, padrão
 cookie sozinho não tapa o furo de limpar o cookie e repetir; o IP sozinho faria
 o escritório inteiro dividir cinco arquivos.
 
+**A ordem de `baldes` é parte do contrato:** o primeiro é sempre o balde que
+identifica quem pede — `cookie:` no visitante, `usuario:` no logado. `quotas`
+usa esse primeiro balde como chave de idempotência do consumo, então trocar a
+ordem faria a mesma identidade pagar duas vezes pelo mesmo trabalho.
+
 **Este módulo não importa `auth`.** Ele precisa saber se há sessão, e `auth`
 precisa do IP para o teto de contas por dia — seria um ciclo. Quem chama
 resolve a sessão e passa o `dono`.
@@ -110,6 +115,10 @@ def resolver(request, dono: Dono | None = None) -> Identidade:
         cookie_novo = db.assinar(valor)
 
     folga = _folga()
+    # O balde do cookie **em primeiro**: `quotas._consumir` toma `baldes[0]`
+    # como o balde que identifica o pedido e o usa como chave de idempotência.
+    # IP e impressão são compartilhados — se um deles viesse primeiro, dois
+    # visitantes do mesmo escritório dividiriam a idempotência um do outro.
     baldes = [Balde(db.marca(f"cookie:{valor}"), 1)]
     ip = ip_do_pedido(request)
     if ip:

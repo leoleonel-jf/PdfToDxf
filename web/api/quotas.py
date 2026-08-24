@@ -39,7 +39,9 @@ PADROES = {
 
 TIPOS = ("arquivo", "download")
 
-_avisou_janela = False
+# O valor de janela que já foi avisado, não um "já avisei": trocar a chave em
+# tempo de execução tem de rearmar o aviso, senão o valor novo passa calado.
+_avisou_janela: int | None = None
 
 
 class SemVaga(Exception):
@@ -79,10 +81,14 @@ def janela_s() -> int:
         # mais folgado. Quem escreveu `0` queria o contrário, então: padrão.
         horas = PADROES["janela_h"]
     segundos = horas * 60 * 60
-    if segundos > db.PRAZO_DO_CONSUMO_S and not _avisou_janela:
+    if segundos <= db.PRAZO_DO_CONSUMO_S:
+        # Voltou para dentro do prazo da limpeza: esquece o aviso, para que um
+        # valor alto colocado outra vez mais tarde volte a avisar.
+        _avisou_janela = None
+    elif _avisou_janela != horas:
         # A limpeza apaga consumo de mais de 24 h, então a janela é truncada
-        # ali de qualquer jeito. Avisa uma vez, não a cada pedido.
-        _avisou_janela = True
+        # ali de qualquer jeito. Avisa uma vez por valor, não a cada pedido.
+        _avisou_janela = horas
         print(f"PDFTODXF_COTA_JANELA_H={horas}: a limpeza apaga consumo com "
               f"mais de {db.PRAZO_DO_CONSUMO_S // 3600} h, entao a janela "
               f"efetiva continua sendo de {db.PRAZO_DO_CONSUMO_S // 3600} h.")
@@ -152,17 +158,28 @@ def _consumir(ident, tipo: str, referencia: str, estado: str,
     # e a sexta vaga aparece do nada.
     con.execute("BEGIN IMMEDIATE")
     try:
-        # A guarda de repetição é **por balde**, não por referência solta:
-        # `job_id` é um uuid e as rotas de job não são presas à identidade,
-        # então quem recebesse o link de um trabalho alheio baixaria de graça
-        # a combinação que outro pagou.
-        faltam = [b for b in ident.baldes if con.execute(
-            "SELECT 1 FROM consumo "
-            "WHERE referencia = ? AND tipo = ? AND balde = ? LIMIT 1",
-            (referencia, tipo, b.chave)).fetchone() is None]
-        if not faltam:
-            # Todos os baldes já têm linha: repetir o pedido não custa de
-            # novo. É o que faz clique duplicado e reenvio saírem de graça.
+        # A guarda de repetição é pelo **balde identificador** — o primeiro da
+        # tupla, que `identidade.resolver` garante ser o `cookie:` do visitante
+        # e o `usuario:` do logado. Ela responde "esta identidade já pagou por
+        # esta referência?": se já pagou, repetir não custa de novo (clique
+        # duplicado e reenvio saem de graça); se não pagou, paga em **todos**
+        # os baldes dela.
+        #
+        # Perguntar balde a balde seria pior de duas formas. Quem recebesse o
+        # link de um trabalho alheio baixaria de graça a combinação que outro
+        # pagou — `job_id` é um uuid e as rotas de job não são presas à
+        # identidade. E, pior, o balde do IP nunca passaria de uma linha por
+        # referência: o teto folgado do IP existe justamente para contar a
+        # repetição de quem limpa o cookie, e ele não conta nada se cada
+        # referência só pode aparecer ali uma vez.
+        #
+        # `estado <> 'solto'`: só linha que ocupa vaga vale como já paga. Uma
+        # referência solta e cobrada de novo tem de cobrar de verdade.
+        identificador = ident.baldes[0].chave if ident.baldes else None
+        if identificador is not None and con.execute(
+                "SELECT 1 FROM consumo WHERE referencia = ? AND tipo = ? "
+                "AND balde = ? AND estado <> 'solto' LIMIT 1",
+                (referencia, tipo, identificador)).fetchone() is not None:
             con.execute("COMMIT")
             return
 
@@ -172,7 +189,7 @@ def _consumir(ident, tipo: str, referencia: str, estado: str,
         # levar a mesma recusa.
         libera: float | None = None
         cheio = False
-        for balde in faltam:
+        for balde in ident.baldes:
             teto = _teto(ident, tipo, balde)
             if teto == 0:
                 continue
@@ -190,7 +207,7 @@ def _consumir(ident, tipo: str, referencia: str, estado: str,
         con.executemany(
             "INSERT INTO consumo (balde, tipo, estado, quando, referencia) "
             "VALUES (?, ?, ?, ?, ?)",
-            [(b.chave, tipo, estado, agora, referencia) for b in faltam])
+            [(b.chave, tipo, estado, agora, referencia) for b in ident.baldes])
         con.execute("COMMIT")
     except SemVaga:
         raise

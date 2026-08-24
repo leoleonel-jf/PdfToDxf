@@ -179,6 +179,106 @@ def test_a_mesma_referencia_nao_cobra_duas_vezes():
     print("OK: a mesma referência não cobra duas vezes, mas outra identidade paga")
 
 
+def linhas_do_balde(balde: str) -> int:
+    con = db.conexao()
+    linha = con.execute("SELECT count(*) AS n FROM consumo WHERE balde = ?",
+                        (balde,)).fetchone()
+    return int(linha["n"])
+
+
+def test_cookie_novo_no_mesmo_ip_paga_no_balde_do_ip():
+    """A idempotência é da identidade, não do balde: o IP conta a repetição.
+
+    Se a guarda perguntasse balde a balde, o balde do IP nunca passaria de uma
+    linha por referência — e o teto folgado do IP, que é o antídoto contra
+    limpar o cookie e repetir, não teria o que contar.
+    """
+    limpar_tudo()
+    um = visitante("c1")
+    dois = visitante("c2")            # cookie diferente, **mesmo IP**
+    balde_ip = um.baldes[1].chave
+    assert balde_ip == dois.baldes[1].chave, "o teste precisa do mesmo IP"
+
+    quotas.reservar(um, "arquivo", "jobA", AGORA)
+    quotas.reservar(um, "arquivo", "jobA", AGORA)      # repetir não cobra
+    assert linhas_do_balde(balde_ip) == 1, linhas_do_balde(balde_ip)
+
+    quotas.reservar(dois, "arquivo", "jobA", AGORA)    # outra identidade paga
+    assert linhas_do_balde(balde_ip) == 2, linhas_do_balde(balde_ip)
+    assert quotas.restante(um, "arquivo", AGORA)[0] == 4
+    assert quotas.restante(dois, "arquivo", AGORA)[0] == 4
+    print("OK: cookie novo no mesmo IP paga no balde do IP; repetir não paga")
+
+
+def test_muitos_visitantes_no_mesmo_ip_esbarram_no_teto_do_ip():
+    """Vinte cookies diferentes na **mesma referência** enchem o balde do IP."""
+    limpar_tudo()
+    for i in range(20):
+        quotas.reservar(visitante(f"c{i}"), "arquivo", "jobA", AGORA)
+    balde_ip = visitante("c0").baldes[1].chave
+    assert linhas_do_balde(balde_ip) == 20, linhas_do_balde(balde_ip)
+    try:
+        quotas.reservar(visitante("c-final"), "arquivo", "jobA", AGORA)
+        raise AssertionError("o vigésimo primeiro cookie tinha que ser recusado")
+    except quotas.SemVaga as e:
+        assert e.tipo == "arquivo"
+        assert e.libera_em and e.libera_em > AGORA
+    print("OK: N visitantes no mesmo IP esbarram no teto do balde do IP")
+
+
+def test_cobrar_depois_de_soltar_cobra_de_verdade():
+    """Linha solta não ocupa vaga, então também não vale como já paga."""
+    limpar_tudo()
+    quem = visitante("c1")
+    quotas.reservar(quem, "arquivo", "jobA", AGORA)
+    quotas.soltar("jobA")
+    assert quotas.restante(quem, "arquivo", AGORA)[0] == 5, "solto não ocupa vaga"
+
+    quotas.cobrar(quem, "arquivo", "jobA", AGORA)
+    assert estados("jobA") == {"solto": 2, "confirmado": 2}, estados("jobA")
+    assert quotas.restante(quem, "arquivo", AGORA)[0] == 4, "cobrar tem que cobrar"
+
+    # E o caminho que **precisa** enxergar a linha solta continua enxergando:
+    # `confirmar` promove o que estava solto, que é a página com vetores
+    # cobrando depois de a página escaneada ter soltado.
+    limpar_tudo()
+    quotas.reservar(quem, "arquivo", "jobB", AGORA)
+    quotas.soltar("jobB")
+    quotas.confirmar("jobB")
+    assert estados("jobB") == {"confirmado": 2}, estados("jobB")
+    assert quotas.restante(quem, "arquivo", AGORA)[0] == 4
+    print("OK: cobrar depois de soltar cobra, e confirmar ainda promove o solto")
+
+
+def test_libera_em_ignora_a_linha_solta_mais_antiga():
+    """A solta não conta na contagem **nem** na hora anunciada.
+
+    Sem o `estado <> 'solto'` de `_libera_em`, uma linha solta mais antiga
+    puxaria o `min(quando)` para trás e a tela anunciaria uma vaga cedo demais.
+    """
+    limpar_tudo()
+    quem = logado(7)
+    balde = quem.baldes[0].chave
+    con = db.conexao()
+    con.executemany(
+        "INSERT INTO consumo (balde, tipo, estado, quando, referencia) "
+        "VALUES (?, ?, ?, ?, ?)",
+        # A solta é uma hora mais velha que as que de fato ocupam vaga.
+        [(balde, "arquivo", "solto", AGORA - 3600, "velho-solto")]
+        + [(balde, "arquivo", "confirmado", AGORA, f"job{i}") for i in range(15)])
+    con.commit()
+
+    esperado = AGORA + quotas.janela_s()
+    assert quotas.restante(quem, "arquivo", AGORA) == (0, esperado), \
+        quotas.restante(quem, "arquivo", AGORA)
+    try:
+        quotas.reservar(quem, "arquivo", "novo", AGORA)
+        raise AssertionError("com o balde cheio tinha que recusar")
+    except quotas.SemVaga as e:
+        assert e.libera_em == esperado, (e.libera_em, esperado)
+    print("OK: libera_em ignora a linha solta mais antiga")
+
+
 def test_libera_em_e_o_maior_entre_os_baldes_cheios():
     """Só há vaga quando todos os baldes tiverem vaga: manda o que libera por último."""
     limpar_tudo()
@@ -319,7 +419,7 @@ def test_janela_em_zero_cai_no_padrao():
 
 def test_janela_maior_que_a_limpeza_avisa_uma_vez():
     os.environ["PDFTODXF_COTA_JANELA_H"] = "48"
-    quotas._avisou_janela = False
+    quotas._avisou_janela = None
     saida = io.StringIO()
     try:
         with contextlib.redirect_stdout(saida):
@@ -328,7 +428,7 @@ def test_janela_maior_que_a_limpeza_avisa_uma_vez():
             quotas.janela_s()
     finally:
         del os.environ["PDFTODXF_COTA_JANELA_H"]
-        quotas._avisou_janela = False
+        quotas._avisou_janela = None
     texto = saida.getvalue()
     assert texto.count("PDFTODXF_COTA_JANELA_H") == 1, texto
 
@@ -337,6 +437,24 @@ def test_janela_maior_que_a_limpeza_avisa_uma_vez():
         quotas.janela_s()
     assert calada.getvalue() == "", calada.getvalue()
     print("OK: janela acima do prazo da limpeza avisa, e avisa uma vez só")
+
+
+def test_o_aviso_da_janela_rearma_quando_o_valor_muda():
+    """Avisou de 48; se alguém puser 72, o valor novo não pode passar calado."""
+    quotas._avisou_janela = None
+    saida = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(saida):
+            for horas in ("48", "48", "72", "72"):
+                os.environ["PDFTODXF_COTA_JANELA_H"] = horas
+                quotas.janela_s()
+    finally:
+        del os.environ["PDFTODXF_COTA_JANELA_H"]
+        quotas._avisou_janela = None
+    texto = saida.getvalue()
+    assert texto.count("PDFTODXF_COTA_JANELA_H") == 2, texto
+    assert "=48" in texto and "=72" in texto, texto
+    print("OK: o aviso da janela rearma quando o valor da chave muda")
 
 
 def test_tipo_desconhecido_e_erro():
@@ -382,6 +500,10 @@ if __name__ == "__main__":
     test_boa_antes_da_ruim_a_ruim_nao_desfaz()
     test_reserva_nunca_confirmada_continua_contando()
     test_a_mesma_referencia_nao_cobra_duas_vezes()
+    test_cookie_novo_no_mesmo_ip_paga_no_balde_do_ip()
+    test_muitos_visitantes_no_mesmo_ip_esbarram_no_teto_do_ip()
+    test_cobrar_depois_de_soltar_cobra_de_verdade()
+    test_libera_em_ignora_a_linha_solta_mais_antiga()
     test_libera_em_e_o_maior_entre_os_baldes_cheios()
     test_dezesseis_ao_mesmo_tempo_passam_exatamente_cinco()
     test_downloads_do_visitante_param_no_decimo_sexto()
@@ -390,6 +512,7 @@ if __name__ == "__main__":
     test_chave_negativa_cai_no_padrao()
     test_janela_em_zero_cai_no_padrao()
     test_janela_maior_que_a_limpeza_avisa_uma_vez()
+    test_o_aviso_da_janela_rearma_quando_o_valor_muda()
     test_tipo_desconhecido_e_erro()
     test_teto_de_mb_do_logado_e_truncado_no_teto_tecnico()
     test_conta_sem_confirmar_tem_cota_de_visitante()

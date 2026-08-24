@@ -26,6 +26,12 @@ from pathlib import Path
 
 PRAZO_DO_CONSUMO_S = 24 * 60 * 60
 
+# Os domínios de `assinar`/`conferir`, **todos** listados aqui de propósito: é a
+# lista que deixa ver de relance que dois usos diferentes não pegaram o mesmo
+# nome. Nome novo, domínio novo — nunca reaproveitar um destes.
+DOMINIO_SESSAO = "sessao"
+DOMINIO_COOKIE_VISITANTE = "cookie-visitante"
+
 ESQUEMA = """
 CREATE TABLE IF NOT EXISTS usuarios (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -138,20 +144,40 @@ def marca(valor: str) -> str:
     return hmac.new(segredo(), (valor or "").encode("utf-8"), sha256).hexdigest()
 
 
-def assinar(dados: str) -> str:
-    """`<corpo em base64url>.<assinatura>` — o formato dos cookies."""
+def _mensagem(corpo: str, dominio: str) -> str:
+    """O que de fato entra no `hmac`: o domínio **grudado** no corpo.
+
+    O domínio não viaja no envelope — ele só existe do lado de quem assina e de
+    quem confere. Não há campo para trocar, reordenar ou remover: um valor
+    assinado num domínio simplesmente não fecha a conta em outro.
+    """
+    return f"{dominio}|{corpo}"
+
+
+def assinar(dados: str, dominio: str) -> str:
+    """`<corpo em base64url>.<assinatura>` — o formato dos cookies.
+
+    **O `dominio` é obrigatório e não tem padrão**, de propósito: sem ele, todo
+    valor assinado por este módulo sai do mesmo envelope, e o cookie do
+    visitante e o cookie de sessão viram intercambiáveis. Hoje isso não é
+    explorável — o corpo do visitante é um `token_urlsafe(24)`, e o `int()` de
+    `auth.dono_da_sessao` o rejeita —, mas basta uma tarefa futura assinar algo
+    que o usuário controle no formato `<inteiro>|<numero>` para o cookie do
+    visitante virar sessão de qualquer conta. O domínio fecha isso na origem, e
+    o parâmetro sem padrão obriga o próximo chamador a escolher um.
+    """
     corpo = base64.urlsafe_b64encode(dados.encode("utf-8")).decode().rstrip("=")
-    return f"{corpo}.{marca(corpo)}"
+    return f"{corpo}.{marca(_mensagem(corpo, dominio))}"
 
 
-def conferir(assinado: str) -> str | None:
-    """O conteúdo, se a assinatura casar. `None` em qualquer outro caso."""
+def conferir(assinado: str, dominio: str) -> str | None:
+    """O conteúdo, se a assinatura casar **naquele domínio**. `None` se não."""
     corpo, ponto, assinatura = (assinado or "").partition(".")
     if not ponto or not assinatura:
         return None
     # `compare_digest` e não `==`: a comparação byte a byte que sai no primeiro
     # erro conta, pelo tempo, quantos caracteres já estavam certos.
-    if not hmac.compare_digest(assinatura, marca(corpo)):
+    if not hmac.compare_digest(assinatura, marca(_mensagem(corpo, dominio))):
         return None
     try:
         recheio = "=" * (-len(corpo) % 4)

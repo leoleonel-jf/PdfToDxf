@@ -211,6 +211,10 @@ def url_base() -> str:
 
 COOKIE_SESSAO = "pdftodxf_sessao"
 PRAZO_SESSAO_S = 30 * 24 * 60 * 60
+# Quanto a emissão pode estar à frente do relógio de agora e ainda valer. Existe
+# só para tolerar relógio ligeiramente adiantado entre a emissão e a conferência
+# (NTP corrigindo, máquina virtual retomando); não é folga de prazo.
+FOLGA_DE_RELOGIO_S = 5 * 60
 
 
 def criar_sessao(uid: int, agora: float | None = None) -> str:
@@ -221,19 +225,28 @@ def criar_sessao(uid: int, agora: float | None = None) -> str:
     emergência que se quer ter.
     """
     agora = time.time() if agora is None else agora
-    return db.assinar(f"{int(uid)}|{agora:.0f}")
+    return db.assinar(f"{int(uid)}|{agora:.0f}", db.DOMINIO_SESSAO)
 
 
 def _sessao(request):
     valor = request.cookies.get(COOKIE_SESSAO)
-    conteudo = db.conferir(valor) if valor else None
+    conteudo = db.conferir(valor, db.DOMINIO_SESSAO) if valor else None
     if not conteudo:
         return None
     uid, _, emitida = conteudo.partition("|")
     try:
-        return int(uid), float(emitida)
+        uid, emitida = int(uid), float(emitida)
     except ValueError:
         return None
+    # **Piso, e não só teto.** O prazo é medido por `agora - emitida`: com uma
+    # emissão no futuro essa conta fica negativa e nunca passa do prazo, ou
+    # seja, o cookie valeria para sempre. Não é forjável sem o segredo e
+    # `criar_sessao` não produz isso sozinha — o caso real é o relógio do
+    # servidor andar para trás depois de emitir. Uma emissão à frente do agora
+    # além da folga de relógio é lixo: recusa.
+    if emitida > time.time() + FOLGA_DE_RELOGIO_S:
+        return None
+    return uid, emitida
 
 
 def dono_da_sessao(request):

@@ -1,8 +1,16 @@
 """Quem está pedindo, e quais baldes de cota aquele pedido consome.
 
-Logado é **um balde só** — a conta já é a identidade, e consultar IP e
-impressão faria dois colegas do mesmo escritório dividirem a cota que cada um
-pagou com um cadastro.
+Logado **e confirmado** é **um balde só** — a conta já é a identidade, e
+consultar IP e impressão faria dois colegas do mesmo escritório dividirem a cota
+que cada um pagou com um cadastro.
+
+**Conta sem o endereço confirmado fica nos baldes de visitante**, os mesmos
+três, com as mesmas folgas. É o que a confirmação compra: trocar três baldes
+compartilhados por um balde próprio. Sem isso, cadastrar-se com um endereço
+descartável devolveria um balde novo e privado ao visitante que acabou de
+esgotar a cota — cinco arquivos a mais por cadastro, num laço de custo zero e
+sem passar por caixa de entrada nenhuma. Os *números* já eram os de visitante
+(`quotas.limites`); o furo era o balde.
 
 Visitante são **três**, com tetos diferentes: o cookie carrega a cota
 anunciada, e IP e impressão são tetos folgados (`PDFTODXF_COTA_FOLGA`, padrão
@@ -98,21 +106,16 @@ def impressao_do_pedido(request) -> str | None:
 
 def _cookie_valido(request) -> str | None:
     guardado = request.cookies.get(COOKIE)
-    return db.conferir(guardado) if guardado else None
+    return db.conferir(guardado, db.DOMINIO_COOKIE_VISITANTE) if guardado else None
 
 
-def resolver(request, dono: Dono | None = None) -> Identidade:
-    if dono is not None:
-        return Identidade(tipo="logado", usuario_id=dono.id,
-                          confirmado=dono.confirmado,
-                          baldes=(Balde(db.marca(f"usuario:{dono.id}"), 1),),
-                          cookie_novo=None)
-
+def _baldes_de_visitante(request) -> tuple[tuple[Balde, ...], str | None]:
+    """Os três baldes compartilhados, e o cookie a emitir se ainda não houver."""
     valor = _cookie_valido(request)
     cookie_novo = None
     if valor is None:
         valor = secrets.token_urlsafe(24)
-        cookie_novo = db.assinar(valor)
+        cookie_novo = db.assinar(valor, db.DOMINIO_COOKIE_VISITANTE)
 
     folga = _folga()
     # O balde do cookie **em primeiro**: `quotas._consumir` toma `baldes[0]`
@@ -126,9 +129,37 @@ def resolver(request, dono: Dono | None = None) -> Identidade:
     impressao = impressao_do_pedido(request)
     if impressao:
         baldes.append(Balde(db.marca(f"impressao:{impressao}"), folga))
+    return tuple(baldes), cookie_novo
+
+
+def resolver(request, dono: Dono | None = None) -> Identidade:
+    if dono is not None and dono.confirmado:
+        # **Só o confirmado** ganha balde próprio. É exatamente isso que a
+        # confirmação do endereço compra: sair dos três baldes compartilhados
+        # com o resto do escritório e passar a ter um balde só seu.
+        return Identidade(tipo="logado", usuario_id=dono.id, confirmado=True,
+                          baldes=(Balde(db.marca(f"usuario:{dono.id}"), 1),),
+                          cookie_novo=None)
+
+    baldes, cookie_novo = _baldes_de_visitante(request)
+
+    if dono is not None:
+        # Conta sem confirmar: **os mesmos baldes de um visitante**, com as
+        # mesmas folgas. Um balde `usuario:<id>` aqui seria um balde novo e
+        # vazio a cada cadastro — quem esgotou a cota criaria uma conta com um
+        # endereço descartável, não abriria e-mail nenhum, e voltaria com cinco
+        # arquivos. É o reinício barato que os três baldes existem para impedir.
+        #
+        # O `tipo`, o `usuario_id` e o `confirmado` continuam os de um logado:
+        # a tela precisa mostrar o e-mail e a linha "falta confirmar seu
+        # e-mail". **Só a lista de baldes muda** — e o `cookie_novo` sai para
+        # ele como para qualquer visitante, porque agora ele depende do balde
+        # do cookie para ser contado.
+        return Identidade(tipo="logado", usuario_id=dono.id, confirmado=False,
+                          baldes=baldes, cookie_novo=cookie_novo)
 
     return Identidade(tipo="visitante", usuario_id=None, confirmado=False,
-                      baldes=tuple(baldes), cookie_novo=cookie_novo)
+                      baldes=baldes, cookie_novo=cookie_novo)
 
 
 def gravar_cookie(resposta, ident: Identidade, seguro: bool = False) -> None:

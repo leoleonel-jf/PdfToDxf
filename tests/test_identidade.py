@@ -121,7 +121,57 @@ def test_conta_sem_confirmar_continua_identificada():
     p = PedidoFalso()
     ident = identidade.resolver(p, dono=identidade.Dono(id=7, confirmado=False))
     assert ident.tipo == "logado" and ident.confirmado is False
+    assert ident.usuario_id == 7
     print("OK: conta sem confirmar continua identificada, mas não confirmada")
+
+
+def test_conta_sem_confirmar_fica_nos_baldes_do_visitante():
+    """Sem confirmar o endereço, os baldes são os três do visitante.
+
+    Um balde `usuario:<id>` aqui seria um balde novo e vazio a cada cadastro:
+    quem esgotou a cota de visitante criaria uma conta com um endereço
+    descartável, não abriria caixa de entrada nenhuma, e voltaria com cinco
+    arquivos. É a confirmação do endereço que troca os três baldes
+    compartilhados por um balde próprio.
+    """
+    cabecalhos = {"X-Impressao": "e" * 64}
+    p = PedidoFalso(cabecalhos=cabecalhos, cliente="203.0.113.9")
+    visitante = identidade.resolver(p)
+
+    # O mesmo pedido, agora com uma conta sem confirmar por trás: o cookie que o
+    # visitante acabou de ganhar volta, como voltaria no navegador dele.
+    devolta = PedidoFalso(cabecalhos=cabecalhos,
+                          cookies={identidade.COOKIE: visitante.cookie_novo},
+                          cliente="203.0.113.9")
+    sem_confirmar = identidade.resolver(
+        devolta, dono=identidade.Dono(id=7, confirmado=False))
+
+    assert len(sem_confirmar.baldes) == 3, sem_confirmar.baldes
+    assert chaves(sem_confirmar) == chaves(visitante), \
+        "os baldes têm de ser exatamente os que o visitante teria"
+    assert [b.folga for b in sem_confirmar.baldes] == \
+        [b.folga for b in visitante.baldes], "as folgas também"
+    assert db.marca("usuario:7") not in chaves(sem_confirmar), \
+        "sem confirmar não pode ganhar balde próprio"
+
+    # E o cookie é emitido para ele como para qualquer visitante, já que agora
+    # ele depende do balde do cookie para ser contado.
+    sem_cookie = PedidoFalso(cabecalhos=cabecalhos, cliente="203.0.113.9")
+    novato = identidade.resolver(
+        sem_cookie, dono=identidade.Dono(id=8, confirmado=False))
+    assert novato.cookie_novo, "conta sem confirmar e sem cookie ganha um"
+    print("OK: conta sem confirmar fica nos três baldes do visitante")
+
+
+def test_confirmar_e_o_que_compra_o_balde_proprio():
+    p = PedidoFalso(cabecalhos={"X-Impressao": "f" * 64})
+    sem = identidade.resolver(p, dono=identidade.Dono(id=9, confirmado=False))
+    com = identidade.resolver(p, dono=identidade.Dono(id=9, confirmado=True))
+    assert len(sem.baldes) == 3 and len(com.baldes) == 1
+    assert com.baldes[0].chave == db.marca("usuario:9")
+    assert not (chaves(sem) & chaves(com)), \
+        "confirmar troca os baldes compartilhados por um só, e próprio"
+    print("OK: confirmar troca os três baldes compartilhados por um próprio")
 
 
 if __name__ == "__main__":
@@ -134,4 +184,6 @@ if __name__ == "__main__":
     test_logado_tem_um_balde_so()
     test_o_primeiro_balde_do_visitante_e_o_do_cookie()
     test_conta_sem_confirmar_continua_identificada()
+    test_conta_sem_confirmar_fica_nos_baldes_do_visitante()
+    test_confirmar_e_o_que_compra_o_balde_proprio()
     print("Todos os testes de identidade passaram.")

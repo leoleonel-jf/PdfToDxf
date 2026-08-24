@@ -116,12 +116,23 @@ async def enviar(request: Request, resposta: Response,
     """Recebe o PDF, confere o teto do plano, reserva a vaga e conta as páginas."""
     # Em thread pelo mesmo motivo do `reservar` lá embaixo: `quem_pede` lê o
     # banco (`auth.por_id`), e esta rota é `async def` — ela roda no fio do laço
-    # de eventos. O `SELECT` em si é barato, mas quem paga caro é a **primeira**
-    # chamada de cada fio: `db.conexao()` abre a conexão com
-    # `PRAGMA journal_mode=WAL` e `criar_tabelas`, que pedem o lock de escrita
-    # com `busy_timeout` de 5 s. Hoje nenhum fio de laço de eventos tem conexão
-    # de SQLite (a subida e a limpeza já usam `to_thread`), e manter esse
-    # invariante é mais simples de sustentar do que auditar consulta a consulta.
+    # de eventos.
+    #
+    # O que isto preserva é um **invariante**, e não uma espera: nenhum fio de
+    # laço de eventos abre conexão de SQLite. A subida e a limpeza já usam
+    # `to_thread`, e com este aqui a contagem de conexões nascidas no fio do
+    # laço é **zero**; tirando o `to_thread`, é **uma** (medido, contando o fio
+    # de nascimento de cada conexão num envio de logado). O invariante é o que
+    # torna a regra auditável de uma olhada — "o laço não fala com o banco" —
+    # em vez de obrigar a reavaliar, consulta a consulta, se aquela consulta
+    # pode bloquear.
+    #
+    # **Não é pelo `busy_timeout` de 5 s**, que era o motivo escrito aqui antes
+    # e não acontece: com o lock de escrita preso de propósito, `db.conexao()`
+    # sai em poucos milissegundos (medido duas vezes, 1,0 a 8,7 ms), porque
+    # `PRAGMA journal_mode` num banco já em WAL e `CREATE TABLE IF NOT EXISTS`
+    # sobre tabela existente não pedem o lock. E, para visitante, `quem_pede`
+    # não toca o banco vez nenhuma.
     ident = await asyncio.to_thread(quem_pede, request, resposta)
     teto = quotas.limites(ident)["bytes"]
 

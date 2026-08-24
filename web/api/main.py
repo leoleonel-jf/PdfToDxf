@@ -15,10 +15,11 @@ import math
 import fitz
 from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import db, exportacao, identidade, jobs, quotas, registros, storage
+from . import (auth, db, enviador, exportacao, identidade, jobs, quotas,
+               registros, storage)
 
 PEDACO = 1024 * 1024   # 1 MB por leitura do envio
 INTERVALO_LIMPEZA = 10 * 60   # 10 minutos
@@ -382,6 +383,60 @@ def baixar(job_id: str, ch: str) -> FileResponse:
             return FileResponse(caminho, media_type="application/dxf",
                                 filename=nome)
     raise HTTPException(status_code=404, detail="Arquivo não encontrado.")
+
+
+class PedidoDeRegistro(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    senha: str = Field(min_length=8, max_length=200)
+
+
+@app.post("/api/auth/registro")
+def registrar(pedido: PedidoDeRegistro, request: Request) -> dict:
+    """Cria a conta e dispara o link. **A resposta é a mesma nos dois casos.**
+
+    E-mail já cadastrado recebe um aviso, e não o link — assim o dono do
+    endereço fica sabendo, e quem sondou não descobre nada.
+    """
+    if not auth.email_valido(pedido.email):
+        raise HTTPException(status_code=422, detail="E-mail inválido.")
+
+    ip = identidade.ip_do_pedido(request)
+    uid = auth.criar_conta(pedido.email, pedido.senha, ip)
+    if uid is None:
+        # `scrypt` de mentira: `criar_conta` sai pelo `IntegrityError` sem
+        # gastar o hash da senha, e a resposta chegaria mais rápido do que a do
+        # cadastro novo. O cronômetro contaria o que a mensagem calou.
+        auth.queimar_tempo()
+        enviador.enviar(
+            auth.normalizar(pedido.email),
+            "Tentativa de cadastro no PdfToDxf",
+            "Alguém tentou criar uma conta no PdfToDxf com este endereço, que "
+            "já tem cadastro.\n\nSe foi você, entre normalmente em "
+            f"{auth.url_base()}/ — e use 'Esqueci a senha' se precisar.\n\n"
+            "Se não foi você, pode ignorar esta mensagem: nada mudou na sua "
+            "conta.")
+    else:
+        token = auth.novo_token(uid, "confirmacao", auth.PRAZO_CONFIRMACAO_S)
+        enviador.enviar(
+            auth.normalizar(pedido.email),
+            "Confirme seu endereço no PdfToDxf",
+            "Para ativar a cota maior da sua conta, confirme este endereço:\n\n"
+            f"{auth.url_base()}/api/auth/confirmar/{token}\n\n"
+            "O link vale por 48 horas. Se você não pediu isto, ignore.")
+
+    return {"ok": True,
+            "mensagem": "Se este endereço puder receber, o e-mail já saiu. "
+                        "Confira a caixa de entrada."}
+
+
+@app.get("/api/auth/confirmar/{token}")
+def confirmar(token: str):
+    uid = auth.usar_token(token, "confirmacao")
+    if uid is None:
+        raise Recusa(400, "Este link não vale mais. Peça outro entrando na sua "
+                          "conta.", "token_invalido")
+    auth.confirmar_conta(uid)
+    return RedirectResponse(url="/?confirmado=1", status_code=303)
 
 
 from fastapi.staticfiles import StaticFiles

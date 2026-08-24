@@ -85,13 +85,44 @@ def _mb(n: int) -> int:
     return n // (1024 * 1024)
 
 
+def _gravar_sessao(resposta: Response, uid: int, seguro: bool) -> None:
+    resposta.set_cookie(auth.COOKIE_SESSAO, auth.criar_sessao(uid),
+                        max_age=auth.PRAZO_SESSAO_S, httponly=True,
+                        samesite="lax", secure=seguro, path="/")
+
+
+def quem_pede(request: Request, resposta: Response) -> identidade.Identidade:
+    """A identidade do pedido, com a sessão já resolvida e o cookie renovado.
+
+    Um lugar só. Cada rota resolvendo sessão por conta própria seria a receita
+    para uma delas esquecer, e a cota do logado virar cota de visitante em
+    silêncio — defeito que nenhum teste de unidade pega.
+
+    **Toca o banco** (`auth.por_id`). Numa rota `async def` ela tem de ir para
+    `asyncio.to_thread`, como `quotas.reservar` — ver o comentário em `enviar`.
+    """
+    seguro = request.url.scheme == "https"
+    dono = auth.dono_da_sessao(request)
+    if dono is not None and auth.precisa_renovar(request):
+        _gravar_sessao(resposta, dono.id, seguro)
+    ident = identidade.resolver(request, dono=dono)
+    identidade.gravar_cookie(resposta, ident, seguro=seguro)
+    return ident
+
+
 @app.post("/api/jobs")
 async def enviar(request: Request, resposta: Response,
                  arquivo: UploadFile = File(...)) -> dict:
     """Recebe o PDF, confere o teto do plano, reserva a vaga e conta as páginas."""
-    ident = identidade.resolver(request)
-    identidade.gravar_cookie(resposta, ident,
-                             seguro=request.url.scheme == "https")
+    # Em thread pelo mesmo motivo do `reservar` lá embaixo: `quem_pede` lê o
+    # banco (`auth.por_id`), e esta rota é `async def` — ela roda no fio do laço
+    # de eventos. O `SELECT` em si é barato, mas quem paga caro é a **primeira**
+    # chamada de cada fio: `db.conexao()` abre a conexão com
+    # `PRAGMA journal_mode=WAL` e `criar_tabelas`, que pedem o lock de escrita
+    # com `busy_timeout` de 5 s. Hoje nenhum fio de laço de eventos tem conexão
+    # de SQLite (a subida e a limpeza já usam `to_thread`), e manter esse
+    # invariante é mais simples de sustentar do que auditar consulta a consulta.
+    ident = await asyncio.to_thread(quem_pede, request, resposta)
     teto = quotas.limites(ident)["bytes"]
 
     # O `content-length` primeiro, e o teto de novo durante a leitura. O
@@ -359,9 +390,9 @@ def exportar(job_id: str, pagina: int, pedido: PedidoDeExportacao,
     referencia = f"{job_id}:{ch}"
 
     if not ja_existe:
-        ident = identidade.resolver(request)
-        identidade.gravar_cookie(resposta, ident,
-                                 seguro=request.url.scheme == "https")
+        # Direto, sem `to_thread`: esta rota é síncrona, e o FastAPI já a roda
+        # no pool de threads.
+        ident = quem_pede(request, resposta)
         try:
             quotas.reservar(ident, "download", referencia)
         except quotas.SemVaga as e:
@@ -457,6 +488,49 @@ def confirmar(token: str):
                           "conta.", "token_invalido")
     auth.confirmar_conta(uid)
     return RedirectResponse(url="/?confirmado=1", status_code=303)
+
+
+class PedidoDeEntrada(BaseModel):
+    # O mínimo da senha é `1`, e não `auth.SENHA_MINIMA`: quem já tem uma senha
+    # curta de antes precisa poder entrar para trocá-la, e recusar por
+    # comprimento aqui contaria pela porta dos fundos que aquele endereço não
+    # tem senha curta cadastrada.
+    email: str = Field(min_length=3, max_length=254)
+    senha: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/api/auth/entrar")
+def entrar(pedido: PedidoDeEntrada, request: Request,
+           resposta: Response) -> dict:
+    """Confere as credenciais e grava a sessão.
+
+    **A recusa é a mesma nos dois casos**, em texto e em tempo: e-mail que não
+    existe e senha errada saem por aqui com o mesmo status e o mesmo corpo.
+    """
+    linha = auth.por_email(pedido.email)
+    if linha is None:
+        # `scrypt` de mentira: sem ele, "não existe" responde em microssegundos
+        # e "senha errada" em dezenas de milissegundos, e o cronômetro conta o
+        # que a mensagem calou. **Aqui ele serve de verdade**, ao contrário do
+        # cadastro, onde `criar_conta` já paga o hash nos dois caminhos.
+        auth.queimar_tempo()
+        raise Recusa(401, "E-mail ou senha não conferem.", "credenciais")
+
+    if not auth.conferir_senha(pedido.senha, linha["senha"]):
+        raise Recusa(401, "E-mail ou senha não conferem.", "credenciais")
+
+    if auth.precisa_reescrever(linha["senha"]):
+        auth.reescrever_senha(linha["id"], pedido.senha)
+
+    _gravar_sessao(resposta, int(linha["id"]), request.url.scheme == "https")
+    return {"email": linha["email"],
+            "confirmado": linha["confirmado_em"] is not None}
+
+
+@app.post("/api/auth/sair")
+def sair(resposta: Response) -> dict:
+    resposta.delete_cookie(auth.COOKIE_SESSAO, path="/")
+    return {"ok": True}
 
 
 from fastapi.staticfiles import StaticFiles

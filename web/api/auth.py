@@ -207,3 +207,53 @@ def confirmar_conta(uid: int) -> None:
 
 def url_base() -> str:
     return os.environ.get("PDFTODXF_URL_BASE", "http://localhost:8000").rstrip("/")
+
+
+COOKIE_SESSAO = "pdftodxf_sessao"
+PRAZO_SESSAO_S = 30 * 24 * 60 * 60
+
+
+def criar_sessao(uid: int, agora: float | None = None) -> str:
+    """`<id>|<emitida em>`, assinado.
+
+    **Sem tabela de sessões.** Nesta escala o cookie assinado basta, e trocar o
+    segredo derruba todas as sessões de uma vez — que é justamente o botão de
+    emergência que se quer ter.
+    """
+    agora = time.time() if agora is None else agora
+    return db.assinar(f"{int(uid)}|{agora:.0f}")
+
+
+def _sessao(request):
+    valor = request.cookies.get(COOKIE_SESSAO)
+    conteudo = db.conferir(valor) if valor else None
+    if not conteudo:
+        return None
+    uid, _, emitida = conteudo.partition("|")
+    try:
+        return int(uid), float(emitida)
+    except ValueError:
+        return None
+
+
+def dono_da_sessao(request):
+    """Quem é o dono desta sessão, se ela existe e vale. `None` se não."""
+    from . import identidade
+    lido = _sessao(request)
+    if lido is None:
+        return None
+    uid, emitida = lido
+    if time.time() - emitida > PRAZO_SESSAO_S:
+        return None
+    linha = por_id(uid)
+    if linha is None:
+        return None      # a conta sumiu; o cookie não pode ressuscitá-la
+    return identidade.Dono(id=uid, confirmado=linha["confirmado_em"] is not None)
+
+
+def precisa_renovar(request) -> bool:
+    """Passou da metade do prazo? Então vale reemitir o cookie."""
+    lido = _sessao(request)
+    if lido is None:
+        return False
+    return time.time() - lido[1] > PRAZO_SESSAO_S / 2

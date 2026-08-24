@@ -59,6 +59,13 @@ async def ciclo_de_vida(_app: FastAPI):
     # permissão no arquivo do banco aparece ao subir, e não na cara do primeiro
     # usuário.
     await asyncio.to_thread(lambda: db.criar_tabelas(db.conexao()))
+    # Pré-aquece o hash de mentira do `queimar_tempo`: sem isto, a primeira
+    # chamada depois da subida paga `hash_senha` (~120 ms) *e* `conferir_senha`
+    # (~110 ms) — 239 ms contra ~110 ms das chamadas seguintes e ~167 ms de um
+    # `conferir_senha` real —, um oráculo de tiro único no primeiro login com
+    # e-mail inexistente. Em thread pelo mesmo motivo das tabelas acima: um
+    # `scrypt` de ~100 ms no laço de eventos atrasaria a subida.
+    await asyncio.to_thread(auth.queimar_tempo)
     tarefa = asyncio.create_task(_limpeza_periodica())
     try:
         yield

@@ -1,13 +1,14 @@
 """Cadastro, senha e confirmação de endereço."""
 
-import ast
+import asyncio
+import contextlib
 import hashlib
+import hmac
 import inspect
 import os
 import secrets
 import sys
 import tempfile
-import textwrap
 import threading
 import time
 from unittest import mock
@@ -22,7 +23,8 @@ os.environ["PDFTODXF_SEGREDO"] = "segredo-de-teste"
 
 from fastapi.testclient import TestClient
 
-from web.api import auth, db, enviador
+from web.api import auth, db, enviador, registros
+from web.api import main
 from web.api.main import app
 
 cliente = TestClient(app)
@@ -263,28 +265,134 @@ def test_token_de_um_tipo_nao_serve_para_outro_nem_e_queimado():
     print("OK: token de um tipo não serve para outro, e não é queimado")
 
 
-def test_conferir_senha_compara_com_compare_digest():
-    """O contrato, e não o cronômetro.
+def _chamadas_de_compare_digest(fazer):
+    """Roda `fazer` espiando `hmac.compare_digest`, e devolve as chamadas.
 
-    `==` sai no primeiro byte diferente, e o tempo conta quantos bytes já
-    estavam certos. Medir isso num teste seria intermitente; ler o fonte é
-    determinístico — é o que `tests/test_cli.py` já faz para conferir imports.
+    O espião delega para a implementação de verdade, então o resultado da
+    função sob teste não muda. Patch em dois lugares, não só em `hmac`: um
+    módulo que fizer `from hmac import compare_digest` liga o nome à função
+    original no momento do import, e depois disso `mock.patch.object(hmac,
+    "compare_digest", ...)` não alcança essa referência já presa — só
+    `mock.patch.object(auth, "compare_digest", ...)` alcançaria. Como o teste
+    não sabe qual dos dois estilos o código usa, patch nos dois; só um deles
+    dispara em cada caso, e a lista de chamadas é a mesma.
     """
-    fonte = textwrap.dedent(inspect.getsource(auth.conferir_senha))
-    arvore = ast.parse(fonte)
+    real = hmac.compare_digest
+    chamadas = []
 
-    chamadas = {
-        no.func.attr for no in ast.walk(arvore)
-        if isinstance(no, ast.Call) and isinstance(no.func, ast.Attribute)}
-    assert "compare_digest" in chamadas, \
-        "conferir_senha tem de comparar com hmac.compare_digest"
+    def espiao(a, b):
+        resultado = real(a, b)
+        chamadas.append((a, b, resultado))
+        return resultado
 
-    iguais = [no for no in ast.walk(arvore) if isinstance(no, ast.Compare)
-              and any(isinstance(op, (ast.Eq, ast.NotEq)) for op in no.ops)]
-    assert not iguais, (
-        "conferir_senha compara com `==`/`!=`: a saída no primeiro byte errado "
-        "conta pelo tempo quanto do hash já estava certo")
-    print("OK: conferir_senha compara em tempo constante")
+    with contextlib.ExitStack() as pilha:
+        pilha.enter_context(mock.patch.object(hmac, "compare_digest", espiao))
+        if hasattr(auth, "compare_digest"):
+            pilha.enter_context(
+                mock.patch.object(auth, "compare_digest", espiao))
+        fazer()
+    return chamadas
+
+
+def test_conferir_senha_compara_com_compare_digest():
+    """O contrato é comportamento, e não o texto do fonte.
+
+    Ler o fonte com `ast`/`inspect` provou promessa demais: aprovava
+    `hmac.compare_digest(b"", b"") and calculado == bruto` — que só chama
+    `compare_digest` com um par decorativo e decide tudo pelo `==` de tempo
+    variável — e reprovava reescritas corretas (`from hmac import
+    compare_digest` com chamada direta; a comparação movida para um
+    auxiliar), só porque o texto não batia com o padrão esperado.
+
+    Este teste afirma o comportamento: `conferir_senha` tem de chamar
+    `hmac.compare_digest` exatamente uma vez, com os bytes que de fato
+    decidem o resultado — o hash guardado é sempre um dos dois lados, nunca
+    um par decorativo — e o valor devolvido tem de ser exatamente o da
+    comparação, tanto para a senha certa quanto para a errada.
+    """
+    guardado = auth.hash_senha("umaSenhaBoa123")
+    _n, _r, _p, _sal, bruto = auth._partes(guardado)
+
+    def checar(senha: str, esperado: bool):
+        chamadas = _chamadas_de_compare_digest(
+            lambda: checar.devolvido.append(auth.conferir_senha(senha, guardado)))
+        assert len(chamadas) == 1, (
+            f"conferir_senha tem de chamar hmac.compare_digest exatamente "
+            f"uma vez; chamou {len(chamadas)}")
+        a, b, resultado_da_comparacao = chamadas[0]
+        assert bruto in (a, b), (
+            f"a comparação não envolveu o hash guardado: {a!r}, {b!r} — um "
+            "par decorativo não decide o resultado de verdade")
+        assert resultado_da_comparacao == esperado, (
+            f"hmac.compare_digest devolveu {resultado_da_comparacao}, "
+            f"esperado {esperado} para esta senha")
+        assert checar.devolvido[-1] == resultado_da_comparacao, \
+            "conferir_senha tem de devolver exatamente o resultado da comparação"
+
+    checar.devolvido = []
+    checar("umaSenhaBoa123", True)
+    checar("outra", False)
+    print("OK: conferir_senha chama hmac.compare_digest com os bytes que "
+          "decidem o resultado")
+
+
+def test_limpeza_periodica_esta_fiada_aos_tres_expurgos():
+    """A fiação de `_limpeza_periodica`, e não o expurgo em si.
+
+    Cada expurgo (`enviador.expurgar`, `registros.expurgar`, `db.limpar`) já
+    tem teste próprio; a chamada de dentro da limpeza periódica, não. Aqui não
+    há propriedade de segurança prometida, só fiação — ler o fonte com
+    `inspect.getsource` e exigir a menção basta, ao contrário do teste acima.
+    """
+    fonte = inspect.getsource(main._limpeza_periodica)
+    for nome in ("enviador.expurgar", "registros.expurgar", "db.limpar"):
+        assert nome in fonte, f"_limpeza_periodica tem de chamar {nome}"
+    print("OK: _limpeza_periodica menciona os três expurgos no fonte")
+
+
+def test_limpeza_periodica_chama_os_tres_expurgos_de_verdade():
+    """O mesmo, exercitando o laço de verdade.
+
+    `INTERVALO_LIMPEZA` baixo e a tarefa rodando de fato sob `asyncio`: os três
+    espiões delegam para a implementação real, então o expurgo de verdade
+    acontece — isto não substitui os testes próprios de cada expurgo, só prova
+    que a fiação os alcança quando o laço gira.
+    """
+    chamados = {"enviador": 0, "registros": 0, "db": 0}
+    real_enviador = enviador.expurgar
+    real_registros = registros.expurgar
+    real_db = db.limpar
+
+    def enviador_espiao(*a, **kw):
+        chamados["enviador"] += 1
+        return real_enviador(*a, **kw)
+
+    def registros_espiao(*a, **kw):
+        chamados["registros"] += 1
+        return real_registros(*a, **kw)
+
+    def db_espiao(*a, **kw):
+        chamados["db"] += 1
+        return real_db(*a, **kw)
+
+    async def rodar():
+        with mock.patch.object(main, "INTERVALO_LIMPEZA", 0.01), \
+             mock.patch.object(enviador, "expurgar", enviador_espiao), \
+             mock.patch.object(registros, "expurgar", registros_espiao), \
+             mock.patch.object(db, "limpar", db_espiao):
+            tarefa = asyncio.create_task(main._limpeza_periodica())
+            await asyncio.sleep(0.3)
+            tarefa.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await tarefa
+
+    asyncio.run(rodar())
+
+    assert chamados["enviador"] >= 1, "o laço não chamou enviador.expurgar"
+    assert chamados["registros"] >= 1, "o laço não chamou registros.expurgar"
+    assert chamados["db"] >= 1, "o laço não chamou db.limpar"
+    print("OK: a limpeza periódica de verdade chama enviador.expurgar, "
+          "registros.expurgar e db.limpar")
 
 
 def test_email_longo_e_medido_depois_de_normalizado():
@@ -326,6 +434,8 @@ if __name__ == "__main__":
     test_envios_simultaneos_ao_mesmo_endereco_nao_se_perdem()
     test_token_de_um_tipo_nao_serve_para_outro_nem_e_queimado()
     test_conferir_senha_compara_com_compare_digest()
+    test_limpeza_periodica_esta_fiada_aos_tres_expurgos()
+    test_limpeza_periodica_chama_os_tres_expurgos_de_verdade()
     test_email_longo_e_medido_depois_de_normalizado()
     # Por último de propósito: ele apaga a pasta de e-mails inteira ao forçar
     # o relógio para além do prazo.

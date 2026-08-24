@@ -9,6 +9,22 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # a raiz dos dados tem que ser definida antes de importar o serviço
 os.environ["PDFTODXF_DADOS"] = tempfile.mkdtemp(prefix="pdftodxf-teste-")
 
+# Aqui se testa o envio, não a cota: várias destas funções enviam um arquivo
+# cada, e o padrão de 5 por janela barraria a bateria no meio. `0` é
+# "sem limite" — o padrão continua o que é, e quem exercita a cota é o
+# tests/test_api_cotas.py.
+os.environ["PDFTODXF_COTA_ARQUIVOS"] = "0"
+os.environ["PDFTODXF_COTA_DOWNLOADS"] = "0"
+# O teto de MB não pode ser `0`: ali `0` seria teto zero, não "sem limite".
+# Um valor bem acima de `limits.TETO_PDF_BYTES` deixa valer o teto técnico, que
+# é justamente o que `test_arquivo_grande_demais` confere.
+os.environ["PDFTODXF_COTA_MB"] = "1000"
+# Banco próprio e segredo fixo: sem isto a bateria escreveria consumo num
+# `dados/contas.db` ao lado do repositório e avisaria do segredo aleatório.
+os.environ["PDFTODXF_BANCO"] = os.path.join(
+    tempfile.mkdtemp(prefix="pdftodxf-db-"), "contas.db")
+os.environ["PDFTODXF_SEGREDO"] = "segredo-de-teste"
+
 from fastapi.testclient import TestClient
 
 from tests.test_roundtrip import make_test_pdf

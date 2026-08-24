@@ -23,7 +23,7 @@ from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
-from . import limits, packing, registros, storage
+from . import limits, packing, quotas, registros, storage
 
 
 class SemVetores(Exception):
@@ -227,6 +227,55 @@ def _quando_terminar(job_id: str, pagina: int, futuro) -> None:
         except Exception as outra:
             traceback.print_exception(type(outra), outra,
                                       outra.__traceback__, file=sys.stderr)
+
+    # A primeira página boa promove a reserva. A soltura, porém, só acontece
+    # quando **todas** as páginas do documento terminaram e **nenhuma** deu
+    # certo.
+    #
+    # Soltar por página, como a primeira versão desta etapa fazia, deixava
+    # furar o teto: converter primeiro a página escaneada devolvia a vaga, o
+    # upload seguinte entrava, e converter depois a página vetorial promovia
+    # uma reserva já solta. Medido, com o teto em 5: 40 conversões numa janela
+    # feita para 5. Prender a vaga enquanto houver página por extrair é a mesma
+    # regra que a spec já aplica a quem envia e fecha a aba — "reserva nunca
+    # confirmada continua contando".
+    #
+    # Vem **depois** de gravar o estado, e não antes: `_documento_todo_falhou`
+    # lê a ficha, e a página que acabou de terminar só entra nela quando
+    # `_gravar_estado` grava. Antes, a última página a falhar não se veria na
+    # contagem, e a vaga nunca seria solta.
+    try:
+        if estado.get("situacao") == "pronta":
+            quotas.confirmar(job_id)
+        elif _documento_todo_falhou(job_id):
+            quotas.soltar(job_id)
+    except Exception as e:
+        # A cota não pode derrubar a entrega da página. Uma reserva que ficou
+        # em pé custa uma vaga por 2 horas; uma página perdida custa a planta.
+        traceback.print_exception(type(e), e, e.__traceback__, file=sys.stderr)
+
+
+def _documento_todo_falhou(job_id: str) -> bool:
+    """Todas as páginas terminaram, e nenhuma delas ficou pronta?
+
+    A condição é sobre o documento inteiro, não sobre a página que acabou de
+    terminar. Enquanto faltar página, o usuário ainda pode pedi-la, e ela pode
+    ser a boa: devolver a vaga antes disso é o que permitia converter de graça
+    alternando a ordem das páginas.
+    """
+    with _trava:
+        ficha = storage.ler_ficha(job_id)
+        if not ficha:
+            return False        # sem ficha não há o que decidir; a vaga fica
+        n_paginas = ficha.get("n_paginas") or 0
+        if n_paginas <= 0:
+            return False
+        paginas = list(ficha.get("paginas", {}).values())
+        terminadas = [p for p in paginas
+                      if p.get("situacao") in ("pronta", "erro")]
+        if len(terminadas) < n_paginas:
+            return False
+        return not any(p.get("situacao") == "pronta" for p in terminadas)
 
 
 def _apagar_origem_se_ocioso(job_id: str) -> None:

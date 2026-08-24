@@ -89,11 +89,15 @@ def conexao() -> sqlite3.Connection:
 
     con = sqlite3.connect(atual)
     con.row_factory = sqlite3.Row
-    con.execute("PRAGMA journal_mode=WAL")
+    # O `busy_timeout` vem **antes** do `journal_mode`: trocar o journal pede o
+    # lock de escrita, e sem o handler armado ele volta "database is locked" na
+    # hora se outro fio estiver escrevendo — bem na conexão recém-criada, que é
+    # justamente quando há concorrência.
+    con.execute("PRAGMA busy_timeout=5000")
     # Escrita curta com WAL basta nesta escala; o `busy_timeout` é o que faz um
     # segundo escritor esperar em vez de voltar "database is locked" na cara do
     # usuário.
-    con.execute("PRAGMA busy_timeout=5000")
+    con.execute("PRAGMA journal_mode=WAL")
     criar_tabelas(con)
     _local.con = con
     _local.onde = atual

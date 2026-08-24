@@ -10,6 +10,11 @@ e é isso que faz o caso misto sair certo: num documento em que a página 1 é
 escaneada e a página 2 tem vetores, a página 1 solta e a página 2 cobra; na
 ordem inversa, a página 2 confirma e a página 1 não desfaz.
 
+Soltar **não apaga**: marca `'solto'`. Apagar entregaria o documento misto de
+graça — a página escaneada some com a linha e a página com vetores não acha
+mais nada para promover. A linha solta fica, invisível para a contagem, à
+espera de uma confirmação que talvez venha da página seguinte.
+
 Reserva nunca confirmada **continua contando** até sair da janela. Quem envia e
 fecha a aba consumiu banda e disco; não há varredura de reserva órfã, porque a
 janela deslizante já é o prazo.
@@ -32,6 +37,10 @@ PADROES = {
     "janela_h": 2,
 }
 
+TIPOS = ("arquivo", "download")
+
+_avisou_janela = False
+
 
 class SemVaga(Exception):
     """Não cabe nesta janela. `libera_em` é quando a próxima vaga abre."""
@@ -48,16 +57,36 @@ def _chave(nome: str) -> int:
     if cru is None or cru.strip() == "":
         return PADROES[nome]
     try:
-        return max(0, int(cru))
+        valor = int(cru)
     except ValueError:
         # Chave escrita errada cai no padrão, que é seguro — e não em
         # "sem limite", que seria o modo de falhar caro.
         return PADROES[nome]
+    if valor < 0:
+        # `-1` é a convenção de "sem limite" de outros sistemas, então é o lixo
+        # mais provável de aparecer aqui. Grampear em `0` abriria a cota
+        # inteira em silêncio; negativo cai no padrão como qualquer outro lixo.
+        return PADROES[nome]
+    return valor
 
 
 def janela_s() -> int:
-    horas = _chave("janela_h") or PADROES["janela_h"]
-    return horas * 60 * 60
+    global _avisou_janela
+    horas = _chave("janela_h")
+    if horas == 0:
+        # Única chave em que `0` não é "sem limite": janela sem limite seria
+        # janela infinita, que nunca esquece um consumo — mais apertado, não
+        # mais folgado. Quem escreveu `0` queria o contrário, então: padrão.
+        horas = PADROES["janela_h"]
+    segundos = horas * 60 * 60
+    if segundos > db.PRAZO_DO_CONSUMO_S and not _avisou_janela:
+        # A limpeza apaga consumo de mais de 24 h, então a janela é truncada
+        # ali de qualquer jeito. Avisa uma vez, não a cada pedido.
+        _avisou_janela = True
+        print(f"PDFTODXF_COTA_JANELA_H={horas}: a limpeza apaga consumo com "
+              f"mais de {db.PRAZO_DO_CONSUMO_S // 3600} h, entao a janela "
+              f"efetiva continua sendo de {db.PRAZO_DO_CONSUMO_S // 3600} h.")
+    return segundos
 
 
 def limites(ident) -> dict:
@@ -90,9 +119,11 @@ def _teto(ident, tipo: str, balde) -> int:
 
 
 def _contar(con, balde: str, tipo: str, desde: float) -> int:
+    # `estado <> 'solto'`: linha solta não ocupa vaga. Ela fica no banco só
+    # para a página seguinte poder confirmá-la.
     linha = con.execute(
         "SELECT count(*) AS n FROM consumo "
-        "WHERE balde = ? AND tipo = ? AND quando > ?",
+        "WHERE balde = ? AND tipo = ? AND quando > ? AND estado <> 'solto'",
         (balde, tipo, desde)).fetchone()
     return int(linha["n"])
 
@@ -101,13 +132,17 @@ def _libera_em(con, balde: str, tipo: str, desde: float) -> float | None:
     """Quando abre a próxima vaga: a linha mais antiga da janela + a janela."""
     linha = con.execute(
         "SELECT min(quando) AS q FROM consumo "
-        "WHERE balde = ? AND tipo = ? AND quando > ?",
+        "WHERE balde = ? AND tipo = ? AND quando > ? AND estado <> 'solto'",
         (balde, tipo, desde)).fetchone()
     return None if linha["q"] is None else float(linha["q"]) + janela_s()
 
 
 def _consumir(ident, tipo: str, referencia: str, estado: str,
               agora: float | None) -> None:
+    if tipo not in TIPOS:
+        # Um typo do chamador (`"arquivos"`) pegaria o teto errado e ainda
+        # abriria um namespace de balde vazio: passe livre silencioso.
+        raise ValueError(f"tipo desconhecido: {tipo!r}")
     agora = time.time() if agora is None else agora
     desde = agora - janela_s()
     con = db.conexao()
@@ -117,30 +152,45 @@ def _consumir(ident, tipo: str, referencia: str, estado: str,
     # e a sexta vaga aparece do nada.
     con.execute("BEGIN IMMEDIATE")
     try:
-        ja = con.execute(
-            "SELECT count(*) AS n FROM consumo WHERE referencia = ? AND tipo = ?",
-            (referencia, tipo)).fetchone()
-        if int(ja["n"]) > 0:
-            # Referência já cobrada: repetir o pedido não custa de novo. É o
-            # que faz clique duplicado e reenvio saírem de graça.
+        # A guarda de repetição é **por balde**, não por referência solta:
+        # `job_id` é um uuid e as rotas de job não são presas à identidade,
+        # então quem recebesse o link de um trabalho alheio baixaria de graça
+        # a combinação que outro pagou.
+        faltam = [b for b in ident.baldes if con.execute(
+            "SELECT 1 FROM consumo "
+            "WHERE referencia = ? AND tipo = ? AND balde = ? LIMIT 1",
+            (referencia, tipo, b.chave)).fetchone() is None]
+        if not faltam:
+            # Todos os baldes já têm linha: repetir o pedido não custa de
+            # novo. É o que faz clique duplicado e reenvio saírem de graça.
             con.execute("COMMIT")
             return
 
-        for balde in ident.baldes:
+        # Varre **todos** os baldes antes de decidir: só há vaga quando todos
+        # têm vaga, então quem manda no `libera_em` é o que libera por último.
+        # Sair no primeiro cheio mandaria o usuário voltar cedo demais, para
+        # levar a mesma recusa.
+        libera: float | None = None
+        cheio = False
+        for balde in faltam:
             teto = _teto(ident, tipo, balde)
             if teto == 0:
                 continue
             if _contar(con, balde.chave, tipo, desde) >= teto:
-                libera = _libera_em(con, balde.chave, tipo, desde)
-                con.execute("ROLLBACK")
-                # Qual balde estourou não sai daqui: dizer isso conta a quem
-                # tenta burlar exatamente o que ele precisa saber.
-                raise SemVaga(tipo, libera)
+                cheio = True
+                quando = _libera_em(con, balde.chave, tipo, desde)
+                if quando is not None and (libera is None or quando > libera):
+                    libera = quando
+        if cheio:
+            con.execute("ROLLBACK")
+            # Qual balde estourou não sai daqui: dizer isso conta a quem
+            # tenta burlar exatamente o que ele precisa saber.
+            raise SemVaga(tipo, libera)
 
         con.executemany(
             "INSERT INTO consumo (balde, tipo, estado, quando, referencia) "
             "VALUES (?, ?, ?, ?, ?)",
-            [(b.chave, tipo, estado, agora, referencia) for b in ident.baldes])
+            [(b.chave, tipo, estado, agora, referencia) for b in faltam])
         con.execute("COMMIT")
     except SemVaga:
         raise
@@ -160,17 +210,26 @@ def cobrar(ident, tipo: str, referencia: str, agora=None) -> None:
 
 
 def confirmar(referencia: str) -> None:
-    """Promove as reservas daquela referência. Uma vez confirmado, nada solta."""
+    """Promove as reservas daquela referência. Uma vez confirmado, nada solta.
+
+    Promove também o que já tinha sido solto: é a página com vetores cobrando
+    depois de a página escaneada ter soltado.
+    """
     con = db.conexao()
     con.execute("UPDATE consumo SET estado = 'confirmado' "
-                "WHERE referencia = ? AND estado = 'reservado'", (referencia,))
+                "WHERE referencia = ? AND estado IN ('reservado', 'solto')",
+                (referencia,))
     con.commit()
 
 
 def soltar(referencia: str) -> None:
-    """Devolve as vagas ainda reservadas. Não mexe no que já foi confirmado."""
+    """Devolve as vagas ainda reservadas. Não mexe no que já foi confirmado.
+
+    Marca, não apaga: a linha apagada não pode mais ser cobrada pela página
+    seguinte, e o documento misto sairia de graça.
+    """
     con = db.conexao()
-    con.execute("DELETE FROM consumo "
+    con.execute("UPDATE consumo SET estado = 'solto' "
                 "WHERE referencia = ? AND estado = 'reservado'", (referencia,))
     con.commit()
 
@@ -180,8 +239,11 @@ def restante(ident, tipo: str, agora=None) -> tuple[int | None, float | None]:
 
     `(None, None)` quando o tipo está sem limite — e não um número grande, que
     a tela mostraria como se fosse cota. O balde mais apertado é o que manda,
-    porque é ele que vai recusar.
+    porque é ele que vai recusar; e entre os cheios manda o que libera por
+    último, porque só há vaga quando todos tiverem vaga.
     """
+    if tipo not in TIPOS:
+        raise ValueError(f"tipo desconhecido: {tipo!r}")
     agora = time.time() if agora is None else agora
     desde = agora - janela_s()
     con = db.conexao()
@@ -193,8 +255,9 @@ def restante(ident, tipo: str, agora=None) -> tuple[int | None, float | None]:
         if teto == 0:
             continue
         livre = max(0, teto - _contar(con, balde.chave, tipo, desde))
-        if sobra is None or livre < sobra:
-            sobra = livre
-            libera = (_libera_em(con, balde.chave, tipo, desde)
-                      if livre == 0 else None)
+        sobra = livre if sobra is None else min(sobra, livre)
+        if livre == 0:
+            quando = _libera_em(con, balde.chave, tipo, desde)
+            if quando is not None and (libera is None or quando > libera):
+                libera = quando
     return sobra, libera

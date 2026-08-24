@@ -17,7 +17,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from . import db, exportacao, jobs, limits, registros, storage
+from . import db, exportacao, identidade, jobs, limits, registros, storage
 
 PEDACO = 1024 * 1024   # 1 MB por leitura do envio
 INTERVALO_LIMPEZA = 10 * 60   # 10 minutos
@@ -132,7 +132,7 @@ def extrair_pagina(job_id: str, pagina: int, request: Request) -> dict:
         raise HTTPException(
             status_code=404,
             detail=f"O documento tem {ficha['n_paginas']} página(s).")
-    ip = request.client.host if request.client else ""
+    ip = identidade.ip_do_pedido(request)
     return jobs.pedir_extracao(job_id, pagina, ip=ip, conta="")
 
 

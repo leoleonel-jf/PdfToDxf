@@ -2103,8 +2103,7 @@ def test_pdf_acima_do_teto_do_plano_e_recusado_com_o_numero():
         assert corpo["teto_bytes"] == 1024 * 1024, corpo
     finally:
         del os.environ["PDFTODXF_COTA_MB"]
-    # Recusado antes de reservar: a cota do visitante continua inteira.
-    assert quotas.restante.__name__ == "restante"
+    # Recusado antes de reservar: nenhuma linha de consumo foi gravada.
     con = db.conexao()
     n = con.execute("SELECT count(*) AS n FROM consumo").fetchone()["n"]
     assert n == 0, n

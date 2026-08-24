@@ -17,7 +17,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from . import exportacao, jobs, limits, storage
+from . import exportacao, jobs, limits, registros, storage
 
 PEDACO = 1024 * 1024   # 1 MB por leitura do envio
 INTERVALO_LIMPEZA = 10 * 60   # 10 minutos
@@ -32,6 +32,9 @@ async def _limpeza_periodica() -> None:
             if relato["expirados"] or relato["por_cota"]:
                 print(f"limpeza: {len(relato['expirados'])} vencidos, "
                       f"{len(relato['por_cota'])} por cota")
+            apagados = await asyncio.to_thread(registros.expurgar)
+            if apagados:
+                print(f"limpeza: {len(apagados)} registros com mais de 1 ano")
         except Exception:
             traceback.print_exc()   # a limpeza nunca pode derrubar o serviço
 
@@ -115,13 +118,14 @@ def consultar(job_id: str) -> dict:
 
 
 @app.post("/api/jobs/{job_id}/pages/{pagina}")
-def extrair_pagina(job_id: str, pagina: int) -> dict:
+def extrair_pagina(job_id: str, pagina: int, request: Request) -> dict:
     ficha = _ficha_ou_404(job_id)
     if pagina < 1 or pagina > ficha["n_paginas"]:
         raise HTTPException(
             status_code=404,
             detail=f"O documento tem {ficha['n_paginas']} página(s).")
-    return jobs.pedir_extracao(job_id, pagina)
+    ip = request.client.host if request.client else ""
+    return jobs.pedir_extracao(job_id, pagina, ip=ip, conta="")
 
 
 @app.get("/api/jobs/{job_id}/pages/{pagina}")

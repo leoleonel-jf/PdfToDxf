@@ -15,6 +15,14 @@ Três decisões que parecem detalhe e não são:
   rota de registro, porque o repetido ficava 2x mais lento que o novo). Onde
   não há hash pago no caminho — o login com e-mail inexistente — é para isso
   que existe `queimar_tempo`.
+
+  **`queimar_tempo` é só do login.** No pedido de redefinição de senha ele foi
+  arrancado pela revisão da tarefa 9: lá os dois ramos são assimétricos de
+  outro jeito (nenhum paga `scrypt`; o do e-mail existente paga um `INSERT` e
+  uma carta), e somar um hash a um dos lados abria o oráculo em vez de
+  fechá-lo — 10,0x com SMTP em 0 ms, faixas disjuntas. O que fecha lá é um
+  **piso de resposta constante** nos dois ramos, com o envio fora do caminho
+  do pedido: ver `main.PISO_DE_SENHA_S`.
 - **Os parâmetros do `scrypt` vão gravados junto do hash.** Endurecer os custos
   depois não invalida senha nenhuma: quem entra com um hash antigo é reescrito
   com os novos naquele momento.
@@ -198,6 +206,26 @@ def usar_token(valor: str, tipo: str) -> int | None:
     return int(linha["usuario"]) if linha else None
 
 
+def invalidar_tokens(usuario: int, tipo: str) -> int:
+    """Queima os tokens daquele tipo que ainda estavam pendentes. Quantos foram.
+
+    Pedir três links de redefinição e usar o terceiro deixava os dois primeiros
+    válidos por até 1 h. Não é furo hoje — foram todos para a mesma caixa de
+    entrada —, mas um link de senha que sobrevive à troca da senha é um segredo
+    a mais no mundo sem motivo, e apagá-lo é um `UPDATE`.
+
+    Marca `usado_em` em vez de apagar: é o mesmo estado que `usar_token` deixa,
+    e a linha continua sendo o rastro daquele pedido até o `db.limpar` levar.
+    """
+    con = db.conexao()
+    cursor = con.execute(
+        "UPDATE tokens SET usado_em = ? "
+        "WHERE usuario = ? AND tipo = ? AND usado_em IS NULL",
+        (time.time(), usuario, tipo))
+    con.commit()
+    return int(cursor.rowcount)
+
+
 def confirmar_conta(uid: int) -> None:
     con = db.conexao()
     con.execute("UPDATE usuarios SET confirmado_em = ? WHERE id = ?",
@@ -311,12 +339,26 @@ def precisa_renovar(request) -> bool:
 UM_DIA_S = 24 * 60 * 60
 
 
+CONTAS_POR_IP_DIA = 5
+
+
 def teto_de_contas_por_ip() -> int:
-    """Quantas contas um endereço pode criar por dia. `0` é sem limite."""
+    """Quantas contas um endereço pode criar por dia. `0` é sem limite.
+
+    Mesmo tratamento de lixo de `quotas._chave`, e pelo mesmo motivo: chave
+    vazia, escrita errada ou **negativa** cai no padrão. `max(0, ...)` grampeava
+    o negativo em `0`, que aqui significa "sem limite" — e `-1` é justamente a
+    convenção de "sem limite" de outros sistemas, ou seja, o lixo mais provável
+    de aparecer. O teto do cadastro inteiro sumia em silêncio.
+    """
+    cru = os.environ.get("PDFTODXF_CONTAS_POR_IP_DIA")
+    if cru is None or cru.strip() == "":
+        return CONTAS_POR_IP_DIA
     try:
-        return max(0, int(os.environ.get("PDFTODXF_CONTAS_POR_IP_DIA", "5")))
+        valor = int(cru)
     except ValueError:
-        return 5
+        return CONTAS_POR_IP_DIA
+    return CONTAS_POR_IP_DIA if valor < 0 else valor
 
 
 def contas_do_ip_hoje(ip: str, agora: float | None = None) -> int:

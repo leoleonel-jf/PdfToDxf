@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import os
 import shutil
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -23,6 +24,9 @@ from . import (auth, db, enviador, exportacao, identidade, jobs, quotas,
 
 PEDACO = 1024 * 1024   # 1 MB por leitura do envio
 INTERVALO_LIMPEZA = 10 * 60   # 10 minutos
+# O nome da thread que manda a carta de redefinição. É por ele que o teste
+# espera o envio terminar, em vez de dormir um valor arbitrário.
+NOME_DA_THREAD_DE_CARTA = "carta-de-senha"
 
 
 async def _limpeza_periodica() -> None:
@@ -553,28 +557,58 @@ class NovaSenha(BaseModel):
     senha: str = Field(min_length=8, max_length=200)
 
 
+# O piso de resposta de `POST /api/auth/senha`: os dois ramos gastam **este**
+# tempo, e não o tempo do que fizeram. Folgado o bastante para caber o `SELECT`,
+# o `INSERT` do token e o disparo da thread com sobra, e curto o bastante para
+# não virar amplificador — a resposta é uma espera, não CPU.
+#
+# **Por que não `queimar_tempo` aqui.** Diferente do login, os dois ramos não
+# são simétricos: nenhum paga `scrypt`, e o do e-mail existente paga um `INSERT`
+# mais o envio da carta, cujo custo é do transporte de e-mail e não nosso.
+# Somar um `scrypt` só ao ramo do inexistente não iguala nada — desloca. Medido,
+# 150 pares com ordem sorteada: com SMTP em 0 ms (dev e CI) dava 31,4 ms contra
+# 314,9 ms, 10,0x, faixas **disjuntas**, e um limiar único acertava 100% de quem
+# tem conta; com 150 ms, 1,71x e 98,8%; com 500 ms, 1,62x e 100%. Só numa
+# vizinhança estreita (~290 ms) os dois casavam por acaso.
+#
+# **E por que não bastaria só arrancar o `queimar_tempo`.** Isso resolveria o
+# dev (1,28x, faixas sobrepostas) e abriria a produção: sem piso, o ramo do
+# existente carrega a latência do SMTP na resposta — 4,25x com 150 ms. O piso é
+# o que torna a medida **insensível ao transporte**, e por isso a carta sai numa
+# thread, fora do caminho do pedido.
+PISO_DE_SENHA_S = 0.300
+
+
 @app.post("/api/auth/senha")
 def pedir_senha(pedido: PedidoDeSenha) -> dict:
     """Manda o link de redefinição. **Responde igual para e-mail inexistente.**
 
-    Mesma defesa do login: mesmo status, mesmo corpo, e o caminho do inexistente
-    paga o mesmo `scrypt` pelo `queimar_tempo`. Sem isso o formulário de
+    Igual em texto, byte a byte, **e em tempo**: os dois ramos esperam até o
+    mesmo piso (`PISO_DE_SENHA_S`) antes de responder. Sem isso o formulário de
     "esqueci a senha" vira uma sonda de quem tem conta — e ela responde a
     qualquer um, sem senha nenhuma.
+
+    O envio da carta vai para uma thread justamente para sair do relógio da
+    resposta: o transporte de e-mail é de fora, varia de dezenas a centenas de
+    milissegundos, e qualquer coisa que dependa dele vaza para o cronômetro.
+    A thread é `daemon` e não tem tratamento de erro porque `enviador.enviar`
+    **nunca levanta**, por contrato — é o único ponto que roda ali dentro.
     """
+    piso = time.monotonic() + PISO_DE_SENHA_S
     linha = auth.por_email(pedido.email)
     if linha is not None:
         token = auth.novo_token(linha["id"], "senha", auth.PRAZO_SENHA_S)
-        enviador.enviar(
-            linha["email"], "Redefinir a senha do PdfToDxf",
-            "Para escolher uma senha nova, abra:\n\n"
-            f"{auth.url_base()}/?senha={token}\n\n"
-            "O link vale por 1 hora. Se você não pediu isto, ignore — nada "
-            "mudou na sua conta.")
-    else:
-        # Aqui `queimar_tempo` serve de verdade: este ramo não pagou hash
-        # nenhum, e o cronômetro contaria o que a mensagem cala.
-        auth.queimar_tempo()
+        threading.Thread(
+            target=enviador.enviar,
+            args=(linha["email"], "Redefinir a senha do PdfToDxf",
+                  "Para escolher uma senha nova, abra:\n\n"
+                  f"{auth.url_base()}/?senha={token}\n\n"
+                  "O link vale por 1 hora. Se você não pediu isto, ignore — "
+                  "nada mudou na sua conta."),
+            name=NOME_DA_THREAD_DE_CARTA, daemon=True).start()
+    falta = piso - time.monotonic()
+    if falta > 0:
+        time.sleep(falta)
     return {"ok": True,
             "mensagem": "Se este endereço tiver conta, o e-mail já saiu."}
 
@@ -590,13 +624,18 @@ def concluir_senha(token: str, pedido: NovaSenha) -> dict:
 
     O expulsar de quem estava dentro sai de graça de `reescrever_senha`: o hash
     guardado muda, e a impressão que cada cookie de sessão carrega deixa de
-    bater (ver `auth.criar_sessao`). Não há nada a apagar aqui.
+    bater (ver `auth.criar_sessao`). Não há nada a apagar aqui — a não ser os
+    **outros** links de redefinição que aquele usuário tenha pedido: quem pede
+    três e usa o terceiro deixava os dois primeiros de pé por até 1 h.
     """
     uid = auth.usar_token(token, "senha")
     if uid is None:
         raise Recusa(400, "Este link não vale mais. Peça outro.",
                      "token_invalido")
     auth.reescrever_senha(uid, pedido.senha)
+    # Depois da troca, e não antes: se a reescrita falhar, os links pendentes
+    # continuam sendo o caminho de recuperação de quem os pediu.
+    auth.invalidar_tokens(uid, "senha")
     return {"ok": True}
 
 

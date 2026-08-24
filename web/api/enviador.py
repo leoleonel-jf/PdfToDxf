@@ -9,12 +9,17 @@ from __future__ import annotations
 
 import os
 import smtplib
+import stat
 import time
 import traceback
 from email.message import EmailMessage
 from pathlib import Path
 
 from . import storage
+
+# O arquivo carrega o token em claro; 48 h é o prazo do próprio token de
+# confirmação, então depois disso ele não vale mais nada.
+PRAZO_S = 48 * 60 * 60
 
 
 def pasta_de_emails() -> Path:
@@ -28,15 +33,36 @@ def remetente() -> str:
 
 
 def _gravar_em_arquivo(para: str, assunto: str, corpo: str) -> None:
+    """Grava a carta sem nunca sobrescrever outra.
+
+    O nome sai do segundo corrente e do destinatário, então dois envios ao mesmo
+    endereço no mesmo segundo disputam o mesmo nome. Conferir com `exists()`
+    antes de abrir é justamente a corrida: os dois olham, os dois veem vazio, e
+    o segundo apaga o primeiro — um link de confirmação sumindo aqui é uma conta
+    que não ativa. `O_EXCL` num laço de tentativas resolve porque a criação e a
+    reserva do nome viram uma coisa só, e é o mesmo caminho que
+    `registros.gravar` já usa neste projeto.
+    """
+    destino = pasta_de_emails()
     seguro = "".join(c if c.isalnum() or c in "-_.@" else "_" for c in para)
     nome = f"{time.strftime('%Y%m%d-%H%M%S')}-{seguro[:60]}.txt"
-    caminho = pasta_de_emails() / nome
+    texto = f"Para: {para}\nAssunto: {assunto}\n\n{corpo}\n".encode("utf-8")
+
+    raiz = destino.resolve()
     sufixo = 0
-    while caminho.exists():
-        sufixo += 1
-        caminho = pasta_de_emails() / f"{nome[:-4]}-{sufixo}.txt"
-    caminho.write_text(f"Para: {para}\nAssunto: {assunto}\n\n{corpo}\n",
-                       encoding="utf-8")
+    while True:
+        tentativa = nome if sufixo == 0 else f"{nome[:-4]}-{sufixo}.txt"
+        caminho = destino / tentativa
+        if not caminho.resolve().is_relative_to(raiz):
+            raise ValueError("o e-mail escaparia da pasta de e-mails")
+        try:
+            fd = os.open(caminho, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            sufixo += 1
+            continue
+        with os.fdopen(fd, "wb") as f:
+            f.write(texto)
+        return
 
 
 def enviar(para: str, assunto: str, corpo: str) -> None:
@@ -75,3 +101,30 @@ def enviar(para: str, assunto: str, corpo: str) -> None:
             s.send_message(msg)
     except Exception:
         traceback.print_exc()
+
+
+def expurgar(agora: float | None = None) -> list[str]:
+    """Apaga as cartas que passaram de 48 h. Devolve os nomes apagados.
+
+    Higiene, não vazamento: `dados/` está no `.gitignore` e o token já saiu do
+    banco pelo `db.limpar` quando o prazo vence. Mas o arquivo guarda o token em
+    claro, e segredo vencido não tem por que ficar em disco para sempre.
+
+    Nos moldes de `registros.expurgar`, inclusive no engolir de `OSError`: uma
+    carta presa por outro processo fica para a passagem seguinte em vez de
+    abortar a varredura inteira.
+    """
+    agora = time.time() if agora is None else agora
+    apagados = []
+    for arquivo in pasta_de_emails().iterdir():
+        try:
+            info = arquivo.stat()
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            if agora - info.st_mtime <= PRAZO_S:
+                continue
+            arquivo.unlink()
+        except OSError:
+            continue
+        apagados.append(arquivo.name)
+    return apagados

@@ -5,8 +5,16 @@ Três decisões que parecem detalhe e não são:
 - **A recusa nunca distingue "não existe" de "está errado".** Nem no cadastro,
   nem no login, nem na redefinição. Um formulário que responde diferente para
   e-mail cadastrado vira uma sonda para descobrir quem usa o serviço.
-- **O caminho do e-mail inexistente executa um `scrypt` de mentira**, para que o
-  tempo de resposta não conte a diferença que a mensagem se recusou a contar.
+- **Todo caminho paga exatamente um `scrypt`**, porque a mensagem calada não
+  adianta nada se o cronômetro contar a diferença. No cadastro isso já sai de
+  graça: `criar_conta` avalia `hash_senha(senha)` como **argumento** do
+  `INSERT`, então o hash é pago antes de o `IntegrityError` sequer disparar —
+  e-mail novo e e-mail repetido gastam o mesmo. É acidente de escrita, não
+  desenho: **não mexa nessa ordem sem medir de novo**, e não acrescente um
+  segundo hash por cima (foi o que a revisão da tarefa 7 teve de arrancar da
+  rota de registro, porque o repetido ficava 2x mais lento que o novo). Onde
+  não há hash pago no caminho — o login com e-mail inexistente — é para isso
+  que existe `queimar_tempo`.
 - **Os parâmetros do `scrypt` vão gravados junto do hash.** Endurecer os custos
   depois não invalida senha nenhuma: quem entra com um hash antigo é reescrito
   com os novos naquele momento.
@@ -43,7 +51,11 @@ def normalizar(email: str) -> str:
 
 
 def email_valido(email: str) -> bool:
-    return bool(_EMAIL.match(normalizar(email))) and len(email) <= 254
+    # O comprimento é o do normalizado, e não o do valor cru: é o normalizado
+    # que vai ao banco, e medir o cru recusaria um endereço de 250 caracteres
+    # só por ter vindo com espaços em volta.
+    limpo = normalizar(email)
+    return bool(_EMAIL.match(limpo)) and len(limpo) <= 254
 
 
 def _b64(dados: bytes) -> str:
@@ -98,6 +110,11 @@ def queimar_tempo() -> None:
 
     Sem isto, "e-mail não existe" responde em microssegundos e "senha errada"
     em dezenas de milissegundos — e o cronômetro conta o que a mensagem calou.
+
+    É para o **login**, onde há de fato um caminho sem hash. No cadastro não
+    serve: lá `criar_conta` já pagou o `scrypt` nos dois caminhos, e chamar
+    isto por cima faz o e-mail repetido custar o dobro do novo — que é
+    exatamente o oráculo que se queria fechar.
     """
     global _DE_MENTIRA
     if _DE_MENTIRA is None:
@@ -117,7 +134,15 @@ def por_id(uid: int):
 
 
 def criar_conta(email: str, senha: str, ip: str) -> int | None:
-    """Cria a conta. Devolve `None` se o e-mail já existe."""
+    """Cria a conta. Devolve `None` se o e-mail já existe.
+
+    `hash_senha(senha)` é **argumento** do `INSERT`: o `scrypt` é avaliado antes
+    de o banco ter chance de recusar por colisão. Custa um hash à toa quando o
+    e-mail já existe, e é isso que iguala os dois tempos de resposta. Trocar por
+    "consulta antes, hash depois" ficaria mais econômico e reabriria o oráculo
+    de enumeração — se for mesmo trocar, o `queimar_tempo` tem de entrar junto,
+    e a medição refeita.
+    """
     con = db.conexao()
     try:
         cursor = con.execute(

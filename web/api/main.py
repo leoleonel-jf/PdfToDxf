@@ -37,6 +37,14 @@ async def _limpeza_periodica() -> None:
             apagados = await asyncio.to_thread(registros.expurgar)
             if apagados:
                 print(f"limpeza: {len(apagados)} registros com mais de 1 ano")
+            # Os e-mails gravados em arquivo trazem o token **em claro**. Depois
+            # de 48 h a linha do token já saiu do banco pelo `db.limpar` e o
+            # arquivo é inerte, mas guardar segredo vencido para sempre é
+            # sujeira. `storage.limpar` não pega esta pasta de propósito — ela
+            # não passa por `validar_id` — então o expurgo é do próprio módulo.
+            cartas = await asyncio.to_thread(enviador.expurgar)
+            if cartas:
+                print(f"limpeza: {len(cartas)} e-mails gravados em arquivo")
             do_banco = await asyncio.to_thread(db.limpar)
             if do_banco["consumo"] or do_banco["tokens"]:
                 print(f"limpeza: {do_banco['consumo']} consumos e "
@@ -398,15 +406,20 @@ def registrar(pedido: PedidoDeRegistro, request: Request) -> dict:
     endereço fica sabendo, e quem sondou não descobre nada.
     """
     if not auth.email_valido(pedido.email):
-        raise HTTPException(status_code=422, detail="E-mail inválido.")
+        # `Recusa` e não `HTTPException`: com `codigo` a tela distingue isto de
+        # um 422 do Pydantic, que tem outro formato de corpo.
+        raise Recusa(422, "E-mail inválido.", "email_invalido")
 
     ip = identidade.ip_do_pedido(request)
     uid = auth.criar_conta(pedido.email, pedido.senha, ip)
     if uid is None:
-        # `scrypt` de mentira: `criar_conta` sai pelo `IntegrityError` sem
-        # gastar o hash da senha, e a resposta chegaria mais rápido do que a do
-        # cadastro novo. O cronômetro contaria o que a mensagem calou.
-        auth.queimar_tempo()
+        # **Nada de `queimar_tempo` aqui.** `criar_conta` avalia
+        # `hash_senha(senha)` como argumento do `INSERT`, ou seja, paga o
+        # `scrypt` antes de o `IntegrityError` disparar — nos dois caminhos. É
+        # isso que iguala os tempos. Um hash a mais neste ramo faria o e-mail
+        # repetido custar o dobro do novo e criaria o oráculo de enumeração que
+        # a resposta idêntica existe para fechar (medido: 2.13x, faixas sem
+        # sobreposição).
         enviador.enviar(
             auth.normalizar(pedido.email),
             "Tentativa de cadastro no PdfToDxf",

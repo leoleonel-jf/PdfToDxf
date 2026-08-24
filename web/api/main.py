@@ -17,7 +17,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from . import exportacao, jobs, limits, registros, storage
+from . import db, exportacao, jobs, limits, registros, storage
 
 PEDACO = 1024 * 1024   # 1 MB por leitura do envio
 INTERVALO_LIMPEZA = 10 * 60   # 10 minutos
@@ -35,12 +35,20 @@ async def _limpeza_periodica() -> None:
             apagados = await asyncio.to_thread(registros.expurgar)
             if apagados:
                 print(f"limpeza: {len(apagados)} registros com mais de 1 ano")
+            do_banco = await asyncio.to_thread(db.limpar)
+            if do_banco["consumo"] or do_banco["tokens"]:
+                print(f"limpeza: {do_banco['consumo']} consumos e "
+                      f"{do_banco['tokens']} tokens vencidos")
         except Exception:
             traceback.print_exc()   # a limpeza nunca pode derrubar o serviço
 
 
 @contextlib.asynccontextmanager
 async def ciclo_de_vida(_app: FastAPI):
+    # As tabelas nascem na subida, e não no primeiro pedido: assim um erro de
+    # permissão no arquivo do banco aparece ao subir, e não na cara do primeiro
+    # usuário.
+    await asyncio.to_thread(lambda: db.criar_tabelas(db.conexao()))
     tarefa = asyncio.create_task(_limpeza_periodica())
     try:
         yield

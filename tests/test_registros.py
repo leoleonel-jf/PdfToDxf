@@ -4,6 +4,8 @@ import os
 import sys
 import tempfile
 import time
+from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -129,6 +131,41 @@ def test_expurgo_de_um_ano():
     print("OK: o expurgo apaga o que passou de 1 ano e poupa o resto")
 
 
+def test_expurgo_sobrevive_a_arquivo_trancado():
+    """Um `PermissionError` no meio da varredura não pode abortar o expurgo
+    dos demais: é o caso de um antivírus ou backup do Windows segurando um
+    arquivo por um instante."""
+    resultado, attrs = cenario()
+    novo = registros.gravar(DADOS, resultado, attrs)
+
+    antigo = time.time() - registros.PRAZO_S - 60
+
+    velho = registros.pasta() / "velho.md"
+    velho.write_text("registro antigo", encoding="utf-8")
+    os.utime(velho, (antigo, antigo))
+
+    trancado = registros.pasta() / "trancado.md"
+    trancado.write_text("registro trancado", encoding="utf-8")
+    os.utime(trancado, (antigo, antigo))
+
+    stat_original = Path.stat
+
+    def stat_as_vezes_falha(self, *args, **kwargs):
+        if self.name == "trancado.md":
+            raise PermissionError("arquivo em uso por outro processo")
+        return stat_original(self, *args, **kwargs)
+
+    with mock.patch.object(Path, "stat", stat_as_vezes_falha):
+        apagados = registros.expurgar()
+
+    assert "velho.md" in apagados, apagados
+    assert "trancado.md" not in apagados, apagados
+    assert not velho.exists(), "o velho, que não travou, tem que sumir"
+    assert trancado.exists(), "o trancado sobrevive a esta passagem"
+    assert novo.exists()
+    print("OK: um arquivo trancado nao aborta o expurgo dos outros")
+
+
 if __name__ == "__main__":
     test_limites_do_desenho()
     test_o_md_traz_os_textos_e_os_numeros()
@@ -136,4 +173,5 @@ if __name__ == "__main__":
     test_gravar_nao_escapa_da_pasta()
     test_dois_iguais_no_mesmo_segundo_nao_se_sobrescrevem()
     test_expurgo_de_um_ano()
+    test_expurgo_sobrevive_a_arquivo_trancado()
     print("Todos os testes de registros passaram.")

@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import time
 from pathlib import Path
 
@@ -156,13 +157,17 @@ def expurgar(agora: float | None = None) -> list[str]:
     agora = time.time() if agora is None else agora
     apagados = []
     for arquivo in pasta().iterdir():
-        if not arquivo.is_file():
-            continue
         try:
-            if agora - arquivo.stat().st_mtime <= PRAZO_S:
+            info = arquivo.stat()
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            if agora - info.st_mtime <= PRAZO_S:
                 continue
             arquivo.unlink()
         except OSError:
-            continue        # sumiu no meio da varredura, ou está preso: fica
+            # Sumiu no meio da varredura, ou está preso por outro processo:
+            # fica para a passagem seguinte. Uma pasta cheia não pode abortar
+            # o expurgo no primeiro arquivo trancado.
+            continue
         apagados.append(arquivo.name)
     return apagados

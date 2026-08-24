@@ -129,10 +129,10 @@ async def enviar(request: Request, resposta: Response,
     #
     # **Não é pelo `busy_timeout` de 5 s**, que era o motivo escrito aqui antes
     # e não acontece: com o lock de escrita preso de propósito, `db.conexao()`
-    # sai em poucos milissegundos (medido duas vezes, 1,0 a 8,7 ms), porque
+    # sai em poucas dezenas de milissegundos no pior caso, porque
     # `PRAGMA journal_mode` num banco já em WAL e `CREATE TABLE IF NOT EXISTS`
-    # sobre tabela existente não pedem o lock. E, para visitante, `quem_pede`
-    # não toca o banco vez nenhuma.
+    # sobre tabela existente não pedem o lock — três ordens de grandeza abaixo
+    # dos 5 s. E, para visitante, `quem_pede` não toca o banco vez nenhuma.
     ident = await asyncio.to_thread(quem_pede, request, resposta)
     teto = quotas.limites(ident)["bytes"]
 

@@ -19,9 +19,10 @@ cookie sozinho não tapa o furo de limpar o cookie e repetir; o IP sozinho faria
 o escritório inteiro dividir cinco arquivos.
 
 **A ordem de `baldes` é parte do contrato:** o primeiro é sempre o balde que
-identifica quem pede — `cookie:` no visitante, `usuario:` no logado. `quotas`
-usa esse primeiro balde como chave de idempotência do consumo, então trocar a
-ordem faria a mesma identidade pagar duas vezes pelo mesmo trabalho.
+identifica quem pede — `cookie:` no visitante **e no logado sem confirmar**,
+`usuario:` só no logado **confirmado**. `quotas` usa esse primeiro balde como
+chave de idempotência do consumo, então trocar a ordem faria a mesma
+identidade pagar duas vezes pelo mesmo trabalho.
 
 **Este módulo não importa `auth`.** Ele precisa saber se há sessão, e `auth`
 precisa do IP para o teto de contas por dia — seria um ciclo. Quem chama

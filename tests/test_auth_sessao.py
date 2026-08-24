@@ -21,7 +21,7 @@ os.environ["PDFTODXF_SEGREDO"] = "segredo-de-teste"
 from fastapi.testclient import TestClient
 
 from tests.test_api_extracao import bytes_do_pdf_vetorial
-from web.api import auth, db
+from web.api import auth, db, identidade
 from web.api.main import app
 
 # O `tests/test_api_extracao`, importado acima só pela fábrica de PDF, desliga a
@@ -123,6 +123,69 @@ def test_o_cookie_de_sessao_e_httponly_e_samesite():
     assert "httponly" in bruto.lower(), bruto
     assert "samesite=lax" in bruto.lower(), bruto
     print("OK: o cookie de sessão é HttpOnly e SameSite=Lax")
+
+
+def _cookie_de(bruto_lista, nome: str) -> str:
+    """O `Set-Cookie` cru daquele nome, dentre os que a resposta trouxe."""
+    for bruto in bruto_lista:
+        if bruto.startswith(f"{nome}="):
+            return bruto
+    raise AssertionError(f"nenhum Set-Cookie de {nome!r} em {bruto_lista}")
+
+
+def test_cookie_de_sessao_leva_secure_so_em_https():
+    """`Secure` depende do esquema do pedido, não de uma constante.
+
+    `request.url.scheme == "https"` é o que decide `seguro` em `_gravar_sessao`.
+    Sem este teste, `seguro = False` sempre passava as seis baterias — o cookie
+    de sessão sairia sem `Secure` mesmo atrás de HTTPS em produção, viajando em
+    claro num downgrade — porque nenhum teste lia o `Set-Cookie` cru. O
+    `TestClient` aceita `base_url` com esquema; aqui os dois é que importam.
+    """
+    conta_pronta("bia@exemplo.com")
+
+    def entrar(base_url: str) -> str:
+        cliente = TestClient(app, base_url=base_url)
+        r = cliente.post("/api/auth/entrar",
+                         json={"email": "bia@exemplo.com", "senha": "abc12345"})
+        assert r.status_code == 200, r.text
+        return _cookie_de(r.headers.get_list("set-cookie"), auth.COOKIE_SESSAO)
+
+    via_https = entrar("https://testserver")
+    via_http = entrar("http://testserver")
+
+    assert "secure" in via_https.lower(), via_https
+    assert "secure" not in via_http.lower(), via_http
+    for bruto in (via_https, via_http):
+        assert "httponly" in bruto.lower(), bruto
+        assert "samesite=lax" in bruto.lower(), bruto
+    print("OK: cookie de sessão leva Secure em https e não em http")
+
+
+def test_cookie_de_visitante_leva_secure_so_em_https():
+    """O mesmo defeito de `Secure`, agora para `identidade.gravar_cookie`.
+
+    `quem_pede` calcula `seguro` do mesmo jeito para os dois cookies; o furo
+    de `_gravar_sessao` podia muito bem existir aqui também, sem teste nenhum
+    que falasse nisso.
+    """
+    limpar_consumo()
+
+    def enviar(base_url: str) -> str:
+        cliente = TestClient(app, base_url=base_url)
+        r = cliente.post("/api/jobs", files=um_pdf())
+        assert r.status_code == 200, r.text
+        return _cookie_de(r.headers.get_list("set-cookie"), identidade.COOKIE)
+
+    via_https = enviar("https://testserver")
+    via_http = enviar("http://testserver")
+
+    assert "secure" in via_https.lower(), via_https
+    assert "secure" not in via_http.lower(), via_http
+    for bruto in (via_https, via_http):
+        assert "httponly" in bruto.lower(), bruto
+        assert "samesite=lax" in bruto.lower(), bruto
+    print("OK: cookie de visitante leva Secure em https e não em http")
 
 
 def test_sessao_forjada_e_vencida_nao_valem():
@@ -366,6 +429,8 @@ if __name__ == "__main__":
     test_entrar_e_sair()
     test_email_inexistente_e_senha_errada_respondem_igual()
     test_o_cookie_de_sessao_e_httponly_e_samesite()
+    test_cookie_de_sessao_leva_secure_so_em_https()
+    test_cookie_de_visitante_leva_secure_so_em_https()
     test_sessao_forjada_e_vencida_nao_valem()
     test_sessao_emitida_no_futuro_nao_vale()
     test_sessao_de_conta_apagada_nao_vale()

@@ -217,15 +217,39 @@ PRAZO_SESSAO_S = 30 * 24 * 60 * 60
 FOLGA_DE_RELOGIO_S = 5 * 60
 
 
+def _impressao(guardado: str) -> str:
+    """Uma impressão curta do hash de senha guardado. **Nunca o hash em si.**
+
+    `db.marca` é um `hmac` com o segredo do serviço: destes 16 dígitos
+    hexadecimais não se reconstrói o hash, nem a senha, nem o sal. O que eles
+    permitem é uma coisa só — perguntar "o hash de agora é o mesmo de quando
+    esta sessão foi emitida?".
+    """
+    return db.marca(guardado)[:16]
+
+
 def criar_sessao(uid: int, agora: float | None = None) -> str:
-    """`<id>|<emitida em>`, assinado.
+    """`<id>|<emitida em>|<impressão da senha>`, assinado.
 
     **Sem tabela de sessões.** Nesta escala o cookie assinado basta, e trocar o
     segredo derruba todas as sessões de uma vez — que é justamente o botão de
     emergência que se quer ter.
+
+    A impressão é o que faz a **redefinição de senha** derrubar o que estava
+    aberto, sem tabela de sessões e sem coluna nova: `hash_senha` sorteia um sal
+    a cada chamada, então trocar a senha muda o hash guardado, muda a impressão,
+    e toda sessão emitida antes deixa de casar — a de quem invadiu junto com a
+    do dono, que entra de novo com a senha nova. Uma redefinição que não expulsa
+    ninguém não protege de nada.
+
+    Lê a linha do usuário de propósito, em vez de receber o hash pronto: quem
+    chama não precisa lembrar de reler o banco depois de uma reescrita de hash,
+    e é exatamente esse esquecimento que emitiria um cookie natimorto.
     """
     agora = time.time() if agora is None else agora
-    return db.assinar(f"{int(uid)}|{agora:.0f}", db.DOMINIO_SESSAO)
+    linha = por_id(uid)
+    impressao = _impressao(linha["senha"]) if linha is not None else ""
+    return db.assinar(f"{int(uid)}|{agora:.0f}|{impressao}", db.DOMINIO_SESSAO)
 
 
 def _sessao(request):
@@ -233,7 +257,15 @@ def _sessao(request):
     conteudo = db.conferir(valor, db.DOMINIO_SESSAO) if valor else None
     if not conteudo:
         return None
-    uid, _, emitida = conteudo.partition("|")
+    partes = conteudo.split("|")
+    if len(partes) != 3:
+        # Cookie do formato antigo, de duas partes, ou lixo com `|` sobrando.
+        # Recusa: sem a impressão não há como saber se a senha mudou desde a
+        # emissão, e aceitá-lo "por compatibilidade" deixaria de pé justamente
+        # as sessões que a redefinição existe para derrubar. O custo é os
+        # logados de antes desta versão entrarem de novo, uma vez.
+        return None
+    uid, emitida, impressao = partes
     try:
         uid, emitida = int(uid), float(emitida)
     except ValueError:
@@ -246,7 +278,7 @@ def _sessao(request):
     # além da folga de relógio é lixo: recusa.
     if emitida > time.time() + FOLGA_DE_RELOGIO_S:
         return None
-    return uid, emitida
+    return uid, emitida, impressao
 
 
 def dono_da_sessao(request):
@@ -255,12 +287,16 @@ def dono_da_sessao(request):
     lido = _sessao(request)
     if lido is None:
         return None
-    uid, emitida = lido
+    uid, emitida, impressao = lido
     if time.time() - emitida > PRAZO_SESSAO_S:
         return None
     linha = por_id(uid)
     if linha is None:
         return None      # a conta sumiu; o cookie não pode ressuscitá-la
+    # A impressão é **recalculada** do hash de agora, e não lida de lugar
+    # nenhum: é isso que faz a troca de senha expulsar quem estava dentro.
+    if not hmac.compare_digest(impressao, _impressao(linha["senha"])):
+        return None
     return identidade.Dono(id=uid, confirmado=linha["confirmado_em"] is not None)
 
 
@@ -270,3 +306,31 @@ def precisa_renovar(request) -> bool:
     if lido is None:
         return False
     return time.time() - lido[1] > PRAZO_SESSAO_S / 2
+
+
+UM_DIA_S = 24 * 60 * 60
+
+
+def teto_de_contas_por_ip() -> int:
+    """Quantas contas um endereço pode criar por dia. `0` é sem limite."""
+    try:
+        return max(0, int(os.environ.get("PDFTODXF_CONTAS_POR_IP_DIA", "5")))
+    except ValueError:
+        return 5
+
+
+def contas_do_ip_hoje(ip: str, agora: float | None = None) -> int:
+    """Quantas contas saíram deste IP nas últimas 24 h.
+
+    Sem isto, fabricar contas em série multiplica a cota sem esforço nenhum. O
+    ganho por conta é limitado — desde a tarefa 8 uma conta sem confirmar fica
+    nos baldes de visitante —, mas não é zero, e a série é de custo zero.
+
+    O IP vai na coluna como `marca`, e a conta é feita sobre ela.
+    """
+    agora = time.time() if agora is None else agora
+    linha = db.conexao().execute(
+        "SELECT count(*) AS n FROM usuarios "
+        "WHERE criado_de = ? AND criado_em > ?",
+        (db.marca(ip), agora - UM_DIA_S)).fetchone()
+    return int(linha["n"])

@@ -20,6 +20,12 @@ if "PDFTODXF_DADOS" not in os.environ:
 os.environ["PDFTODXF_BANCO"] = os.path.join(
     tempfile.mkdtemp(prefix="pdftodxf-db-"), "contas.db")
 os.environ["PDFTODXF_SEGREDO"] = "segredo-de-teste"
+# Aqui se testa outra coisa. Esta bateria cadastra quatro contas pela rota, do
+# mesmo cliente e portanto do mesmo IP, e o teto de contas por IP por dia é
+# cinco: um cadastro a mais nesta bateria a faria falhar com um 429 que não tem
+# nada a ver com o que ela mede. `0` é "sem limite"; quem prova o teto é
+# `tests/test_auth_senha.py`.
+os.environ["PDFTODXF_CONTAS_POR_IP_DIA"] = "0"
 
 from fastapi.testclient import TestClient
 

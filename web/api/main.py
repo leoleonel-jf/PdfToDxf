@@ -460,6 +460,13 @@ def registrar(pedido: PedidoDeRegistro, request: Request) -> dict:
         raise Recusa(422, "E-mail inválido.", "email_invalido")
 
     ip = identidade.ip_do_pedido(request)
+    # Antes de `criar_conta`, e igual nos dois caminhos: a recusa não depende de
+    # o endereço já existir, então ela não conta nada a quem sonda.
+    teto = auth.teto_de_contas_por_ip()
+    if teto and auth.contas_do_ip_hoje(ip) >= teto:
+        raise Recusa(429, "Muitas contas criadas deste endereço hoje. "
+                          "Tente amanhã.", "contas_demais")
+
     uid = auth.criar_conta(pedido.email, pedido.senha, ip)
     if uid is None:
         # **Nada de `queimar_tempo` aqui.** `criar_conta` avalia
@@ -536,6 +543,61 @@ def entrar(pedido: PedidoDeEntrada, request: Request,
     _gravar_sessao(resposta, int(linha["id"]), request.url.scheme == "https")
     return {"email": linha["email"],
             "confirmado": linha["confirmado_em"] is not None}
+
+
+class PedidoDeSenha(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+
+class NovaSenha(BaseModel):
+    senha: str = Field(min_length=8, max_length=200)
+
+
+@app.post("/api/auth/senha")
+def pedir_senha(pedido: PedidoDeSenha) -> dict:
+    """Manda o link de redefinição. **Responde igual para e-mail inexistente.**
+
+    Mesma defesa do login: mesmo status, mesmo corpo, e o caminho do inexistente
+    paga o mesmo `scrypt` pelo `queimar_tempo`. Sem isso o formulário de
+    "esqueci a senha" vira uma sonda de quem tem conta — e ela responde a
+    qualquer um, sem senha nenhuma.
+    """
+    linha = auth.por_email(pedido.email)
+    if linha is not None:
+        token = auth.novo_token(linha["id"], "senha", auth.PRAZO_SENHA_S)
+        enviador.enviar(
+            linha["email"], "Redefinir a senha do PdfToDxf",
+            "Para escolher uma senha nova, abra:\n\n"
+            f"{auth.url_base()}/?senha={token}\n\n"
+            "O link vale por 1 hora. Se você não pediu isto, ignore — nada "
+            "mudou na sua conta.")
+    else:
+        # Aqui `queimar_tempo` serve de verdade: este ramo não pagou hash
+        # nenhum, e o cronômetro contaria o que a mensagem cala.
+        auth.queimar_tempo()
+    return {"ok": True,
+            "mensagem": "Se este endereço tiver conta, o e-mail já saiu."}
+
+
+@app.post("/api/auth/senha/{token}")
+def concluir_senha(token: str, pedido: NovaSenha) -> dict:
+    """Troca a senha, consumindo o token. **Derruba as sessões abertas.**
+
+    É `POST`, e o link do e-mail aponta para a **tela** (`/?senha=<token>`), não
+    para cá: um `GET` que já trocasse a senha seria disparado por qualquer
+    pré-carregador de link do cliente de e-mail, e o token morreria antes de o
+    dono clicar.
+
+    O expulsar de quem estava dentro sai de graça de `reescrever_senha`: o hash
+    guardado muda, e a impressão que cada cookie de sessão carrega deixa de
+    bater (ver `auth.criar_sessao`). Não há nada a apagar aqui.
+    """
+    uid = auth.usar_token(token, "senha")
+    if uid is None:
+        raise Recusa(400, "Este link não vale mais. Peça outro.",
+                     "token_invalido")
+    auth.reescrever_senha(uid, pedido.senha)
+    return {"ok": True}
 
 
 @app.post("/api/auth/sair")

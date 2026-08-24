@@ -122,17 +122,77 @@ def test_confirmar_e_soltar_sao_de_mao_unica():
     print("OK: confirmar e soltar são de mão única e idempotentes")
 
 
-def test_ruim_antes_da_boa_a_boa_cobra():
-    """Página 1 escaneada solta; página 2 com vetores cobra. O saldo cai."""
+def test_confirmar_nao_promove_o_que_foi_solto():
+    """Soltar devolveu a vaga; confirmar depois não pode cobrá-la de volta.
+
+    Quem chama `soltar` só chama no fim do documento, com **nenhuma** página
+    pronta e o PDF de origem já apagado: não existe confirmação para vir depois
+    dela. Promover a linha solta cobraria duas levas por uma entrega só, porque
+    a tentativa seguinte grava reservas novas — a guarda de repetição ignora
+    `solto`.
+    """
     limpar_tudo()
     quem = visitante("c1")
     quotas.reservar(quem, "arquivo", "jobA", AGORA)
     quotas.soltar("jobA")
     assert quotas.restante(quem, "arquivo", AGORA)[0] == 5, "solto não ocupa vaga"
+
     quotas.confirmar("jobA")
-    assert estados("jobA") == {"confirmado": 2}, estados("jobA")
-    assert quotas.restante(quem, "arquivo", AGORA)[0] == 4, "a página boa cobra"
-    print("OK: ruim antes da boa — a boa cobra, o arquivo não sai de graça")
+    assert estados("jobA") == {"solto": 2}, estados("jobA")
+    assert quotas.restante(quem, "arquivo", AGORA)[0] == 5, "solto continua solto"
+    print("OK: confirmar não promove linha solta")
+
+
+def test_refazer_a_exportacao_que_falhou_cobra_uma_vaga_so():
+    """O caminho do `export`: reservar, soltar na falha, reservar e confirmar.
+
+    Medido antes da correção, forçando exceção em `exportacao.gerar`: as duas
+    levas viravam `confirmado` e a mesma entrega queimava duas vagas.
+    """
+    limpar_tudo()
+    quem = visitante("c1")
+    ref = "jobA:chave1"
+
+    # Primeira tentativa: `exportacao.gerar` estoura, e o `export` solta.
+    quotas.reservar(quem, "download", ref, AGORA)
+    quotas.soltar(ref)
+    assert estados(ref) == {"solto": 2}, estados(ref)
+    assert quotas.restante(quem, "download", AGORA)[0] == 15, "a falha não cobra"
+
+    # Segunda tentativa: a guarda de repetição ignora `solto`, então reserva de
+    # novo — e só essa leva pode ser promovida.
+    quotas.reservar(quem, "download", ref, AGORA)
+    quotas.confirmar(ref)
+    assert estados(ref) == {"solto": 2, "confirmado": 2}, estados(ref)
+    assert quotas.restante(quem, "download", AGORA)[0] == 14, \
+        "um DXF entregue, uma vaga queimada"
+    print("OK: refazer a exportação que falhou cobra uma vaga só")
+
+
+def test_a_falha_de_um_visitante_nao_e_cobrada_pela_confirmacao_de_outro():
+    """A referência de download é `job_id:chave`: não tem identidade dentro.
+
+    O visitante A estoura e solta; B gera a mesma combinação depois e confirma.
+    O `UPDATE` de `confirmar` casa por `referencia`, não por balde — se ele
+    promovesse linha solta, A pagaria por um DXF que só B recebeu.
+    """
+    limpar_tudo()
+    a = visitante("c-a", ip="198.51.100.7")
+    b = visitante("c-b", ip="203.0.113.7")
+    ref = "jobX:chave1"
+
+    quotas.reservar(a, "download", ref, AGORA)
+    quotas.soltar(ref)
+    assert quotas.restante(a, "download", AGORA)[0] == 15, "a falha de A não cobra"
+
+    quotas.reservar(b, "download", ref, AGORA)
+    quotas.confirmar(ref)
+
+    assert estados(ref) == {"solto": 2, "confirmado": 2}, estados(ref)
+    assert quotas.restante(b, "download", AGORA)[0] == 14, "B paga o que levou"
+    assert quotas.restante(a, "download", AGORA)[0] == 15, \
+        "A não pode pagar pelo DXF de B"
+    print("OK: a falha de um visitante não é cobrada pela confirmação de outro")
 
 
 def test_boa_antes_da_ruim_a_ruim_nao_desfaz():
@@ -238,16 +298,16 @@ def test_cobrar_depois_de_soltar_cobra_de_verdade():
     assert estados("jobA") == {"solto": 2, "confirmado": 2}, estados("jobA")
     assert quotas.restante(quem, "arquivo", AGORA)[0] == 4, "cobrar tem que cobrar"
 
-    # E o caminho que **precisa** enxergar a linha solta continua enxergando:
-    # `confirmar` promove o que estava solto, que é a página com vetores
-    # cobrando depois de a página escaneada ter soltado.
+    # E `reservar` sobre a mesma referência também reserva de verdade: é o que
+    # faz a tentativa seguinte de uma exportação que falhou pagar a sua vaga —
+    # uma, porque a leva solta fica onde está.
     limpar_tudo()
     quotas.reservar(quem, "arquivo", "jobB", AGORA)
     quotas.soltar("jobB")
-    quotas.confirmar("jobB")
-    assert estados("jobB") == {"confirmado": 2}, estados("jobB")
+    quotas.reservar(quem, "arquivo", "jobB", AGORA)
+    assert estados("jobB") == {"solto": 2, "reservado": 2}, estados("jobB")
     assert quotas.restante(quem, "arquivo", AGORA)[0] == 4
-    print("OK: cobrar depois de soltar cobra, e confirmar ainda promove o solto")
+    print("OK: cobrar e reservar depois de soltar cobram de verdade")
 
 
 def test_libera_em_ignora_a_linha_solta_mais_antiga():
@@ -484,6 +544,23 @@ def test_teto_de_mb_do_logado_e_truncado_no_teto_tecnico():
     print("OK: o teto de MB do logado nunca passa do teto técnico")
 
 
+def test_mb_em_zero_vale_o_teto_tecnico():
+    """`0` é "sem limite" em toda chave de cota — inclusive nesta.
+
+    Com o `min` cru, `mb == 0` dava teto **zero**: todo envio, de qualquer
+    tamanho, era recusado com "O arquivo passa de 0 MB.". "Sem teto de plano"
+    é o teto técnico do servidor, que continua sendo o de cima.
+    """
+    for chave, quem in (("PDFTODXF_COTA_MB", visitante("c1")),
+                        ("PDFTODXF_COTA_MB_LOGADO", logado(1))):
+        os.environ[chave] = "0"
+        try:
+            assert quotas.limites(quem)["bytes"] == limits.TETO_PDF_BYTES, chave
+        finally:
+            del os.environ[chave]
+    print("OK: MB em 0 é sem teto de plano, e vale o teto técnico")
+
+
 def test_conta_sem_confirmar_tem_cota_de_visitante():
     quem = logado(3, confirmado=False)
     assert quotas.limites(quem)["arquivos"] == 5
@@ -496,7 +573,9 @@ if __name__ == "__main__":
     test_limpar_o_cookie_nao_devolve_cota()
     test_a_janela_desliza()
     test_confirmar_e_soltar_sao_de_mao_unica()
-    test_ruim_antes_da_boa_a_boa_cobra()
+    test_confirmar_nao_promove_o_que_foi_solto()
+    test_refazer_a_exportacao_que_falhou_cobra_uma_vaga_so()
+    test_a_falha_de_um_visitante_nao_e_cobrada_pela_confirmacao_de_outro()
     test_boa_antes_da_ruim_a_ruim_nao_desfaz()
     test_reserva_nunca_confirmada_continua_contando()
     test_a_mesma_referencia_nao_cobra_duas_vezes()
@@ -515,5 +594,6 @@ if __name__ == "__main__":
     test_o_aviso_da_janela_rearma_quando_o_valor_muda()
     test_tipo_desconhecido_e_erro()
     test_teto_de_mb_do_logado_e_truncado_no_teto_tecnico()
+    test_mb_em_zero_vale_o_teto_tecnico()
     test_conta_sem_confirmar_tem_cota_de_visitante()
     print("Todos os testes de cota passaram.")

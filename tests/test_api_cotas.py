@@ -123,6 +123,46 @@ def test_o_cookie_do_visitante_e_gravado_no_primeiro_envio():
     print("OK: o cookie do visitante é gravado no primeiro envio")
 
 
+def test_visitante_recusado_tambem_recebe_o_cookie():
+    """A recusa não pode engolir o `Set-Cookie`.
+
+    O handler de `Recusa` monta um `JSONResponse` novo, e o `Response` que a
+    rota recebeu por injeção não chega até ele. Sem levar o cookie pendente
+    junto, o visitante recusado recomeça num balde de cookie novo a cada
+    tentativa: só o balde do IP seguraria o furo, e o do cookie viraria
+    descartável.
+    """
+    limpar_consumo()
+    from web.api.identidade import COOKIE
+    os.environ["PDFTODXF_COTA_ARQUIVOS"] = "1"
+    os.environ["PDFTODXF_COTA_FOLGA"] = "1"   # o balde do IP enche com 1 também
+    try:
+        primeiro = cliente_novo()
+        assert enviar_com(primeiro).status_code == 200
+
+        # Visitante novo, sem cookie nenhum: o balde do IP já está cheio, então
+        # ele leva 429 no **primeiro** pedido — nenhum 200 gravou cookie antes.
+        recusado = cliente_novo()
+        r = enviar_com(recusado)
+        assert r.status_code == 429, (r.status_code, r.text)
+        assert "set-cookie" in r.headers, dict(r.headers)
+        valor = recusado.cookies.get(COOKIE)
+        assert valor, dict(recusado.cookies)
+
+        # A tentativa seguinte manda o cookie de volta e o servidor o
+        # reconhece: não grava outro, porque não há outro a gravar. É o mesmo
+        # balde, e não um balde por tentativa.
+        de_novo = enviar_com(recusado)
+        assert de_novo.status_code == 429, de_novo.status_code
+        assert "set-cookie" not in de_novo.headers, \
+            "cookie novo a cada recusa: o balde do cookie virou descartável"
+        assert recusado.cookies.get(COOKIE) == valor
+    finally:
+        os.environ.pop("PDFTODXF_COTA_ARQUIVOS", None)
+        os.environ.pop("PDFTODXF_COTA_FOLGA", None)
+    print("OK: o visitante recusado recebe o cookie e cai no mesmo balde")
+
+
 def test_pdf_sem_vetores_solta_a_reserva():
     limpar_consumo()
     cliente = cliente_novo()
@@ -320,6 +360,7 @@ def test_download_esgotado_responde_429():
 if __name__ == "__main__":
     test_visitante_e_barrado_no_sexto_envio()
     test_o_cookie_do_visitante_e_gravado_no_primeiro_envio()
+    test_visitante_recusado_tambem_recebe_o_cookie()
     test_pdf_sem_vetores_solta_a_reserva()
     test_pagina_boa_confirma_e_pagina_ruim_depois_nao_desfaz()
     test_pagina_ruim_antes_da_boa_nao_devolve_a_vaga()

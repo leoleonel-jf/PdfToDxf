@@ -18,8 +18,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from . import (db, exportacao, identidade, jobs, limits, quotas, registros,
-               storage)
+from . import db, exportacao, identidade, jobs, quotas, registros, storage
 
 PEDACO = 1024 * 1024   # 1 MB por leitura do envio
 INTERVALO_LIMPEZA = 10 * 60   # 10 minutos
@@ -86,13 +85,24 @@ async def enviar(request: Request, resposta: Response,
     declarado = request.headers.get("content-length")
     if declarado and declarado.isdigit() and int(declarado) > teto:
         raise Recusa(413, f"O arquivo passa de {_mb(teto)} MB.", "tamanho",
-                     teto_bytes=teto)
+                     ident=ident, teto_bytes=teto)
 
     job_id = storage.novo_id()
     try:
-        quotas.reservar(ident, "arquivo", job_id)
+        # Em thread: `reservar` abre `BEGIN IMMEDIATE` com `busy_timeout` de
+        # 5 s, e esta rota é `async def` — ela roda **no fio do laço de
+        # eventos**. Numa rajada de envios do mesmo IP os escritores se
+        # serializam, e o bloqueio pararia o laço inteiro junto, inclusive os
+        # `GET` de estado que a tela faz em polling. As rotas síncronas do
+        # FastAPI já rodam num pool de threads e não têm o problema.
+        #
+        # `db.conexao()` é por fio, então a thread do pool usa a conexão dela e
+        # não a do laço — é exatamente para isso que a conexão por fio existe.
+        # A transação abre e fecha dentro da mesma chamada (`_consumir` sempre
+        # sai por `COMMIT` ou `ROLLBACK`), então nada fica pendurado na thread.
+        await asyncio.to_thread(quotas.reservar, ident, "arquivo", job_id)
     except quotas.SemVaga as e:
-        raise _sem_vaga(e)
+        raise _sem_vaga(e, ident)
 
     destino = storage.pasta(job_id)
     destino.mkdir(parents=True, exist_ok=True)
@@ -108,7 +118,7 @@ async def enviar(request: Request, resposta: Response,
                 total += len(pedaco)
                 if total > teto:
                     raise Recusa(413, f"O arquivo passa de {_mb(teto)} MB.",
-                                 "tamanho", teto_bytes=teto)
+                                 "tamanho", ident=ident, teto_bytes=teto)
                 saida.write(pedaco)
 
         if total == 0:
@@ -126,7 +136,10 @@ async def enviar(request: Request, resposta: Response,
         # O envio não virou trabalho nenhum: nada foi extraído, e a reserva não
         # tem mais o que confirmar. A vaga volta. Reserva que **fica** contando
         # é a de quem enviou um PDF bom e sumiu — essa consumiu disco e fila.
-        quotas.soltar(job_id)
+        #
+        # Em thread pelo mesmo motivo do `reservar` acima: é escrita no banco
+        # numa rota `async def`.
+        await asyncio.to_thread(quotas.soltar, job_id)
         raise
 
     nome = os.path.basename(arquivo.filename or "planta.pdf")
@@ -250,24 +263,40 @@ class Recusa(Exception):
     distinguir "cota de arquivos" de "cota de downloads" sem ler texto — texto
     muda, código não. O `extra` é o que cada recusa acrescenta: `libera_em` na
     cota, `teto_bytes` no tamanho.
+
+    A `ident` viaja junto porque o handler monta uma resposta nova e o
+    `Response` que a rota recebeu por injeção não chega até lá: sem ela, o
+    visitante recusado sairia sem cookie. Vem declarada, e não dentro de
+    `**extra`, para não vazar para o corpo da resposta.
     """
 
-    def __init__(self, status: int, detail: str, codigo: str, **extra):
+    def __init__(self, status: int, detail: str, codigo: str,
+                 ident=None, **extra):
         super().__init__(detail)
         self.status = status
         self.detail = detail
         self.codigo = codigo
+        self.ident = ident
         self.extra = extra
 
 
 @app.exception_handler(Recusa)
 def _recusa(request: Request, exc: Recusa):
-    return JSONResponse(status_code=exc.status,
-                        content={"detail": exc.detail, "codigo": exc.codigo,
-                                 **exc.extra})
+    resposta = JSONResponse(status_code=exc.status,
+                            content={"detail": exc.detail,
+                                     "codigo": exc.codigo, **exc.extra})
+    # O cookie pendente tem de sobreviver à recusa. Sem isto o visitante que
+    # leva 413 ou 429 nunca recebe cookie nenhum e recomeça num balde novo a
+    # cada tentativa: o balde do cookie viraria descartável, e só o do IP
+    # seguraria o furo. Pela mesma `gravar_cookie` da rota, para não haver duas
+    # versões da regra do cookie.
+    if exc.ident is not None:
+        identidade.gravar_cookie(resposta, exc.ident,
+                                 seguro=request.url.scheme == "https")
+    return resposta
 
 
-def _sem_vaga(e: quotas.SemVaga) -> Recusa:
+def _sem_vaga(e: quotas.SemVaga, ident=None) -> Recusa:
     quando = ""
     if e.libera_em:
         # Hora local do servidor, que é a do usuário nesta implantação. A tela
@@ -278,11 +307,13 @@ def _sem_vaga(e: quotas.SemVaga) -> Recusa:
     if e.tipo == "arquivo":
         detalhe = ("Você já enviou o máximo de arquivos permitido nas últimas "
                    "horas." + quando)
-        return Recusa(429, detalhe, "cota_arquivos", libera_em=e.libera_em)
+        return Recusa(429, detalhe, "cota_arquivos", ident=ident,
+                      libera_em=e.libera_em)
     detalhe = ("Você já gerou o máximo de arquivos DXF permitido nas últimas "
                "horas. Baixar de novo um DXF que você já gerou continua "
                "liberado." + quando)
-    return Recusa(429, detalhe, "cota_downloads", libera_em=e.libera_em)
+    return Recusa(429, detalhe, "cota_downloads", ident=ident,
+                  libera_em=e.libera_em)
 
 
 class PedidoDeExportacao(BaseModel):
@@ -318,7 +349,7 @@ def exportar(job_id: str, pagina: int, pedido: PedidoDeExportacao,
         try:
             quotas.reservar(ident, "download", referencia)
         except quotas.SemVaga as e:
-            raise _sem_vaga(e)
+            raise _sem_vaga(e, ident)
 
     try:
         ch, _caminho, do_cache, entidades = exportacao.gerar(

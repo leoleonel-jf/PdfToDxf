@@ -5,15 +5,24 @@ foi consumido na janela: **não existe virada em horário fixo**, e por isso nã
 existe a meia-noite em que todo mundo volta a enviar de uma vez.
 
 Reservar e confirmar são coisas separadas porque PDF sem vetores e worker morto
-por recurso não podem consumir cota. A transição é de mão única e idempotente,
-e é isso que faz o caso misto sair certo: num documento em que a página 1 é
-escaneada e a página 2 tem vetores, a página 1 solta e a página 2 cobra; na
-ordem inversa, a página 2 confirma e a página 1 não desfaz.
+por recurso não podem consumir cota. A transição é de mão única e idempotente:
+a primeira página que dá certo confirma a reserva do documento inteiro, e o que
+falhar depois não desfaz.
 
-Soltar **não apaga**: marca `'solto'`. Apagar entregaria o documento misto de
-graça — a página escaneada some com a linha e a página com vetores não acha
-mais nada para promover. A linha solta fica, invisível para a contagem, à
-espera de uma confirmação que talvez venha da página seguinte.
+**A soltura é do documento, não da página.** Quem chama `soltar` só chama
+quando **todas** as páginas terminaram e **nenhuma** ficou pronta — nesse ponto
+o PDF de origem já foi apagado, e não há mais página que possa dar certo.
+Soltar por página deixava furar o teto: converter primeiro a página escaneada
+devolvia a vaga, o envio seguinte entrava, e a página com vetores promovia
+depois uma reserva já solta.
+
+Soltar **não apaga**: marca `'solto'`. A linha fica, invisível para a contagem,
+como rastro do que passou por ali — e é o que faz `cobrar` sobre a mesma
+referência cobrar de verdade, em vez de esbarrar na guarda de repetição.
+`confirmar` **não** promove linha solta: soltar já devolveu a vaga, e uma
+tentativa nova reserva de novo. Promover as duas levas cobraria duas vagas por
+uma entrega só — e, como a referência de download não carrega identidade
+dentro, cobraria de quem falhou o DXF que outro recebeu.
 
 Reserva nunca confirmada **continua contando** até sair da janela. Quem envia e
 fecha a aba consumiu banda e disco; não há varredura de reserva órfã, porque a
@@ -95,6 +104,22 @@ def janela_s() -> int:
     return segundos
 
 
+def _bytes_do_plano(mb: int) -> int:
+    """Os MB do plano em bytes, nunca acima do teto técnico do servidor.
+
+    `0` é "sem limite" em toda chave de cota, e aqui não pode ser diferente:
+    "sem teto de plano" é o teto técnico, e não teto zero. Fazendo o `min` cru,
+    `PDFTODXF_COTA_MB=0` recusava **todo** envio com "O arquivo passa de 0 MB.".
+
+    O teto técnico manda nos dois sentidos: a chave é do plano, o teto é do
+    servidor, e deixar a chave passar por cima abriria um caminho de derrubar o
+    site por configuração.
+    """
+    if mb == 0:
+        return limits.TETO_PDF_BYTES
+    return min(mb * 1024 * 1024, limits.TETO_PDF_BYTES)
+
+
 def limites(ident) -> dict:
     """Os tetos do plano de quem está pedindo.
 
@@ -102,20 +127,15 @@ def limites(ident) -> dict:
     confirmação valer alguma coisa.
     """
     if ident.tipo == "logado" and ident.confirmado:
-        mb = _chave("mb_logado")
         return {
             "arquivos": _chave("arquivos_logado"),
             "downloads": _chave("downloads_logado"),
-            # Nunca acima do teto técnico: a chave é do plano, o teto é do
-            # servidor. Deixar a chave passar por cima abriria um caminho de
-            # derrubar o site por configuração.
-            "bytes": min(mb * 1024 * 1024, limits.TETO_PDF_BYTES),
+            "bytes": _bytes_do_plano(_chave("mb_logado")),
         }
-    mb = _chave("mb")
     return {
         "arquivos": _chave("arquivos"),
         "downloads": _chave("downloads"),
-        "bytes": min(mb * 1024 * 1024, limits.TETO_PDF_BYTES),
+        "bytes": _bytes_do_plano(_chave("mb")),
     }
 
 
@@ -125,8 +145,8 @@ def _teto(ident, tipo: str, balde) -> int:
 
 
 def _contar(con, balde: str, tipo: str, desde: float) -> int:
-    # `estado <> 'solto'`: linha solta não ocupa vaga. Ela fica no banco só
-    # para a página seguinte poder confirmá-la.
+    # `estado <> 'solto'`: linha solta não ocupa vaga — ela já foi devolvida, e
+    # nada mais a promove. Fica no banco como rastro da tentativa.
     linha = con.execute(
         "SELECT count(*) AS n FROM consumo "
         "WHERE balde = ? AND tipo = ? AND quando > ? AND estado <> 'solto'",
@@ -229,12 +249,16 @@ def cobrar(ident, tipo: str, referencia: str, agora=None) -> None:
 def confirmar(referencia: str) -> None:
     """Promove as reservas daquela referência. Uma vez confirmado, nada solta.
 
-    Promove também o que já tinha sido solto: é a página com vetores cobrando
-    depois de a página escaneada ter soltado.
+    **Só `'reservado'` sobe.** Linha solta fica solta: soltar já devolveu a
+    vaga, e a tentativa seguinte grava reserva nova. Promover a solta junto
+    cobraria as duas levas por uma entrega só — refazer uma exportação que
+    estourou queimava duas vagas — e, pior, a referência de download é
+    `job_id:chave`, sem identidade dentro: a confirmação de um visitante
+    promoveria a linha solta de outro, que pagaria por um DXF que não recebeu.
     """
     con = db.conexao()
     con.execute("UPDATE consumo SET estado = 'confirmado' "
-                "WHERE referencia = ? AND estado IN ('reservado', 'solto')",
+                "WHERE referencia = ? AND estado = 'reservado'",
                 (referencia,))
     con.commit()
 
@@ -242,8 +266,9 @@ def confirmar(referencia: str) -> None:
 def soltar(referencia: str) -> None:
     """Devolve as vagas ainda reservadas. Não mexe no que já foi confirmado.
 
-    Marca, não apaga: a linha apagada não pode mais ser cobrada pela página
-    seguinte, e o documento misto sairia de graça.
+    Marca, não apaga: a linha fica como rastro daquela tentativa, e é ela que
+    faz `cobrar` sobre a mesma referência cobrar de verdade em vez de a guarda
+    de repetição achar que já foi paga.
     """
     con = db.conexao()
     con.execute("UPDATE consumo SET estado = 'solto' "

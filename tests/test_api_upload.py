@@ -15,10 +15,9 @@ os.environ["PDFTODXF_DADOS"] = tempfile.mkdtemp(prefix="pdftodxf-teste-")
 # tests/test_api_cotas.py.
 os.environ["PDFTODXF_COTA_ARQUIVOS"] = "0"
 os.environ["PDFTODXF_COTA_DOWNLOADS"] = "0"
-# O teto de MB não pode ser `0`: ali `0` seria teto zero, não "sem limite".
-# Um valor bem acima de `limits.TETO_PDF_BYTES` deixa valer o teto técnico, que
-# é justamente o que `test_arquivo_grande_demais` confere.
-os.environ["PDFTODXF_COTA_MB"] = "1000"
+# `0` aqui também é "sem limite", e "sem teto de plano" é o teto técnico do
+# servidor — que é justamente o que `test_arquivo_grande_demais` confere.
+os.environ["PDFTODXF_COTA_MB"] = "0"
 # Banco próprio e segredo fixo: sem isto a bateria escreveria consumo num
 # `dados/contas.db` ao lado do repositório e avisaria do segredo aleatório.
 os.environ["PDFTODXF_BANCO"] = os.path.join(
@@ -87,17 +86,52 @@ def test_arquivo_que_nao_e_pdf():
     print("OK: arquivo que não é PDF é recusado com 400")
 
 
+BORDA = "----pdftodxf-sem-content-length"
+
+
+def multipart_em_pedacos(corpo: bytes, pedaco: int = 64 * 1024):
+    """O `multipart` montado à mão, em pedaços.
+
+    Corpo em gerador é o que faz o `httpx` sair *chunked*, **sem**
+    `content-length` — e é assim que o envio escapa da primeira conferência e
+    chega ao laço de leitura, que é o ramo que se quer exercitar.
+    """
+    yield (f"--{BORDA}\r\n"
+           'Content-Disposition: form-data; name="arquivo"; '
+           'filename="grande.pdf"\r\n'
+           "Content-Type: application/pdf\r\n\r\n").encode()
+    for i in range(0, len(corpo), pedaco):
+        yield corpo[i:i + pedaco]
+    yield f"\r\n--{BORDA}--\r\n".encode()
+
+
 def test_arquivo_grande_nao_fica_em_disco():
-    """O teto é verificado durante a gravação, não depois: nenhum resto
-    do envio recusado pode sobrar na pasta de dados."""
+    """O teto é conferido **durante** a gravação, e não só pelo `content-length`.
+
+    Com `content-length` o envio morre antes de a pasta existir, e o
+    `antes == depois` seria verdade por vacuidade — nada teria acontecido. Aqui
+    o envio vai *chunked*: a pasta chega a ser criada, o `raise Recusa` de
+    dentro do laço de `arquivo.read` é quem recusa (o 413 é o que prova qual
+    ramo agiu — sem ele o entulho viraria um 400 de "não é PDF"), e o `rmtree`
+    do caminho de falha é quem limpa.
+    """
     from web.api import storage
-    antes = set(p.name for p in storage.raiz().iterdir())
-    entulho = b"%PDF-1.4\n" + b"0" * (limits.TETO_PDF_BYTES + 1024)
-    cliente.post("/api/jobs",
-                 files={"arquivo": ("grande.pdf", entulho, "application/pdf")})
-    depois = set(p.name for p in storage.raiz().iterdir())
-    assert antes == depois, f"sobrou lixo: {depois - antes}"
-    print("OK: envio recusado não deixa resto em disco")
+    os.environ["PDFTODXF_COTA_MB"] = "1"   # teto pequeno: 2 MB de entulho bastam
+    try:
+        antes = set(p.name for p in storage.raiz().iterdir())
+        entulho = b"%PDF-1.4\n" + b"0" * (2 * 1024 * 1024)
+        pedido = cliente.build_request(
+            "POST", "/api/jobs", content=multipart_em_pedacos(entulho),
+            headers={"content-type": f"multipart/form-data; boundary={BORDA}"})
+        assert "content-length" not in pedido.headers, dict(pedido.headers)
+        r = cliente.send(pedido)
+        assert r.status_code == 413, (r.status_code, r.text)
+        assert r.json()["codigo"] == "tamanho", r.json()
+        depois = set(p.name for p in storage.raiz().iterdir())
+        assert antes == depois, f"sobrou lixo: {depois - antes}"
+    finally:
+        os.environ["PDFTODXF_COTA_MB"] = "0"
+    print("OK: o teto barra durante a leitura, e o recusado não fica em disco")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # Handoff — versão web do PdfToDxf
 
-Estado em 2026-08-21. Leia isto primeiro ao retomar em sessão nova.
+Estado em 2026-08-24. Leia isto primeiro ao retomar em sessão nova.
 
 > ## Se o pedido foi só "continuar", faça isto
 >
@@ -9,11 +9,11 @@ Estado em 2026-08-21. Leia isto primeiro ao retomar em sessão nova.
 > mostra 606. Era o `DIMLFAC`. **O app está certo; não há nada a corrigir.**
 > Detalhe logo abaixo, em "A questão do ×100, encerrada".
 >
-> **Execute a etapa 4: contas, cotas e registros.** A spec já existe
-> (`docs/superpowers/specs/2026-08-09-contas-cotas-registros-design.md`); falta
-> o **plano de implementação**. Comece por `superpowers:writing-plans` sobre
-> essa spec, e depois execute com `superpowers:subagent-driven-development`.
-> **Não peça confirmação para começar a etapa 4.**
+> **A etapa 4 está quase pronta e parou num ponto combinado.** O plano existe
+> (`docs/superpowers/plans/2026-08-21-contas-cotas-registros.md`), as tarefas 1
+> a 11 estão completas no branch `contas-cotas-registros`, e falta a tarefa 12
+> mais o corte dos PRs. **Leia "Onde a etapa 4 parou" logo abaixo** — é a lista
+> ordenada do que fazer, e ela substitui este parágrafo como primeiro passo.
 >
 > **Para subir a tela**, quando ele pedir ou quando você precisar conferir algo:
 > existe `.claude/launch.json` com dois alvos. Use a ferramenta de preview, não
@@ -51,6 +51,110 @@ Estado em 2026-08-21. Leia isto primeiro ao retomar em sessão nova.
 > com 11,34 m onde a parede tem 10,00 m. Sete revisões por tarefa não pegaram,
 > porque cada uma só via o seu pedaço; a revisão final do branch pegou. **Antes
 > de escrever qualquer conversão, procure se ela já existe no núcleo.**
+
+## Onde a etapa 4 parou (2026-08-24)
+
+O plano é `docs/superpowers/plans/2026-08-21-contas-cotas-registros.md`; o
+ledger da execução é `.superpowers/sdd/progress-etapa4.md` (fora do git, só
+nesta máquina, e é onde está o detalhe de cada tarefa). **As tarefas 1 a 11
+estão completas**, no branch `contas-cotas-registros`, 22 commits à frente da
+`main`.
+
+### O que fazer, nesta ordem
+
+1. **Rodar a bateria inteira** — receita na seção "Como rodar a bateria
+   inteira", mais abaixo. Depois das três sessões de fundo nada foi conferido
+   junto.
+
+2. **Trazer o branch `claude/great-keller-c8dc41` para dentro.** Ele saiu de
+   `61da3ce` e tem três commits que ainda **não** estão em
+   `contas-cotas-registros`: paciência na leitura da ficha
+   (`web/api/storage.py`), o teste correspondente, e duas dívidas novas que ele
+   acrescenta à seção "Dívida conhecida" deste arquivo — elas ainda **não**
+   aparecem aqui, chegam junto com o merge. O worktree está limpo, tudo
+   commitado.
+
+3. **Cortar os quatro PRs**, no corte já combinado com o usuário — a regra de
+   ouro dele é PRs pequenos:
+
+   | PR | Conteúdo | Faixa |
+   |---|---|---|
+   | 1 | Registros (tarefas 1–2) | `bb99ec2..1904723` |
+   | 2 | Cotas (tarefas 3–6) | `3bcb155..c63350d` |
+   | 3 | Contas (tarefas 7–9) | `2b3875b..d6bab95` |
+   | 4 | Tela (tarefas 10–11) | `0792607..14a7cf3` |
+
+   Os commits de 2026-08-24 — `61da3ce` e os do `great-keller` — são
+   **posteriores** a esse corte e não têm PR. Decidir se entram no PR 4 ou num
+   quinto é pergunta para o usuário, em múltipla escolha.
+
+4. **Executar a tarefa 12**, a última do plano. Foi deixada de propósito para
+   uma sessão de contexto limpo: `impressao.ts`, as cinco linhas de erro em
+   `estados.ts`, `privacidade.html` (que o rodapé já referencia e não existe), e
+   o modo nova-senha da tela. Esse último é o **passo 5c**, acrescentado ao
+   brief para tapar um buraco do plano que a revisão da tarefa 9 pegou: o e-mail
+   de redefinição manda para `/?senha=<token>` e nenhuma tarefa construía essa
+   tela.
+
+### As três sessões de fundo, encerradas
+
+| Worktree | O que fez | Situação |
+|---|---|---|
+| `friendly-meninsky-f40d3f` | teste intermitente da limpeza periódica | **já em `contas-cotas-registros`** (`61da3ce`) |
+| `great-keller-c8dc41` | `PermissionError` na ficha sob carga | commitado **no próprio branch**, falta trazer |
+| `festive-wright-42fee4` | — | vazio, nada a trazer |
+
+O que a primeira corrigiu, porque o padrão se repete: o teste da limpeza
+periódica dormia 0,3 s de relógio antes de cancelar a tarefa, e uma volta do
+laço despacha quatro trabalhos em `asyncio.to_thread`. Numa máquina ocupada os
+dois primeiros já estouravam o prazo. Sob carga de 40 processos, o A/B deu 5/10
+antes e 10/10 depois. **Espere a condição, nunca um tempo de relógio.**
+
+### Pendências abertas da etapa 4
+
+Nenhuma bloqueia o corte dos PRs. Todas vêm do ledger, menos a última seção.
+
+**Da tarefa 11 (tela)** — a revisão aprovou com ressalvas, tudo cobertura e UX:
+
+- **I1.** `ErroDaApi.codigo` foi para produção **sem teste**, e é o alicerce da
+  tarefa 12. Cubra antes de construir em cima dele.
+- **I2.** Erro no submit apaga os dois campos: senha errada faz o e-mail sumir
+  junto.
+- **I3.** `Escape` não fecha a caixa; sem `role="dialog"`; o foco não volta ao
+  fechar.
+- **I4.** `atualizarCota` sem guarda de "em voo": resposta velha pode
+  sobrescrever a nova — o visitante aterrissando depois do login troca o e-mail
+  de volta por "Entrar".
+- **I5.** `horaDeLiberar` ignora `agora`: "libera às 14h20" continua na tela às
+  15h.
+
+**Para o usuário decidir, e ainda não foi levado a ele:** não há freio de
+tentativas em `POST /api/auth/entrar`. O único custo por tentativa é o scrypt de
+~110 ms. A spec põe anti-robô fora de escopo, mas isto é adjacente — era para
+ser perguntado no fim da etapa.
+
+**Menores, detalhados no ledger:** o teste do `compare_digest` ainda passa se a
+implementação chamar `compare_digest` e **descartar** o resultado, decidindo por
+`==`; o comentário de `PISO_DE_SENHA_S` descreve uma thread por pedido que não
+existe mais; trabalhador morto da fila de envio não é recriado; a guarda
+`if linha else ""` de `GET /api/cota` não tem teste e a mutação sobrevive.
+
+### Achado novo, não investigado: `test_api_cotas.py` sob carga
+
+Apareceu por acidente em 2026-08-24, ao medir a bateria paralela. Isolado, o
+arquivo dá 5/5; com 40 processos queimando CPU, falhou **1 de 6**:
+
+```
+PermissionError: [Errno 13] Permission denied:
+  ...\pdftodxf-teste-<...>\<id>\ficha.json
+```
+
+É a mesma família que o `great-keller` atacou — a janela do `os.replace` na
+troca atômica da ficha —, mas em **outro** arquivo de teste, e não sei se a
+correção dele alcança este caminho. **Não peguei o traceback:** numa segunda
+tentativa sob a mesma carga passou 8 de 8, e não insisti. Para reproduzir, suba
+~40 processos de CPU e rode o arquivo em laço. **Confirme antes de corrigir**, e
+comece conferindo se ele não sumiu sozinho depois de trazer o `great-keller`.
 
 ## Duas armadilhas de ambiente, para não perder tempo
 
@@ -423,6 +527,51 @@ importa: até a correção do commit `1687cef` ela era intermitente — uma pág
 ficava presa em `na_fila` e a espera estourava os 60 s. Se voltar a acontecer,
 o suspeito é a troca atômica da ficha, não lentidão: a extração leva 0,5 s.
 
+## Como rodar a bateria inteira
+
+Medido em 2026-08-24 nesta máquina (20 núcleos), no branch
+`contas-cotas-registros`. São **25 arquivos** em `tests/`, e cada um é um
+programa independente — sem pytest, com `if __name__ == "__main__":`.
+
+**Em paralelo, um processo por arquivo — 20 s:**
+
+```bash
+cd C:/Users/leole/Programas/PdfToDxf
+for f in tests/test_*.py; do
+  ( ./.venv/Scripts/python.exe "$f" >/tmp/log_$(basename "$f").txt 2>&1 \
+      || echo "FALHA $f" ) &
+done
+wait
+echo "fim"
+```
+
+Silêncio é sucesso: só as falhas se anunciam, e a saída de cada arquivo fica em
+`/tmp/log_<arquivo>.txt` para ler depois. **Sequencial leva 131 s** — o paralelo
+é ~7× mais rápido. Rodado três vezes seguidas, 25 de 25, sem falha.
+
+**Por que dá para paralelizar:** cada arquivo monta as próprias pastas
+temporárias e o próprio banco no topo do módulo (`PDFTODXF_DADOS`,
+`PDFTODXF_BANCO` e companhia, por `tempfile.mkdtemp`). Não há estado
+compartilhado entre eles. **Confira essa premissa ao acrescentar um arquivo de
+teste** — um que grave no `dados/` do projeto quebraria os vizinhos, e a falha
+apareceria no arquivo errado.
+
+**Duas armadilhas do laço acima**, ambas custaram tempo em 2026-08-24:
+
+- `wait` dentro de `$(...)` **não** espera os jobs do processo pai. A saída vaza
+  para os comandos seguintes e você atribui a falha ao arquivo errado.
+- Queimadores de CPU deixados vivos de uma medição anterior fazem a bateria
+  falhar por contenção. Mate-os antes de concluir qualquer coisa.
+
+O frontend continua separado, e é sequencial:
+
+```bash
+cd web/frontend && npm test && npm run build
+```
+
+O ponta a ponta (`npm run e2e`) tem armadilha própria — veja "Duas armadilhas de
+ambiente" lá em cima, sobre a porta 8000.
+
 ## O que a planta real disse sobre os tetos
 
 Medido em 2026-08-08 com `inspecionar`, que é para isso que ele existe.
@@ -608,9 +757,10 @@ por plataforma.
 
 ### Trabalho de sessão
 
-8. **Executar a etapa 4 — contas, cotas e registros.** A spec está pronta em
-   `docs/superpowers/specs/2026-08-09-contas-cotas-registros-design.md`; falta
-   o plano. É o que "continuar" significa.
+8. **Terminar a etapa 4 — contas, cotas e registros.** O plano foi escrito em
+   2026-08-21 e as tarefas 1 a 11 estão feitas; falta a tarefa 12 e o corte dos
+   PRs. **A lista ordenada está em "Onde a etapa 4 parou", no topo** — é o que
+   "continuar" significa hoje.
 
    **Por que a etapa 4 antes da auto-escala**, decidido em 2026-08-09: as
    etapas 4 e 5 são o que leva o projeto ao objetivo declarado — versão web

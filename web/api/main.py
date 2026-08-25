@@ -659,6 +659,30 @@ def sair(resposta: Response) -> dict:
     return {"ok": True}
 
 
+def _saldo(ident, tipo: str, de: int) -> dict:
+    restam, libera = quotas.restante(ident, tipo)
+    return {"restam": restam, "de": de or None, "libera_em": libera}
+
+
+@app.get("/api/cota")
+def cota(request: Request, resposta: Response) -> dict:
+    """Quanto sobra, e quando libera. **Não consome nada.**"""
+    ident = quem_pede(request, resposta)
+    tetos = quotas.limites(ident)
+    email = ""
+    if ident.usuario_id is not None:
+        linha = auth.por_id(ident.usuario_id)
+        email = linha["email"] if linha else ""
+    return {
+        "tipo": ident.tipo,
+        "email": email,
+        "confirmado": ident.confirmado,
+        "arquivos": _saldo(ident, "arquivo", tetos["arquivos"]),
+        "downloads": _saldo(ident, "download", tetos["downloads"]),
+        "teto_bytes": tetos["bytes"],
+    }
+
+
 from fastapi.staticfiles import StaticFiles
 
 PASTA_ESTATICOS = Path(__file__).resolve().parents[1] / "frontend" / "dist"

@@ -821,6 +821,27 @@ pontos, porque quem especificou errado foi o plano. Detalhe em
 
 Nada disso bloqueia; está registrado para não se perder.
 
+- **`ler_ficha` tem paciência no `open`, mas não no `exists()`.** Achado em
+  2026-08-24, ao dar a `ler_ficha` a mesma repetição que `gravar_ficha` já
+  tinha. A janela do `os.replace` que fazia a leitura estourar `PermissionError`
+  alcança também o `Path.exists()` da linha de cima — só que ele engole o
+  `OSError` e devolve `False`, e aí `ler_ficha` sai por `return None`. O
+  navegador recebe um 404 "Trabalho não encontrado" no meio da extração, no
+  lugar do 500 de antes: sintoma diferente, mesma janela. A correção é a mesma —
+  passar a conferência de existência pelo `com_paciencia` de
+  `web/api/storage.py`, com teste no molde do
+  `test_falha_transitoria_ao_ler_nao_derruba_a_consulta`. **Diferença
+  importante:** o defeito do `open` foi medido (2 de 6 execuções de
+  `tests/test_api_extracao.py`); este é raciocínio sobre o código, ainda não
+  visto acontecer. Confirme antes de corrigir.
+- **`limpar()` não tolera `PermissionError` vindo de `ler_ficha`.** A leitura
+  agora insiste cinco vezes, mas ainda pode desistir — e o
+  `except (ValueError, KeyError, TypeError)` de `_trabalhos()` não pega
+  `PermissionError`, que é `OSError`. Uma ficha ocupada na hora errada aborta a
+  varredura inteira. O serviço não cai, porque o `except Exception` de
+  `_limpeza_periodica` segura, mas a passagem toda se perde junto — o expurgo de
+  registros, o de e-mails e o do banco vêm depois de `storage.limpar` no mesmo
+  `try` — e só volta a rodar 10 minutos depois.
 - **Contar páginas de um PDF não tem função pública no núcleo.** A CLI
   (`_inspecionar`) e `web/api/main.py` abrem o `fitz` na mão para isso, cada uma
   do seu jeito. Um `extractor.contar_paginas(caminho)` acabaria com a

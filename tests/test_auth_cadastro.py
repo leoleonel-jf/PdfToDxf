@@ -363,6 +363,16 @@ def test_limpeza_periodica_chama_os_tres_expurgos_de_verdade():
     espiões delegam para a implementação real, então o expurgo de verdade
     acontece — isto não substitui os testes próprios de cada expurgo, só prova
     que a fiação os alcança quando o laço gira.
+
+    A espera é pelo evento, não por um tempo de relógio. Dormir um valor
+    arbitrário antes de cancelar dava teste intermitente: uma volta do laço
+    despacha quatro trabalhos em `asyncio.to_thread` — `storage.limpar`,
+    `registros.expurgar`, `enviador.expurgar` e `db.limpar`, nessa ordem —, e
+    numa máquina ocupada os dois primeiros sozinhos já estouram o prazo, de
+    modo que o cancelamento chegava antes do terceiro e a queixa era "o laço
+    não chamou enviador.expurgar". Como `db.limpar` é o último dos quatro,
+    esperar o aviso dele é esperar exatamente a condição que os asserts medem:
+    uma volta inteira.
     """
     chamados = {"enviador": 0, "registros": 0, "db": 0}
     real_enviador = enviador.expurgar
@@ -377,20 +387,36 @@ def test_limpeza_periodica_chama_os_tres_expurgos_de_verdade():
         chamados["registros"] += 1
         return real_registros(*a, **kw)
 
-    def db_espiao(*a, **kw):
-        chamados["db"] += 1
-        return real_db(*a, **kw)
-
     async def rodar():
+        laco = asyncio.get_running_loop()
+        uma_volta = asyncio.Event()
+
+        def db_espiao(*a, **kw):
+            """O espião que avisa — por isso mora aqui, onde há laço.
+
+            Roda numa thread do `asyncio.to_thread`, e `Event.set` não é seguro
+            fora do laço: o recado volta pelo `call_soon_threadsafe`. No
+            `finally` para avisar mesmo que o expurgo real levante.
+            """
+            chamados["db"] += 1
+            try:
+                return real_db(*a, **kw)
+            finally:
+                laco.call_soon_threadsafe(uma_volta.set)
+
         with mock.patch.object(main, "INTERVALO_LIMPEZA", 0.01), \
              mock.patch.object(enviador, "expurgar", enviador_espiao), \
              mock.patch.object(registros, "expurgar", registros_espiao), \
              mock.patch.object(db, "limpar", db_espiao):
             tarefa = asyncio.create_task(main._limpeza_periodica())
-            await asyncio.sleep(0.3)
-            tarefa.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await tarefa
+            try:
+                # Teto largo de propósito: não é o prazo esperado, é o que
+                # troca um travamento por uma falha legível.
+                await asyncio.wait_for(uma_volta.wait(), timeout=10)
+            finally:
+                tarefa.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await tarefa
 
     asyncio.run(rodar())
 

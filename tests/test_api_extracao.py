@@ -94,6 +94,27 @@ def esperar(job_id: str, pagina: int, limite: float = 60.0) -> dict:
     raise AssertionError(f"a página {pagina} não terminou em {limite}s")
 
 
+def esperar_sumir(caminho, porque: str, limite: float = 30.0) -> None:
+    """Aguarda um arquivo sair do disco.
+
+    `_apagar_origem_se_ocioso` roda **depois** de `_gravar_estado`, então a
+    página fica "pronta" um instante antes de o original sumir. Conferir no
+    mesmo passo em que `esperar` volta é uma corrida, e ela já custou falha
+    intermitente aqui.
+
+    A ordem lá está certa e não é o que se corrige: quem decide apagar lê a
+    ficha, e a página que acabou de terminar só entra nela quando
+    `_gravar_estado` grava — a mesma razão que faz a soltura da cota vir
+    depois. Quem tem de ter paciência é este lado.
+    """
+    fim = time.time() + limite
+    while time.time() < fim:
+        if not caminho.exists():
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"{porque} (esperei {limite}s por {caminho})")
+
+
 def test_extracao_completa():
     job = enviar(bytes_do_pdf_vetorial())
     r = cliente.post(f"/api/jobs/{job}/pages/1")
@@ -111,8 +132,8 @@ def test_pdf_original_e_apagado():
     job = enviar(bytes_do_pdf_vetorial())
     cliente.post(f"/api/jobs/{job}/pages/1")
     esperar(job, 1)
-    assert not (storage.pasta(job) / "origem.pdf").exists(), \
-        "o PDF original deveria sumir depois da extração"
+    esperar_sumir(storage.pasta(job) / "origem.pdf",
+                  "o PDF original deveria sumir depois da extração")
     print("OK: PDF original é apagado após a extração")
 
 
@@ -186,8 +207,8 @@ def test_original_some_quando_todas_as_paginas_terminam():
 
     cliente.post(f"/api/jobs/{job}/pages/2")
     esperar(job, 2)
-    assert not (storage.pasta(job) / "origem.pdf").exists(), \
-        "extraídas todas as páginas, o original deveria sumir"
+    esperar_sumir(storage.pasta(job) / "origem.pdf",
+                  "extraídas todas as páginas, o original deveria sumir")
     print("OK: original só some quando todas as páginas terminam")
 
 

@@ -1,14 +1,16 @@
 /**
- * A barra superior: abrir, página, escala, estimativa e exportar.
+ * A barra superior: abrir, página, escala, estimativa, exportar e a conta.
  *
  * Fina de propósito. O que exige explicação mora no painel lateral; aqui fica
  * só o que precisa estar sempre à vista.
  *
- * O canto direito é onde a **etapa 4** encaixa o indicador de cota e o botão de
- * entrar. O `<div class="direita">` já existe para isso.
+ * O `<div class="direita">` nasceu na etapa 3.5 esperando o canto da conta; a
+ * etapa 4 o encaixou ali, depois do "Exportar DXF".
  */
 import { criarBotao } from "./ui/controles.js";
 import { textoDaComparacao, type EstadoDaTela } from "./toolbar.js";
+import { cantoDaConta, type AcoesDaConta } from "./conta.js";
+import type { Cota } from "./api.js";
 
 export type ContextoDaBarra = {
   estado: EstadoDaTela;
@@ -18,6 +20,9 @@ export type ContextoDaBarra = {
   temGeometria: boolean;
   /** Só em tela estreita: o botão que abre a gaveta. */
   mostrarMenu: boolean;
+  /** `null` enquanto a leitura da cota não voltou — ou quando ela falhou. */
+  cota: Cota | null;
+  acoesDaConta: AcoesDaConta;
   aoAbrirArquivo: (arquivo: File) => void;
   aoTrocarPagina: (pagina: number) => void;
   aoAlternarPainel: () => void;
@@ -101,6 +106,8 @@ export function montarBarra(raiz: HTMLElement, c: ContextoDaBarra): void {
   });
   exportar.disabled = !c.temGeometria;
   direita.append(exportar);
+
+  direita.append(cantoDaConta(c.cota, c.acoesDaConta));
 
   raiz.append(direita);
 }

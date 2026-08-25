@@ -4,7 +4,7 @@
  * Dado e não elemento: assim o módulo é testável no vitest, que roda em Node e
  * não tem `document`. Quem monta o `<svg>` é `controles.ts`.
  *
- * Origem: Tabler Icons (MIT), traçado de 24×24 com `stroke-width` 2. Só os dez
+ * Origem: Tabler Icons (MIT), traçado de 24×24 com `stroke-width` 2. Só os onze
  * usados foram copiados — a spec geral pede "ícones desenhados em SVG inline,
  * só os poucos necessários", e trazer o pacote inteiro contrariaria isso.
  */
@@ -26,6 +26,8 @@ export const CAMINHOS: Record<string, string> = {
     "M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12 M9 4v16 M15 10l-2 2l2 2",
   menu: "M4 6l16 0 M4 12l16 0 M4 18l16 0",
   busca: "M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0 M21 21l-6 -6",
+  usuario:
+    "M12 7a4 4 0 1 0 0 8 4 4 0 0 0 0-8M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2",
 };
 
 export function caminho(nome: string): string {

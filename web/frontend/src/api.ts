@@ -72,6 +72,12 @@ function mensagensDaListaDeErros(lista: unknown[]): string | null {
 
 function erroDaRecusa(status: number, corpoCru: string): ErroDaApi {
   let detalhe = `HTTP ${status}`;
+  // O `codigo` da recusa, quando o servidor mandou um. `ErroDaApi` já tinha o
+  // campo desde a etapa 3, com `""` de padrão, esperando alguém preenchê-lo: é
+  // por ele que a tela distingue uma recusa da outra sem ler texto de mensagem
+  // — texto muda, código não. Sai do mesmo `JSON.parse` do detalhe, porque é o
+  // mesmo corpo: `Recusa` põe os dois lado a lado na raiz (`main.py:343`).
+  let codigo = "";
   try {
     const corpo = JSON.parse(corpoCru);
     if (Array.isArray(corpo?.detail)) {
@@ -79,10 +85,11 @@ function erroDaRecusa(status: number, corpoCru: string): ErroDaApi {
     } else if (corpo?.detail) {
       detalhe = String(corpo.detail);
     }
+    if (typeof corpo?.codigo === "string") codigo = corpo.codigo;
   } catch {
     // Resposta sem JSON: fica o status, que já diz o suficiente.
   }
-  return new ErroDaApi(status, detalhe);
+  return new ErroDaApi(status, detalhe, codigo);
 }
 
 async function pedir(caminho: string, init: RequestInit = {}): Promise<Response> {
@@ -273,4 +280,57 @@ export async function exportar(job: string, pagina: number,
   });
   return r.json() as Promise<{ chave: string; url: string; cache: boolean;
                                entidades: number }>;
+}
+
+// --- conta e cota (etapa 4) --------------------------------------------------
+
+/**
+ * O saldo de um balde. `null` nos três campos é **sem limite**, e não zero:
+ * quem lê tem de mostrar texto nenhum em vez de inventar um número.
+ */
+export type Saldo = {
+  restam: number | null;
+  de: number | null;
+  libera_em: number | null;
+};
+
+export type Cota = {
+  tipo: "visitante" | "logado";
+  email: string;
+  confirmado: boolean;
+  arquivos: Saldo;
+  downloads: Saldo;
+  teto_bytes: number;
+};
+
+export async function lerCota(sinal?: AbortSignal): Promise<Cota> {
+  const r = await pedir("/api/cota", { signal: sinal });
+  return r.json();
+}
+
+function corpoJson(dados: unknown): RequestInit {
+  return {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(dados),
+  };
+}
+
+export async function entrar(email: string, senha: string) {
+  const r = await pedir("/api/auth/entrar", corpoJson({ email, senha }));
+  return r.json() as Promise<{ email: string; confirmado: boolean }>;
+}
+
+export async function sair(): Promise<void> {
+  await pedir("/api/auth/sair", { method: "POST" });
+}
+
+export async function registrar(email: string, senha: string) {
+  const r = await pedir("/api/auth/registro", corpoJson({ email, senha }));
+  return r.json() as Promise<{ mensagem: string }>;
+}
+
+export async function pedirSenha(email: string) {
+  const r = await pedir("/api/auth/senha", corpoJson({ email }));
+  return r.json() as Promise<{ mensagem: string }>;
 }

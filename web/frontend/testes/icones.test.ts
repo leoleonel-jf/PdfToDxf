@@ -3,7 +3,7 @@ import { CAMINHOS, caminho } from "../src/ui/icones.js";
 
 const NECESSARIOS = [
   "arquivo", "regua", "ajustes", "camadas", "olho", "olho-cortado",
-  "baixar", "recolher", "menu", "busca",
+  "baixar", "recolher", "menu", "busca", "usuario",
 ];
 
 describe("icones.ts", () => {

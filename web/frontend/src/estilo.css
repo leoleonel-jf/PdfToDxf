@@ -366,3 +366,43 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   .progresso-trecho.indeterminado { animation: none; width: 100%; opacity: 0.4; }
 }
+
+/* --- conta e cota -------------------------------------------------------- */
+
+/* O canto da conta vive no `.direita` da barra, ao lado da estimativa. */
+.canto-da-conta { display: flex; align-items: center; gap: var(--e2); }
+
+/* A sobreposição das caixas de conta. `[hidden]` já é `display: none
+   !important` no topo deste arquivo — sem isso o `display: flex` daqui
+   atropelaria o atributo, que foi o defeito do painel de aviso na etapa 3.
+   Fechada ela tem de sair do fluxo de verdade: cobre a tela inteira, e o
+   canvas embaixo precisa continuar recebendo clique para a calibração fechar. */
+.sobre-conta {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--e4);
+  overflow-y: auto;
+  background: rgb(0 0 0 / 45%);
+}
+/* `--c2`, o tom da barra e do painel: superfície levantada sobre a moldura
+   escurecida pelo véu. Branco competiria com o papel do desenho. */
+.caixa-de-conta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--e3);
+  min-width: min(22rem, 90vw);
+  max-width: 100%;
+  padding: var(--e4);
+  background: var(--c2);
+  border: 1px solid var(--c4);
+  border-radius: var(--raio);
+}
+.caixa-de-conta h2 { margin: 0; font-size: var(--t-maior); font-weight: 500; }
+.caixa-de-conta .explica { margin: 0; color: var(--c6); max-width: 40ch; }
+/* `--alerta` é o vermelho da paleta da etapa 3.5. */
+.caixa-de-conta .erro { color: var(--alerta); }
+.caixa-de-conta .apoio { display: flex; flex-wrap: wrap; gap: var(--e1); }

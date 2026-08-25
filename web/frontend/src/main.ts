@@ -11,9 +11,10 @@
  * `web/frontend/medicao/RESULTADO.md`.
  */
 import {
-  enviarPdf, esperarPagina, exportar, lerGeometriaBruta, lerMeta,
-  pedirExtracao, type Meta,
+  entrar, enviarPdf, esperarPagina, exportar, lerCota, lerGeometriaBruta,
+  lerMeta, pedirExtracao, pedirSenha, registrar, sair, type Cota, type Meta,
 } from "./api.js";
+import { montarCaixaDeConta, type ModoDaCaixa } from "./conta.js";
 import { enquadrar, pontoDaTela, type Vista } from "./canvas.js";
 import { intercalar, lerGeometria, type Geometria } from "./formato.js";
 import {
@@ -48,6 +49,7 @@ const barra = document.querySelector<HTMLElement>("#barra")!;
 const painelRaiz = document.querySelector<HTMLElement>("#painel")!;
 const painelAviso = document.querySelector<HTMLElement>("#aviso")!;
 const faixaDetalhe = document.querySelector<HTMLElement>("#faixa-detalhe")!;
+const caixaDaConta = document.querySelector<HTMLElement>("#conta")!;
 
 const estado: EstadoDaTela = {
   opcoes: {
@@ -463,6 +465,9 @@ async function abrir(arquivo: File): Promise<void> {
         : { tipo: "indeterminado", desde: inicioDoEnvio },
         { podeCancelar: true }));
     esconderProgresso("aviso");
+    // O envio acabou de consumir uma vaga: o canto tem de dizer isso agora, e
+    // não daqui a alguns minutos, quando a extração terminar.
+    void atualizarCota();
     nomeDoArquivo = arquivo.name;
     job = ficha.job_id;
     nPaginas = ficha.n_paginas;
@@ -479,6 +484,9 @@ async function abrir(arquivo: File): Promise<void> {
     }
     esconderProgresso("aviso");
     mostrarAviso(avisoDoErro(erro));
+    // Também na recusa: um 429 de cota é justamente o momento em que o saldo
+    // do canto ficou desatualizado.
+    void atualizarCota();
   }
 }
 
@@ -591,6 +599,83 @@ async function carregarPagina(): Promise<void> {
   }
 }
 
+// --- conta e cota -----------------------------------------------------------
+
+let cota: Cota | null = null;
+let modoDaConta: ModoDaCaixa = null;
+let recadoDaConta = "";
+let erroDaConta = "";
+
+/**
+ * Relê a cota e remonta o topo.
+ *
+ * Falha aqui **não vira aviso na tela**: a cota é informação de canto, e um
+ * erro de rede ao lê-la não pode cobrir a planta com um painel. O canto
+ * simplesmente não mostra saldo até a próxima leitura dar certo.
+ */
+async function atualizarCota(): Promise<void> {
+  try {
+    cota = await lerCota();
+  } catch {
+    cota = null;
+  }
+  montarTudo();
+}
+
+/**
+ * Sai e relê a cota.
+ *
+ * O `try` não é zelo: `sair().then(atualizarCota)` sem `catch` deixa uma
+ * promessa rejeitada solta quando a rede cai — e a falha não pode virar aviso
+ * na tela, pela mesma razão de `atualizarCota`. Se o servidor não confirmou, a
+ * releitura da cota conta a verdade: o canto continua mostrando o e-mail.
+ */
+async function encerrarSessao(): Promise<void> {
+  try {
+    await sair();
+  } catch { /* a releitura abaixo é que diz se a sessão caiu mesmo */ }
+  await atualizarCota();
+}
+
+function abrirConta(modo: ModoDaCaixa): void {
+  modoDaConta = modo;
+  recadoDaConta = "";
+  erroDaConta = "";
+  montarConta();
+}
+
+function montarConta(): void {
+  montarCaixaDeConta(caixaDaConta, modoDaConta, {
+    recado: recadoDaConta,
+    erro: erroDaConta,
+    aoTrocarModo: (m) => abrirConta(m),
+    aoFechar: () => abrirConta(null),
+    aoConfirmar: (modo, email, senha) => void confirmarConta(modo, email, senha),
+  });
+}
+
+async function confirmarConta(modo: "entrar" | "cadastrar" | "senha",
+                              email: string, senha: string): Promise<void> {
+  erroDaConta = "";
+  recadoDaConta = "";
+  try {
+    if (modo === "entrar") {
+      await entrar(email, senha);
+      modoDaConta = null;
+    } else if (modo === "cadastrar") {
+      recadoDaConta = (await registrar(email, senha)).mensagem;
+    } else {
+      recadoDaConta = (await pedirSenha(email)).mensagem;
+    }
+  } catch (erro) {
+    // `avisoDoErro` e não o texto cru: é ele que garante a regra de "diga o que
+    // houve e o que fazer" — e é o mesmo vocabulário do resto da tela.
+    erroDaConta = avisoDoErro(erro).detalhe;
+  }
+  montarConta();
+  await atualizarCota();
+}
+
 function montarTopo(): void {
   montarBarra(barra, {
     estado,
@@ -599,6 +684,12 @@ function montarTopo(): void {
     nPaginas,
     temGeometria: Boolean(geometria),
     mostrarMenu: painel.modo === "gaveta",
+    cota,
+    acoesDaConta: {
+      aoEntrar: () => abrirConta("entrar"),
+      aoCadastrar: () => abrirConta("cadastrar"),
+      aoSair: () => void encerrarSessao(),
+    },
     aoAbrirArquivo: (arquivo) => void abrir(arquivo),
     aoTrocarPagina: (p) => { pagina = p; void carregarPagina(); },
     aoAlternarPainel: alternarPainel,
@@ -731,6 +822,11 @@ async function baixar(): Promise<void> {
   } catch (erro) {
     esconderProgresso("aviso");
     mostrarAviso(avisoDoErro(erro));
+  } finally {
+    // Nos dois desfechos: o DXF gerado consumiu uma vaga de download, e a
+    // recusa por cota é a outra metade da mesma notícia. Fora do `try` de
+    // propósito — uma falha ao reler a cota não pode virar aviso na tela.
+    void atualizarCota();
   }
 }
 
@@ -901,3 +997,6 @@ window.addEventListener("resize", () => {
 
 ajustarTamanho();
 montarTudo();
+// A cota chega depois, e o canto nasce sem saldo até ela voltar: mostrar um
+// número palpitado enquanto o servidor não respondeu seria inventar número.
+void atualizarCota();

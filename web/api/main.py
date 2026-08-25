@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import os
 import shutil
-import threading
 import time
 import traceback
 from pathlib import Path
@@ -24,9 +23,6 @@ from . import (auth, db, enviador, exportacao, identidade, jobs, quotas,
 
 PEDACO = 1024 * 1024   # 1 MB por leitura do envio
 INTERVALO_LIMPEZA = 10 * 60   # 10 minutos
-# O nome da thread que manda a carta de redefinição. É por ele que o teste
-# espera o envio terminar, em vez de dormir um valor arbitrário.
-NOME_DA_THREAD_DE_CARTA = "carta-de-senha"
 
 
 async def _limpeza_periodica() -> None:
@@ -565,11 +561,15 @@ class NovaSenha(BaseModel):
 # **Por que não `queimar_tempo` aqui.** Diferente do login, os dois ramos não
 # são simétricos: nenhum paga `scrypt`, e o do e-mail existente paga um `INSERT`
 # mais o envio da carta, cujo custo é do transporte de e-mail e não nosso.
-# Somar um `scrypt` só ao ramo do inexistente não iguala nada — desloca. Medido,
-# 150 pares com ordem sorteada: com SMTP em 0 ms (dev e CI) dava 31,4 ms contra
-# 314,9 ms, 10,0x, faixas **disjuntas**, e um limiar único acertava 100% de quem
-# tem conta; com 150 ms, 1,71x e 98,8%; com 500 ms, 1,62x e 100%. Só numa
-# vizinhança estreita (~290 ms) os dois casavam por acaso.
+# Somar um `scrypt` só ao ramo do inexistente não iguala nada — desloca. Medido
+# naquela versão, com ordem sorteada: com SMTP em 0 ms (dev e CI) os dois ramos
+# ficavam 10x separados, faixas **disjuntas**, e um limiar único acertava 100%
+# de quem tem conta; com 150 ms e com 500 ms de transporte continuava vazando.
+# O `queimar_tempo` não fechava o canal em latência nenhuma — no melhor caso
+# medido ele ainda deixava a rota classificável bem acima do acaso. Qualquer
+# ponto em que os dois ramos "casassem" seria coincidência de uma máquina e de
+# uma latência, e não propriedade do sistema; é por isso que a defesa é um piso
+# constante, e não um ajuste de custo.
 #
 # **E por que não bastaria só arrancar o `queimar_tempo`.** Isso resolveria o
 # dev (1,28x, faixas sobrepostas) e abriria a produção: sem piso, o ramo do
@@ -588,27 +588,41 @@ def pedir_senha(pedido: PedidoDeSenha) -> dict:
     "esqueci a senha" vira uma sonda de quem tem conta — e ela responde a
     qualquer um, sem senha nenhuma.
 
-    O envio da carta vai para uma thread justamente para sair do relógio da
-    resposta: o transporte de e-mail é de fora, varia de dezenas a centenas de
-    milissegundos, e qualquer coisa que dependa dele vaza para o cronômetro.
-    A thread é `daemon` e não tem tratamento de erro porque `enviador.enviar`
-    **nunca levanta**, por contrato — é o único ponto que roda ali dentro.
+    O envio da carta sai do caminho do pedido justamente para sair do relógio
+    da resposta: o transporte de e-mail é de fora, varia de dezenas a centenas
+    de milissegundos, e qualquer coisa que dependa dele vaza para o cronômetro.
+    Quem tira é `enviador.enfileirar`, que põe na fila e volta — **não levanta e
+    não bloqueia**. Criar a thread aqui, como esta rota fazia antes, punha o
+    `Thread.start()` dentro do caminho do pedido: `enviador.enviar` nunca
+    levanta, mas o `.start()` levanta `RuntimeError: can't start new thread`, e
+    um 500 só no ramo do e-mail que existe é o mesmo oráculo com outra roupa.
     """
     piso = time.monotonic() + PISO_DE_SENHA_S
     linha = auth.por_email(pedido.email)
     if linha is not None:
         token = auth.novo_token(linha["id"], "senha", auth.PRAZO_SENHA_S)
-        threading.Thread(
-            target=enviador.enviar,
-            args=(linha["email"], "Redefinir a senha do PdfToDxf",
-                  "Para escolher uma senha nova, abra:\n\n"
-                  f"{auth.url_base()}/?senha={token}\n\n"
-                  "O link vale por 1 hora. Se você não pediu isto, ignore — "
-                  "nada mudou na sua conta."),
-            name=NOME_DA_THREAD_DE_CARTA, daemon=True).start()
+        enviador.enfileirar(
+            linha["email"], "Redefinir a senha do PdfToDxf",
+            "Para escolher uma senha nova, abra:\n\n"
+            f"{auth.url_base()}/?senha={token}\n\n"
+            "O link vale por 1 hora. Se você não pediu isto, ignore — "
+            "nada mudou na sua conta.")
     falta = piso - time.monotonic()
     if falta > 0:
         time.sleep(falta)
+    else:
+        # Estourou o piso: o trabalho custou mais do que ele, e daí em diante a
+        # resposta passa a contar o tempo do **trabalho** em vez do piso — que é
+        # justamente o oráculo que o piso existe para fechar. Nada de esticar o
+        # piso dinamicamente: um piso que cresce junto com o custo do ramo é o
+        # mesmo canal por outro nome. Aqui só se torna o evento visível.
+        #
+        # **Estouro frequente quer dizer que `PISO_DE_SENHA_S` ficou curto para
+        # esta implantação** — o caso plausível é o `INSERT` do token esperando
+        # no `PRAGMA busy_timeout=5000` de `db.conexao` enquanto o `SELECT` do
+        # outro ramo, que é leitor de WAL, não espera por ninguém.
+        print(f"pedir_senha: piso de {PISO_DE_SENHA_S:.3f}s estourado em "
+              f"{-falta:.3f}s")
     return {"ok": True,
             "mensagem": "Se este endereço tiver conta, o e-mail já saiu."}
 

@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import queue
 import sys
 import tempfile
 import threading
@@ -24,18 +25,25 @@ from web.api.main import app
 cliente = TestClient(app)
 
 
-def esperar_as_cartas() -> None:
-    """Espera as threads de envio de `pedir_senha` terminarem.
+def esperar_as_cartas(desde: int = 0) -> int:
+    """Espera a fila de envio escoar. Devolve quantas cartas passaram por ela.
 
     A carta sai fora do caminho do pedido — é isso que tira o transporte de
     e-mail do relógio da resposta —, então o `POST` volta antes de o arquivo
-    existir. Esperar **pela thread**, e não dormir um valor arbitrário: dormir
-    é teste intermitente disfarçado de teste.
+    existir. Espera-se **pela fila** (`Queue.join`), e não se dorme um valor
+    arbitrário: dormir é teste intermitente disfarçado de teste.
+
+    O **devolver a contagem** é o que dá dente ao teste. A versão anterior
+    varria `threading.enumerate()` atrás de uma thread de envio; quando não
+    achava nada, voltava calado. Ou seja: trocar o envio em thread por uma
+    chamada direta a `enviador.enviar` dentro da rota passava batido — a carta
+    chegava do mesmo jeito, só que **no caminho do pedido**, com o transporte de
+    volta no cronômetro (medido com SMTP de 800 ms: 2,65x, faixas disjuntas,
+    100% de acurácia de limiar). Comparar a contagem contra um marco tomado
+    antes do `POST` mata esse mutante: envio síncrono não passa pela fila.
     """
-    for fio in threading.enumerate():
-        if fio.name == main.NOME_DA_THREAD_DE_CARTA:
-            fio.join(timeout=10)
-            assert not fio.is_alive(), "a thread de envio não terminou"
+    assert enviador.esperar_a_fila(10), "a fila de envio não escoou"
+    return enviador.cartas_enfileiradas() - desde
 
 
 def emails_novos(desde: float) -> list[str]:
@@ -165,15 +173,138 @@ def test_pedir_senha_gasta_o_mesmo_scrypt_nos_dois_ramos():
     print("OK: pedir senha gasta o mesmo scrypt nos dois ramos (zero)")
 
 
-def test_a_carta_sai_mesmo_com_o_envio_em_thread():
-    """Tirar o envio do caminho do pedido não pode tirá-lo do mundo."""
+def test_a_carta_sai_pela_fila_e_fora_do_caminho_do_pedido():
+    """Duas coisas de uma vez, e as duas precisam de teste.
+
+    Que a carta **sai**: tirar o envio do caminho do pedido não pode tirá-lo do
+    mundo. E que ela sai **pela fila**: se a rota voltar a chamar
+    `enviador.enviar` direto, o arquivo aparece igual, mas o transporte de
+    e-mail volta para o relógio da resposta e a rota volta a contar quem tem
+    conta. O contador da fila é o que separa os dois casos.
+    """
     auth.criar_conta("thr@exemplo.com", "senhaVelha1", "127.0.0.1")
+    marca = enviador.cartas_enfileiradas()
     r = cliente.post("/api/auth/senha", json={"email": "thr@exemplo.com"})
     assert r.status_code == 200, r.text
-    esperar_as_cartas()
+    passaram = esperar_as_cartas(marca)
+    assert passaram >= 1, (
+        "nenhuma carta passou pela fila de envio: o envio voltou para dentro "
+        "do caminho do pedido, e com ele a latência do SMTP volta ao relógio "
+        "da resposta")
     corpos = emails_de("thr@exemplo.com")
     assert len(corpos) == 1 and "?senha=" in corpos[0], corpos
-    print("OK: a carta sai mesmo com o envio em thread")
+    print("OK: a carta sai pela fila, fora do caminho do pedido")
+
+
+def test_pedir_senha_respeita_o_piso_de_resposta():
+    """O piso de resposta, preso por um **limiar inferior**.
+
+    Sem o `time.sleep(falta)` de `main.pedir_senha` a bateria inteira passava e
+    a rota voltava a vazar: medido 1,65x e 78,3% de acurácia de limiar com o
+    transporte em 0 ms, e 1,61x e 97,9% com 300 ms. Este teste mata esse
+    mutante.
+
+    **De um ramo só, e contra uma constante.** Comparar o tempo do e-mail que
+    existe com o do que não existe é justamente o que daria teste intermitente:
+    as duas medidas competem com o escalonador e a diferença entre elas é
+    ruído. Piso é mínimo, e mínimo se verifica contra número fixo. A folga de
+    20% cobre a resolução do relógio e o arredondamento do `sleep`, e ainda fica
+    uma ordem de grandeza acima do que a rota custa sem piso nenhum (dezenas de
+    milissegundos).
+    """
+    marco = time.monotonic()
+    r = cliente.post("/api/auth/senha",
+                     json={"email": "nao-existe-mesmo@exemplo.com"})
+    gasto = time.monotonic() - marco
+    assert r.status_code == 200, r.text
+    assert gasto >= main.PISO_DE_SENHA_S * 0.8, (
+        f"o POST voltou em {gasto:.3f}s, abaixo do piso de "
+        f"{main.PISO_DE_SENHA_S:.3f}s: sem o piso a rota conta pelo relógio "
+        "quem tem conta e quem não tem")
+    print("OK: pedir senha respeita o piso de resposta")
+
+
+def test_enfileirar_com_a_fila_cheia_nao_levanta_e_nao_bloqueia():
+    """Fila cheia descarta e registra. **Não levanta e não espera.**
+
+    Levantar viraria 500 num ramo e 200 no outro — o oráculo de enumeração de
+    volta pela porta dos fundos. Esperar por vaga poria o tempo do transporte
+    de e-mail de volta no relógio da resposta, que é tudo o que este desenho
+    existe para evitar.
+    """
+    # Trocar `_fila` é seguro: os fios de envio ficam presos à fila com que
+    # nasceram (`_trabalhar` a recebe por argumento), então nenhum deles vai
+    # acordar em cima desta aqui.
+    cheia = queue.Queue(maxsize=2)
+    cheia.put(("a@exemplo.com", "x", "y"))
+    cheia.put(("b@exemplo.com", "x", "y"))
+    antes = enviador.cartas_enfileiradas()
+    with mock.patch.object(enviador, "_fila", cheia):
+        marco = time.monotonic()
+        enviador.enfileirar("c@exemplo.com", "descartada", "corpo")
+        gasto = time.monotonic() - marco
+    assert gasto < 0.100, f"enfileirar bloqueou por {gasto:.3f}s com a fila cheia"
+    assert enviador.cartas_enfileiradas() == antes, \
+        "a carta descartada não podia ter entrado na contagem"
+    print("OK: enfileirar com a fila cheia descarta, não levanta e não bloqueia")
+
+
+def test_o_fio_de_envio_sobrevive_a_uma_carta_que_levanta():
+    """Um erro numa carta não pode matar o trabalhador.
+
+    Se matasse, a fila perderia um servidor por carta ruim até parar de escoar
+    de vez — e ninguém receberia mais nada, em silêncio. `enviador.enviar`
+    promete nunca levantar, mas a promessa é do contrato de hoje.
+    """
+    explosoes = []
+    real = enviador.enviar
+
+    def as_vezes_explode(para, assunto, corpo):
+        if "bomba" in para:
+            explosoes.append(para)
+            raise RuntimeError("carta ruim")
+        return real(para, assunto, corpo)
+
+    with mock.patch.object(enviador, "enviar", as_vezes_explode):
+        enviador.enfileirar("bomba@exemplo.com", "explode", "corpo")
+        assert enviador.esperar_a_fila(10), "a fila não escoou depois do erro"
+        assert explosoes, "a carta que explode não chegou a ser tentada"
+        # E o fio continua servindo: a carta seguinte, boa, sai normalmente.
+        enviador.enfileirar("apos-o-erro@exemplo.com", "ok", "corpo bom")
+        assert enviador.esperar_a_fila(10), \
+            "a fila parou de escoar depois de uma carta que levantou"
+    assert emails_de("apos-o-erro@exemplo.com"), \
+        "o fio de envio morreu na exceção e a carta seguinte nunca saiu"
+    print("OK: o fio de envio sobrevive a uma carta que levanta")
+
+
+def test_muitos_pedidos_nao_criam_threads_sem_limite():
+    """O teto de fios: era isto que a `Thread` por pedido não tinha.
+
+    A rota é chamada sem senha nenhuma. Uma thread por pedido dá a qualquer um
+    o poder de multiplicar threads no processo — e o `.start()` que falha volta
+    como 500 num ramo só.
+    """
+    def fios_de_envio():
+        return [f for f in threading.enumerate()
+                if f.name.startswith(enviador.NOME_DO_FIO_DE_ENVIO)]
+
+    auth.criar_conta("mtx@exemplo.com", "senhaVelha1", "127.0.0.1")
+    # Cinco pela rota, para prender o caminho de verdade, e 300 direto no
+    # enviador: o piso de 300 ms por pedido faria 300 chamadas pela rota
+    # levarem um minuto e meio, e quem cria fio é o enviador, não a rota.
+    for _ in range(5):
+        r = cliente.post("/api/auth/senha", json={"email": "mtx@exemplo.com"})
+        assert r.status_code == 200, r.text
+    for i in range(300):
+        enviador.enfileirar(f"lote{i}@exemplo.com", "lote", "corpo")
+    esperar_as_cartas()
+    vivos = fios_de_envio()
+    assert len(vivos) == enviador.FIOS_DE_ENVIO, (
+        f"305 cartas deixaram {len(vivos)} fios de envio vivos, e o teto é "
+        f"{enviador.FIOS_DE_ENVIO}")
+    print(f"OK: 305 cartas seguidas deixaram {len(vivos)} fios de envio vivos "
+          f"(teto {enviador.FIOS_DE_ENVIO})")
 
 
 def test_concluir_a_redefinicao_troca_a_senha():
@@ -398,7 +529,11 @@ if __name__ == "__main__":
     test_pedir_redefinicao_manda_o_link()
     test_email_inexistente_responde_igual_e_nao_manda_nada()
     test_pedir_senha_gasta_o_mesmo_scrypt_nos_dois_ramos()
-    test_a_carta_sai_mesmo_com_o_envio_em_thread()
+    test_a_carta_sai_pela_fila_e_fora_do_caminho_do_pedido()
+    test_pedir_senha_respeita_o_piso_de_resposta()
+    test_enfileirar_com_a_fila_cheia_nao_levanta_e_nao_bloqueia()
+    test_o_fio_de_envio_sobrevive_a_uma_carta_que_levanta()
+    test_muitos_pedidos_nao_criam_threads_sem_limite()
     test_concluir_a_redefinicao_troca_a_senha()
     test_token_de_confirmacao_nao_serve_para_redefinir_senha()
     test_token_de_senha_vencido_e_recusado()

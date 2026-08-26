@@ -34,3 +34,6 @@ web/frontend/playwright-report/
 
 # Dados de trabalho do serviço web (PDFs enviados, DXFs gerados)
 dados/
+
+# Registros de extração (transparência, expurgados após 1 ano)
+registros/

@@ -23,7 +23,7 @@ from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
-from . import limits, packing, storage
+from . import limits, packing, registros, storage
 
 
 class SemVetores(Exception):
@@ -88,13 +88,19 @@ def _gravar_atomico(caminho: Path, dados: bytes) -> None:
 
 def _extrair_no_worker(pdf: str, pagina: int, destino: str, teto_entidades: int,
                        teto_memoria: int, teto_cpu: int,
-                       alvo_minimo_esqueleto: int) -> dict:
+                       alvo_minimo_esqueleto: int,
+                       pasta_registros: str, ip: str, conta: str,
+                       nome_original: str, tamanho_pdf: int,
+                       job_id: str) -> dict:
     """Roda no processo filho: extrai, classifica, divide e grava tudo.
 
     Recebe os tetos como argumento, e não os lê de `limits`, para que o processo
     pai continue sendo o único dono da política.
     """
     aplicados = _aplicar_limites(teto_memoria, teto_cpu)
+
+    import time as _time
+    comeco = _time.time()
 
     from pdftodxf.extractor import extract_page
     from pdftodxf.optimize import classify
@@ -132,6 +138,22 @@ def _extrair_no_worker(pdf: str, pagina: int, destino: str, teto_entidades: int,
     }
     _gravar_atomico(pasta / "meta.json",
                     json.dumps(meta, ensure_ascii=False).encode("utf-8"))
+
+    # O registro é o último passo, e falhar aqui não pode custar a página. Ele
+    # roda no worker, e não no processo pai, para não mandar todos os TextItem
+    # de volta pela fronteira de processo só para escrevê-los num arquivo.
+    try:
+        os.environ["PDFTODXF_REGISTROS"] = pasta_registros
+        from . import registros
+        registros.gravar({
+            "ip": ip, "conta": conta, "nome": nome_original,
+            "pagina": pagina, "job_id": job_id,
+            "tamanho_pdf": tamanho_pdf,
+            "segundos": _time.time() - comeco,
+            "quando": _time.time(),
+        }, resultado, attrs)
+    except Exception:
+        traceback.print_exc()
 
     return {"situacao": "pronta", **meta, "limites_aplicados": aplicados}
 
@@ -239,7 +261,8 @@ def estado(job_id: str, pagina: int) -> dict | None:
     return ficha.get("paginas", {}).get(str(pagina))
 
 
-def pedir_extracao(job_id: str, pagina: int) -> dict:
+def pedir_extracao(job_id: str, pagina: int, ip: str = "",
+                   conta: str = "") -> dict:
     """Enfileira a extração da página, se ela já não estiver em andamento.
 
     Conferir e reservar acontecem sob a mesma trava. As rotas do FastAPI são
@@ -258,11 +281,24 @@ def pedir_extracao(job_id: str, pagina: int) -> dict:
 
         origem = storage.pasta(job_id) / "origem.pdf"
         destino = storage.pasta_pagina(job_id, pagina)
+        ficha = storage.ler_ficha(job_id) or {}
+        try:
+            pasta_registros = str(registros.pasta())
+        except OSError:
+            # `registros.pasta()` cria a pasta na hora (mkdir); se isso
+            # falhar aqui, no processo pai, a falha não pode custar a
+            # página — o registro é só transparência. Passa o caminho cru
+            # adiante: o worker tenta de novo dentro do próprio try que já
+            # engole erro de gravação de registro.
+            pasta_registros = os.environ.get("PDFTODXF_REGISTROS", "registros")
         try:
             futuro = pool().submit(
                 _extrair_no_worker, str(origem), pagina, str(destino),
                 limits.TETO_ENTIDADES, limits.TETO_MEMORIA_WORKER_BYTES,
-                limits.TETO_CPU_WORKER_SEGUNDOS, packing.ALVO_MINIMO)
+                limits.TETO_CPU_WORKER_SEGUNDOS, packing.ALVO_MINIMO,
+                pasta_registros, ip, conta,
+                ficha.get("nome", "planta.pdf"), int(ficha.get("tamanho", 0)),
+                job_id)
         except Exception as e:
             # Sem isto a página ficaria em "na_fila" para sempre, esperando um
             # worker que nunca foi submetido.

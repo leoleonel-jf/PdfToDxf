@@ -1,17 +1,15 @@
 # Handoff — versão web do PdfToDxf
 
-Estado em 2026-08-10. Leia isto primeiro ao retomar em sessão nova.
+Estado em 2026-08-21. Leia isto primeiro ao retomar em sessão nova.
 
 > ## Se o pedido foi só "continuar", faça isto
 >
-> **Primeiro, uma pergunta ao usuário, e só ela** — há uma investigação aberta
-> esperando dois números que só ele tem. Está descrita logo abaixo, em "A
-> questão aberta do ×100". Pergunte o valor de `DIMLFAC` e o que o `DIST`
-> mediu; **não recomece a investigação**, porque a cadeia inteira do app já foi
-> medida e está registrada lá.
+> **A questão do ×100 está encerrada** (2026-08-21) e não é mais o primeiro
+> passo — o usuário rodou o teste no AutoCAD e o `DIST` deu **6,06** na cota que
+> mostra 606. Era o `DIMLFAC`. **O app está certo; não há nada a corrigir.**
+> Detalhe logo abaixo, em "A questão do ×100, encerrada".
 >
-> **Depois — ou se ele disser que o ×100 está resolvido, ou mandar seguir —
-> execute a etapa 4: contas, cotas e registros.** A spec já existe
+> **Execute a etapa 4: contas, cotas e registros.** A spec já existe
 > (`docs/superpowers/specs/2026-08-09-contas-cotas-registros-design.md`); falta
 > o **plano de implementação**. Comece por `superpowers:writing-plans` sobre
 > essa spec, e depois execute com `superpowers:subagent-driven-development`.
@@ -75,10 +73,17 @@ processo alheio **é decisão do usuário** — pergunte, não mate.
 procura. O `.claude/launch.json` já passa `--host` por causa disso, e com ele
 tanto `http://localhost:5173` quanto `http://127.0.0.1:5173` funcionam.
 
-## A questão aberta do ×100
+## A questão do ×100, encerrada
 
-**Estado: esperando dois números do usuário.** Não recomece a investigação — a
-cadeia inteira do app já foi medida, e está tudo aqui.
+> **Encerrada em 2026-08-21: era o `DIMLFAC`, e o app está certo.** O usuário
+> rodou o teste da seção "A hipótese que falta testar" e o `DIST` mediu **6,06**
+> entre as mesmas duas extremidades da cota que mostra 606. Como `DIST` não
+> sofre `DIMLFAC` e a cota sofre, o fator 100 nasce no estilo de cota do desenho
+> dele, não na nossa geometria. **Nenhuma correção de código.** O resto desta
+> seção fica como registro do que foi medido, para não se remedir.
+
+Não recomece a investigação — a cadeia inteira do app já foi medida, e está tudo
+aqui.
 
 ### O sintoma
 
@@ -452,9 +457,9 @@ trabalho de sessão, e **não esperam pelos primeiros**.
 
 ### Depende de você
 
-0. **Os dois números do AutoCAD** que fecham a questão do ×100: `DIMLFAC` e o
-   que o `DIST` mede na cota de 6,06. É o item mais urgente, e está detalhado
-   na seção "A questão aberta do ×100", no topo deste documento.
+0. ~~Os dois números do AutoCAD que fecham a questão do ×100.~~ **Respondido em
+   2026-08-21:** `DIST` = 6,06 na cota que mostra 606, ou seja, era o `DIMLFAC`
+   e o app está certo. Ver "A questão do ×100, encerrada".
 
 1. **Conferência manual do app desktop.** Só um humano pode fazer. A etapa 1
    mexeu em `pdftodxf/gui.py` e nenhum teste exercita a integração do painel de

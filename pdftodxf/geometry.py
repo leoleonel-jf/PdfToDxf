@@ -127,3 +127,36 @@ def bezier_to_arc(b: Bezier, tol: float = 0.05, samples: int = 9) -> Arc | None:
     # CW: DXF exige CCW, então invertemos os ângulos
     return Arc(center=center, radius=radius, start_angle=a1 % 360.0, end_angle=a0 % 360.0,
                layer=b.layer, color=b.color)
+
+
+def limites(entities: list[Entity]) -> tuple[float, float, float, float] | None:
+    """Caixa envolvente do desenho, em pontos de papel: `(x0, y0, x1, y1)`.
+
+    Devolve `None` para lista vazia — e não uma caixa de área zero na origem,
+    que mentiria dizendo que há desenho no canto da folha.
+
+    Mora aqui, e não em quem chama, porque só este módulo conhece a forma de
+    cada entidade. Arco entra pela caixa do círculo inteiro: é aproximação por
+    excesso, honesta para o que o registro faz com o número.
+    """
+    xs: list[float] = []
+    ys: list[float] = []
+    for e in entities:
+        if isinstance(e, Segment):
+            xs += [e.p1[0], e.p2[0]]
+            ys += [e.p1[1], e.p2[1]]
+        elif isinstance(e, Polyline):
+            xs += [p[0] for p in e.points]
+            ys += [p[1] for p in e.points]
+        elif isinstance(e, Bezier):
+            xs += [e.p0[0], e.p1[0], e.p2[0], e.p3[0]]
+            ys += [e.p0[1], e.p1[1], e.p2[1], e.p3[1]]
+        elif isinstance(e, Arc):
+            xs += [e.center[0] - e.radius, e.center[0] + e.radius]
+            ys += [e.center[1] - e.radius, e.center[1] + e.radius]
+        elif isinstance(e, TextItem):
+            xs.append(e.position[0])
+            ys.append(e.position[1])
+    if not xs:
+        return None
+    return (min(xs), min(ys), max(xs), max(ys))

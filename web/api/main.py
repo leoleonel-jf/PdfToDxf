@@ -541,6 +541,20 @@ class PedidoDeEntrada(BaseModel):
 # freio conferido depois do `conferir_senha` ainda limitaria a força bruta — o
 # atacante não chega à senha —, mas o hash já teria sido pago em toda tentativa
 # barrada, e o amplificador continuaria de pé. Conferir antes fecha os dois.
+#
+# **E "antes" não basta: tem de ser atômico.** A primeira versão perguntava
+# `quotas.restante(...)` e só cobrava no fim da rota, ~110 ms depois. Nesse vão
+# todos os pedidos em voo liam o mesmo estado e nenhum via a cobrança do outro:
+# medido, 24 pedidos simultâneos com teto 1 davam **24 hashes pagos e nenhum
+# 429**. As linhas gravadas ficavam certas — `BEGIN IMMEDIATE` cuidava disso —,
+# mas linha gravada não era o que o freio existia para limitar; o teto real por
+# IP virava `teto + largura do pool de fios`, com o pico de memória junto.
+#
+# Por isso a rota **reserva** a vaga como primeira coisa: `quotas.reservar`
+# confere e insere dentro da mesma transação, então a decisão é atômica e o
+# `SemVaga` é o 429. Falhou o login, `confirmar` fixa a vaga; deu certo,
+# `soltar` a devolve — e "login certo não consome" continua valendo, agora sem
+# uma janela aberta entre a conferência e a cobrança.
 def _identidade_da_tentativa(ip: str) -> identidade.Identidade:
     """O balde de cota de um pedido de login: **o IP, e só ele.**
 
@@ -566,16 +580,14 @@ def _identidade_da_tentativa(ip: str) -> identidade.Identidade:
         cookie_novo=None)
 
 
-def _cobrar_tentativa(quem: identidade.Identidade) -> None:
-    """Cobra **uma tentativa que falhou**. Login certo não passa por aqui.
+def _reservar_tentativa(quem: identidade.Identidade) -> str | None:
+    """Guarda a vaga desta tentativa e devolve a referência dela.
 
-    Cobrar só a falha é o que impede o freio de trancar quem usa o serviço
-    normalmente: entrar e sair algumas vezes no dia esgotaria a conta do próprio
-    dono, e o teto viraria uma negação de serviço contra o usuário legítimo em
-    vez de contra o atacante.
+    `None` quando o freio está desligado (`PDFTODXF_TENTATIVAS_POR_IP=0`): aí a
+    rota não grava nada. Reservar assim mesmo passaria sempre — nenhum balde tem
+    teto —, mas ao preço de um `INSERT` por pedido não autenticado, para nada.
 
-    `cobrar` e não `reservar`: quando esta linha roda a tentativa já terminou, e
-    não há nada a confirmar nem a soltar depois.
+    Levanta `quotas.SemVaga`, que o chamador traduz em 429.
 
     **A referência é sorteada a cada tentativa, e tem de ser.** A guarda de
     idempotência de `quotas._consumir` pergunta se já existe linha com aquela
@@ -586,13 +598,38 @@ def _cobrar_tentativa(quem: identidade.Identidade) -> None:
     e-mail teria ainda um segundo defeito — a força bruta varia a senha e não o
     endereço, que é justamente o eixo que a guarda apagaria.
 
-    `SemVaga` aqui só acontece se o balde encheu entre a conferência lá em cima
-    e esta cobrança, por outro pedido do mesmo IP. Não há o que somar a um balde
-    já cheio, e esta tentativa continua sendo recusada por credenciais; o pedido
-    seguinte já esbarra no freio.
+    De quebra, sortear é o que deixa `confirmar` e `soltar` mirarem **esta**
+    tentativa e nenhuma outra: os dois trabalham por referência, e um valor
+    compartilhado faria uma entrada certa soltar a reserva do atacante que está
+    no mesmo IP naquele instante.
     """
-    with contextlib.suppress(quotas.SemVaga):
-        quotas.cobrar(quem, "tentativa", secrets.token_hex(16))
+    if quotas.teto_de_tentativas() == 0:
+        return None
+    referencia = secrets.token_hex(16)
+    quotas.reservar(quem, "tentativa", referencia)
+    return referencia
+
+
+def _cobrar_tentativa(referencia: str | None) -> None:
+    """Fixa a vaga: **esta tentativa falhou**. Login certo não passa por aqui.
+
+    Cobrar só a falha é o que impede o freio de trancar quem usa o serviço
+    normalmente: entrar e sair algumas vezes no dia esgotaria a conta do próprio
+    dono, e o teto viraria uma negação de serviço contra o usuário legítimo em
+    vez de contra o atacante.
+    """
+    if referencia is not None:
+        quotas.confirmar(referencia)
+
+
+def _soltar_tentativa(referencia: str | None) -> None:
+    """Devolve a vaga: a senha conferiu, e **login certo não consome**.
+
+    A linha fica no banco marcada `'solto'`, que não ocupa vaga na janela — o
+    rastro de que aquele IP passou por ali, sem custo de cota.
+    """
+    if referencia is not None:
+        quotas.soltar(referencia)
 
 
 @app.post("/api/auth/entrar")
@@ -612,11 +649,16 @@ def entrar(pedido: PedidoDeEntrada, request: Request,
     # e-mail e não toca a tabela de usuários: o teto é por IP e é o mesmo para
     # endereço que existe e endereço que não existe, então o 429 não conta nada
     # a quem sonda — mesmo status, mesmo corpo, e zero hash nos dois casos.
-    restam, libera = quotas.restante(quem, "tentativa")
-    if restam is not None and restam <= 0:
+    #
+    # Reserva, e não pergunta: conferir aqui e cobrar lá embaixo deixava um vão
+    # de ~110 ms em que a rajada inteira lia o mesmo estado. Ver o comentário
+    # acima de `_identidade_da_tentativa`.
+    try:
+        tentativa = _reservar_tentativa(quem)
+    except quotas.SemVaga as sem:
         raise Recusa(429, "Muitas tentativas de entrada deste endereço. "
-                          "Espere e tente de novo." + _quando_abre(libera),
-                     "tentativas_demais", libera_em=libera)
+                          "Espere e tente de novo." + _quando_abre(sem.libera_em),
+                     "tentativas_demais", libera_em=sem.libera_em) from None
 
     linha = auth.por_email(pedido.email)
     if linha is None:
@@ -625,14 +667,18 @@ def entrar(pedido: PedidoDeEntrada, request: Request,
         # que a mensagem calou. **Aqui ele serve de verdade**, ao contrário do
         # cadastro, onde `criar_conta` já paga o hash nos dois caminhos.
         auth.queimar_tempo()
-        _cobrar_tentativa(quem)
+        _cobrar_tentativa(tentativa)
         raise Recusa(401, "E-mail ou senha não conferem.", "credenciais")
 
     if not auth.conferir_senha(pedido.senha, linha["senha"]):
-        _cobrar_tentativa(quem)
+        _cobrar_tentativa(tentativa)
         raise Recusa(401, "E-mail ou senha não conferem.", "credenciais")
 
-    # Daqui para baixo a senha conferiu, e **nada é cobrado**.
+    # Daqui para baixo a senha conferiu, e **nada é cobrado**: a vaga volta
+    # agora, antes da reescrita do hash e da gravação da sessão, para que um
+    # erro em qualquer uma das duas não deixe a reserva ocupando a janela.
+    _soltar_tentativa(tentativa)
+
     if auth.precisa_reescrever(linha["senha"]):
         auth.reescrever_senha(linha["id"], pedido.senha)
 

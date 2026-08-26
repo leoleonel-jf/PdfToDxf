@@ -101,13 +101,19 @@ def _chave(nome: str) -> int:
                     PADROES[nome])
 
 
-def _teto_de_tentativas() -> int:
+def teto_de_tentativas() -> int:
     """O valor de `PDFTODXF_TENTATIVAS_POR_IP`, ou o padrão. `0` é sem limite.
 
     Mesma regra de lixo de `_chave` — é a mesma função por baixo — e pelo mesmo
     motivo: `max(0, ...)` grampearia o negativo em `0`, que aqui significa "sem
     limite", e o freio do login sumiria em silêncio por causa de um `-1` no
     ambiente. Foi o defeito já corrigido duas vezes neste projeto.
+
+    Pública porque `main.entrar` precisa dela **antes** de reservar: com o freio
+    desligado (`0`) a rota não reserva nada, em vez de reservar e deixar a
+    reserva passar porque nenhum balde tem teto. Reservar ali gravaria um
+    `INSERT` por pedido não autenticado para nada — um freio desligado não pode
+    custar mais escrita do que um freio ligado.
     """
     return _inteiro(os.environ.get("PDFTODXF_TENTATIVAS_POR_IP"),
                     TENTATIVAS_POR_IP)
@@ -182,9 +188,18 @@ def _teto(ident, tipo: str, balde) -> int:
         #
         # Sai mais simples do que parecia: o teto é **um só**, igual para
         # visitante e para logado, e por isso `ident` nem é consultado aqui.
-        base = _teto_de_tentativas()
-    else:
-        base = limites(ident)["arquivos" if tipo == "arquivo" else "downloads"]
+        #
+        # **E não multiplica pela folga**, ao contrário dos outros tipos. A
+        # folga existe para afrouxar os baldes compartilhados que ficam *ao
+        # lado* do balde identificador; aqui o teto já está escrito por IP
+        # (`PDFTODXF_TENTATIVAS_POR_IP`), e multiplicar seria configurar 30 e
+        # obter 120. Hoje `main._identidade_da_tentativa` fixa folga 1 e o
+        # produto daria no mesmo, mas essa é uma garantia que mora noutro
+        # arquivo: um chamador que passasse uma identidade de
+        # `identidade.resolver()` — três baldes, folga 4 — levaria o teto
+        # quadruplicado sem aviso nenhum. Fica fechado aqui.
+        return teto_de_tentativas()
+    base = limites(ident)["arquivos" if tipo == "arquivo" else "downloads"]
     return 0 if base == 0 else base * balde.folga
 
 

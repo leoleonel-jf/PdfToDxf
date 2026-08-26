@@ -27,6 +27,11 @@ dentro, cobraria de quem falhou o DXF que outro recebeu.
 Reserva nunca confirmada **continua contando** até sair da janela. Quem envia e
 fecha a aba consumiu banda e disco; não há varredura de reserva órfã, porque a
 janela deslizante já é o prazo.
+
+O tipo `"tentativa"` é o freio do login, e é o único que **não tem plano**:
+quando ele é conferido ainda não se sabe quem está pedindo — nem se o e-mail
+existe —, então o teto sai de `PDFTODXF_TENTATIVAS_POR_IP` e é o mesmo para
+todo mundo, em vez de sair de `limites()`. Ver `_teto` e `main.entrar`.
 """
 
 from __future__ import annotations
@@ -46,7 +51,14 @@ PADROES = {
     "janela_h": 2,
 }
 
-TIPOS = ("arquivo", "download")
+TIPOS = ("arquivo", "download", "tentativa")
+
+# Quantas tentativas de entrada malsucedidas um IP gasta por janela. Fora de
+# `PADROES` de propósito: aquela tabela é a das chaves `PDFTODXF_COTA_*`, que
+# são cotas de plano, e esta não é — ela é o freio do login, sem plano nenhum
+# por trás. A chave é `PDFTODXF_TENTATIVAS_POR_IP`, no mesmo formato de
+# `auth.CONTAS_POR_IP_DIA`, que é o outro teto por IP do sistema.
+TENTATIVAS_POR_IP = 30
 
 # O valor de janela que já foi avisado, não um "já avisei": trocar a chave em
 # tempo de execução tem de rearmar o aviso, senão o valor novo passa calado.
@@ -62,23 +74,43 @@ class SemVaga(Exception):
         self.libera_em = libera_em
 
 
-def _chave(nome: str) -> int:
-    """O valor de `PDFTODXF_COTA_<NOME>`, ou o padrão. `0` é sem limite."""
-    cru = os.environ.get(f"PDFTODXF_COTA_{nome.upper()}")
+def _inteiro(cru: str | None, padrao: int) -> int:
+    """A regra de leitura de **toda** chave de teto deste módulo. `0` é sem limite.
+
+    Uma cópia só: ausente, vazia, escrita errada ou **negativa** cai no padrão.
+    """
     if cru is None or cru.strip() == "":
-        return PADROES[nome]
+        return padrao
     try:
         valor = int(cru)
     except ValueError:
         # Chave escrita errada cai no padrão, que é seguro — e não em
         # "sem limite", que seria o modo de falhar caro.
-        return PADROES[nome]
+        return padrao
     if valor < 0:
         # `-1` é a convenção de "sem limite" de outros sistemas, então é o lixo
         # mais provável de aparecer aqui. Grampear em `0` abriria a cota
         # inteira em silêncio; negativo cai no padrão como qualquer outro lixo.
-        return PADROES[nome]
+        return padrao
     return valor
+
+
+def _chave(nome: str) -> int:
+    """O valor de `PDFTODXF_COTA_<NOME>`, ou o padrão. `0` é sem limite."""
+    return _inteiro(os.environ.get(f"PDFTODXF_COTA_{nome.upper()}"),
+                    PADROES[nome])
+
+
+def _teto_de_tentativas() -> int:
+    """O valor de `PDFTODXF_TENTATIVAS_POR_IP`, ou o padrão. `0` é sem limite.
+
+    Mesma regra de lixo de `_chave` — é a mesma função por baixo — e pelo mesmo
+    motivo: `max(0, ...)` grampearia o negativo em `0`, que aqui significa "sem
+    limite", e o freio do login sumiria em silêncio por causa de um `-1` no
+    ambiente. Foi o defeito já corrigido duas vezes neste projeto.
+    """
+    return _inteiro(os.environ.get("PDFTODXF_TENTATIVAS_POR_IP"),
+                    TENTATIVAS_POR_IP)
 
 
 def janela_s() -> int:
@@ -140,7 +172,19 @@ def limites(ident) -> dict:
 
 
 def _teto(ident, tipo: str, balde) -> int:
-    base = limites(ident)["arquivos" if tipo == "arquivo" else "downloads"]
+    if tipo == "tentativa":
+        # **Não passa por `limites()`, e é de propósito.** `limites` decide pelo
+        # plano de quem pede, e no login não existe plano: o freio é conferido
+        # antes de procurar o e-mail — antes de saber se ele existe — porque é
+        # essa ordem que impede o `scrypt` de ser pago por quem já estourou o
+        # teto. Um teto que dependesse do plano obrigaria a ler a conta
+        # primeiro, que é exatamente o que se quer não fazer.
+        #
+        # Sai mais simples do que parecia: o teto é **um só**, igual para
+        # visitante e para logado, e por isso `ident` nem é consultado aqui.
+        base = _teto_de_tentativas()
+    else:
+        base = limites(ident)["arquivos" if tipo == "arquivo" else "downloads"]
     return 0 if base == 0 else base * balde.folga
 
 

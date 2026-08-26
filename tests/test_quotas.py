@@ -531,7 +531,7 @@ def test_tipo_desconhecido_e_erro():
             raise AssertionError("tipo fora da lista tinha que levantar ValueError")
         except ValueError:
             pass
-    print("OK: tipo fora de (arquivo, download) levanta ValueError")
+    print(f"OK: tipo fora de {quotas.TIPOS} levanta ValueError")
 
 
 def test_teto_de_mb_do_logado_e_truncado_no_teto_tecnico():

@@ -12,6 +12,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if "PDFTODXF_DADOS" not in os.environ:
     os.environ["PDFTODXF_DADOS"] = tempfile.mkdtemp(prefix="pdftodxf-teste-")
 
+# Aqui se testa a exportação e o cache por chave, não a cota: a bateria envia
+# um arquivo por função e gera uma dezena de combinações inéditas, e os padrões
+# de 5 e 15 por janela a barrariam no meio. `0` é "sem limite" — o padrão
+# continua o que é, e quem exercita a cota é o tests/test_api_cotas.py.
+os.environ["PDFTODXF_COTA_ARQUIVOS"] = "0"
+os.environ["PDFTODXF_COTA_DOWNLOADS"] = "0"
+if "PDFTODXF_BANCO" not in os.environ:
+    os.environ["PDFTODXF_BANCO"] = os.path.join(
+        tempfile.mkdtemp(prefix="pdftodxf-db-"), "contas.db")
+os.environ["PDFTODXF_SEGREDO"] = "segredo-de-teste"
+
 import ezdxf
 from fastapi.testclient import TestClient
 

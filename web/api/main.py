@@ -6,18 +6,19 @@ import asyncio
 import contextlib
 import os
 import shutil
+import time
 import traceback
 from pathlib import Path
 
 import math
 
 import fitz
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from . import exportacao, jobs, limits, registros, storage
+from . import db, exportacao, identidade, jobs, quotas, registros, storage
 
 PEDACO = 1024 * 1024   # 1 MB por leitura do envio
 INTERVALO_LIMPEZA = 10 * 60   # 10 minutos
@@ -35,12 +36,20 @@ async def _limpeza_periodica() -> None:
             apagados = await asyncio.to_thread(registros.expurgar)
             if apagados:
                 print(f"limpeza: {len(apagados)} registros com mais de 1 ano")
+            do_banco = await asyncio.to_thread(db.limpar)
+            if do_banco["consumo"] or do_banco["tokens"]:
+                print(f"limpeza: {do_banco['consumo']} consumos e "
+                      f"{do_banco['tokens']} tokens vencidos")
         except Exception:
             traceback.print_exc()   # a limpeza nunca pode derrubar o serviço
 
 
 @contextlib.asynccontextmanager
 async def ciclo_de_vida(_app: FastAPI):
+    # As tabelas nascem na subida, e não no primeiro pedido: assim um erro de
+    # permissão no arquivo do banco aparece ao subir, e não na cara do primeiro
+    # usuário.
+    await asyncio.to_thread(lambda: db.criar_tabelas(db.conexao()))
     tarefa = asyncio.create_task(_limpeza_periodica())
     try:
         yield
@@ -61,9 +70,40 @@ def _mb(n: int) -> int:
 
 
 @app.post("/api/jobs")
-async def enviar(arquivo: UploadFile = File(...)) -> dict:
-    """Recebe o PDF, confere o teto de tamanho e conta as páginas."""
+async def enviar(request: Request, resposta: Response,
+                 arquivo: UploadFile = File(...)) -> dict:
+    """Recebe o PDF, confere o teto do plano, reserva a vaga e conta as páginas."""
+    ident = identidade.resolver(request)
+    identidade.gravar_cookie(resposta, ident,
+                             seguro=request.url.scheme == "https")
+    teto = quotas.limites(ident)["bytes"]
+
+    # O `content-length` primeiro, e o teto de novo durante a leitura. O
+    # primeiro recusa sem receber byte nenhum, que é o que a spec pede; o
+    # segundo é a rede de segurança para quem mente no cabeçalho ou não o
+    # manda.
+    declarado = request.headers.get("content-length")
+    if declarado and declarado.isdigit() and int(declarado) > teto:
+        raise Recusa(413, f"O arquivo passa de {_mb(teto)} MB.", "tamanho",
+                     ident=ident, teto_bytes=teto)
+
     job_id = storage.novo_id()
+    try:
+        # Em thread: `reservar` abre `BEGIN IMMEDIATE` com `busy_timeout` de
+        # 5 s, e esta rota é `async def` — ela roda **no fio do laço de
+        # eventos**. Numa rajada de envios do mesmo IP os escritores se
+        # serializam, e o bloqueio pararia o laço inteiro junto, inclusive os
+        # `GET` de estado que a tela faz em polling. As rotas síncronas do
+        # FastAPI já rodam num pool de threads e não têm o problema.
+        #
+        # `db.conexao()` é por fio, então a thread do pool usa a conexão dela e
+        # não a do laço — é exatamente para isso que a conexão por fio existe.
+        # A transação abre e fecha dentro da mesma chamada (`_consumir` sempre
+        # sai por `COMMIT` ou `ROLLBACK`), então nada fica pendurado na thread.
+        await asyncio.to_thread(quotas.reservar, ident, "arquivo", job_id)
+    except quotas.SemVaga as e:
+        raise _sem_vaga(e, ident)
+
     destino = storage.pasta(job_id)
     destino.mkdir(parents=True, exist_ok=True)
     origem = destino / "origem.pdf"
@@ -76,10 +116,9 @@ async def enviar(arquivo: UploadFile = File(...)) -> dict:
                 if not pedaco:
                     break
                 total += len(pedaco)
-                if total > limits.TETO_PDF_BYTES:
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"O arquivo passa de {_mb(limits.TETO_PDF_BYTES)} MB.")
+                if total > teto:
+                    raise Recusa(413, f"O arquivo passa de {_mb(teto)} MB.",
+                                 "tamanho", ident=ident, teto_bytes=teto)
                 saida.write(pedaco)
 
         if total == 0:
@@ -94,6 +133,13 @@ async def enviar(arquivo: UploadFile = File(...)) -> dict:
                 detail="Não consegui abrir o arquivo como PDF.")
     except Exception:
         shutil.rmtree(destino, ignore_errors=True)
+        # O envio não virou trabalho nenhum: nada foi extraído, e a reserva não
+        # tem mais o que confirmar. A vaga volta. Reserva que **fica** contando
+        # é a de quem enviou um PDF bom e sumiu — essa consumiu disco e fila.
+        #
+        # Em thread pelo mesmo motivo do `reservar` acima: é escrita no banco
+        # numa rota `async def`.
+        await asyncio.to_thread(quotas.soltar, job_id)
         raise
 
     nome = os.path.basename(arquivo.filename or "planta.pdf")
@@ -124,7 +170,7 @@ def extrair_pagina(job_id: str, pagina: int, request: Request) -> dict:
         raise HTTPException(
             status_code=404,
             detail=f"O documento tem {ficha['n_paginas']} página(s).")
-    ip = request.client.host if request.client else ""
+    ip = identidade.ip_do_pedido(request)
     return jobs.pedir_extracao(job_id, pagina, ip=ip, conta="")
 
 
@@ -210,6 +256,66 @@ def _erro_de_validacao(request: Request, exc: RequestValidationError):
                         content={"detail": _serializavel(exc.errors())})
 
 
+class Recusa(Exception):
+    """Recusa com `codigo` no corpo, e não só `detail`.
+
+    O `HTTPException` do FastAPI só sabe pôr `detail`, e a tela precisa
+    distinguir "cota de arquivos" de "cota de downloads" sem ler texto — texto
+    muda, código não. O `extra` é o que cada recusa acrescenta: `libera_em` na
+    cota, `teto_bytes` no tamanho.
+
+    A `ident` viaja junto porque o handler monta uma resposta nova e o
+    `Response` que a rota recebeu por injeção não chega até lá: sem ela, o
+    visitante recusado sairia sem cookie. Vem declarada, e não dentro de
+    `**extra`, para não vazar para o corpo da resposta.
+    """
+
+    def __init__(self, status: int, detail: str, codigo: str,
+                 ident=None, **extra):
+        super().__init__(detail)
+        self.status = status
+        self.detail = detail
+        self.codigo = codigo
+        self.ident = ident
+        self.extra = extra
+
+
+@app.exception_handler(Recusa)
+def _recusa(request: Request, exc: Recusa):
+    resposta = JSONResponse(status_code=exc.status,
+                            content={"detail": exc.detail,
+                                     "codigo": exc.codigo, **exc.extra})
+    # O cookie pendente tem de sobreviver à recusa. Sem isto o visitante que
+    # leva 413 ou 429 nunca recebe cookie nenhum e recomeça num balde novo a
+    # cada tentativa: o balde do cookie viraria descartável, e só o do IP
+    # seguraria o furo. Pela mesma `gravar_cookie` da rota, para não haver duas
+    # versões da regra do cookie.
+    if exc.ident is not None:
+        identidade.gravar_cookie(resposta, exc.ident,
+                                 seguro=request.url.scheme == "https")
+    return resposta
+
+
+def _sem_vaga(e: quotas.SemVaga, ident=None) -> Recusa:
+    quando = ""
+    if e.libera_em:
+        # Hora local do servidor, que é a do usuário nesta implantação. A tela
+        # reformata a partir de `libera_em`; este texto é o que sobra para quem
+        # lê a resposta crua.
+        quando = time.strftime(" A próxima vaga abre às %H:%M.",
+                               time.localtime(e.libera_em))
+    if e.tipo == "arquivo":
+        detalhe = ("Você já enviou o máximo de arquivos permitido nas últimas "
+                   "horas." + quando)
+        return Recusa(429, detalhe, "cota_arquivos", ident=ident,
+                      libera_em=e.libera_em)
+    detalhe = ("Você já gerou o máximo de arquivos DXF permitido nas últimas "
+               "horas. Baixar de novo um DXF que você já gerou continua "
+               "liberado." + quando)
+    return Recusa(429, detalhe, "cota_downloads", ident=ident,
+                  libera_em=e.libera_em)
+
+
 class PedidoDeExportacao(BaseModel):
     # `allow_inf_nan=False` não é zelo: `gt=0.0` sozinho deixa passar Infinity,
     # que o JSON aceita, e o DXF sai com coordenadas infinitas. O nan já caía
@@ -220,12 +326,41 @@ class PedidoDeExportacao(BaseModel):
 
 
 @app.post("/api/jobs/{job_id}/pages/{pagina}/export")
-def exportar(job_id: str, pagina: int, pedido: PedidoDeExportacao) -> dict:
+def exportar(job_id: str, pagina: int, pedido: PedidoDeExportacao,
+             request: Request, resposta: Response) -> dict:
     # Pelo cache.pickle e não pela pasta: é dele que a exportação vive, e sem a
     # conferência o `pickle.load` estouraria num 500 sem explicação.
     _arquivo_da_pagina(job_id, pagina, "cache.pickle")
-    ch, _caminho, do_cache, entidades = exportacao.gerar(
-        job_id, pagina, pedido.escala, pedido.unidade, pedido.opcoes.model_dump())
+
+    opcoes = pedido.opcoes.model_dump()
+    ch = exportacao.chave(pagina, pedido.escala, pedido.unidade, opcoes)
+
+    # A ordem é lei: chave, arquivo, e só então cota. Combinação já gerada nem
+    # pergunta se há vaga — é o que faz repetir sair de graça. Consultar a cota
+    # antes recusaria a reexportação de quem está sem vaga, contrariando a
+    # promessa; gerar antes queimaria CPU para terminar em 429.
+    ja_existe = exportacao.caminho_do_dxf(job_id, pagina, ch).exists()
+    referencia = f"{job_id}:{ch}"
+
+    if not ja_existe:
+        ident = identidade.resolver(request)
+        identidade.gravar_cookie(resposta, ident,
+                                 seguro=request.url.scheme == "https")
+        try:
+            quotas.reservar(ident, "download", referencia)
+        except quotas.SemVaga as e:
+            raise _sem_vaga(e, ident)
+
+    try:
+        ch, _caminho, do_cache, entidades = exportacao.gerar(
+            job_id, pagina, pedido.escala, pedido.unidade, opcoes)
+    except Exception:
+        # Falhou ao gerar: o usuário não levou DXF nenhum, e não paga por isso.
+        quotas.soltar(referencia)
+        raise
+
+    if not ja_existe:
+        quotas.confirmar(referencia)
     return {
         "chave": ch,
         "url": f"/api/download/{job_id}/{ch}",

@@ -17,6 +17,21 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if "PDFTODXF_DADOS" not in os.environ:
     os.environ["PDFTODXF_DADOS"] = tempfile.mkdtemp(prefix="pdftodxf-teste-")
 
+# Aqui se testa a extração, não a cota: cada função envia o seu próprio PDF, e
+# o padrão de 5 por janela barraria a bateria no meio. `0` é "sem limite" — o
+# padrão continua o que é, e quem exercita a cota é o tests/test_api_cotas.py.
+# Vale também para quem importa este arquivo (test_api_export,
+# test_registros_no_worker), que envia pela mesma função `enviar`.
+os.environ["PDFTODXF_COTA_ARQUIVOS"] = "0"
+os.environ["PDFTODXF_COTA_DOWNLOADS"] = "0"
+# Banco próprio e segredo fixo: sem isto a bateria escreveria consumo num
+# `dados/contas.db` ao lado do repositório e avisaria do segredo aleatório. A
+# guarda é a mesma do `PDFTODXF_DADOS`, pelo mesmo motivo do spawn.
+if "PDFTODXF_BANCO" not in os.environ:
+    os.environ["PDFTODXF_BANCO"] = os.path.join(
+        tempfile.mkdtemp(prefix="pdftodxf-db-"), "contas.db")
+os.environ["PDFTODXF_SEGREDO"] = "segredo-de-teste"
+
 import fitz
 from fastapi.testclient import TestClient
 

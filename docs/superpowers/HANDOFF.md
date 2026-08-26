@@ -75,6 +75,7 @@ estão completas**, e estão em **cinco PRs abertos e empilhados**.
    | [#6](https://github.com/leoleonel-jf/PdfToDxf/pull/6) | Contas (tarefas 7–9) | `etapa4-contas` | 9 |
    | [#7](https://github.com/leoleonel-jf/PdfToDxf/pull/7) | Tela (tarefas 10–11) | `etapa4-tela` | 4 |
    | [#8](https://github.com/leoleonel-jf/PdfToDxf/pull/8) | Paciência na leitura da ficha | `etapa4-ficha-paciente` | 3 |
+   | [#9](https://github.com/leoleonel-jf/PdfToDxf/pull/9) | Freio de tentativas de login por IP | `etapa4-freio-login` | 3 |
 
    **Não corte PRs novos** — o corte já foi feito, em 2026-08-26. A descrição
    de cada um traz o que a revisão pegou, com os números medidos; vale ler
@@ -127,10 +128,17 @@ Nenhuma bloqueia o corte dos PRs. Todas vêm do ledger, menos a última seção.
 - **I5.** `horaDeLiberar` ignora `agora`: "libera às 14h20" continua na tela às
   15h.
 
-**Para o usuário decidir, e ainda não foi levado a ele:** não há freio de
-tentativas em `POST /api/auth/entrar`. O único custo por tentativa é o scrypt de
-~110 ms. A spec põe anti-robô fora de escopo, mas isto é adjacente — era para
-ser perguntado no fim da etapa.
+**~~Para o usuário decidir~~ — decidido em 2026-08-26, e feito no PR #9:** não
+havia freio de tentativas em `POST /api/auth/entrar`, e cada tentativa custava
+um `scrypt` de ~110 ms e ~32 MB. O usuário escolheu **teto por IP no
+aplicativo**, e não só na borda, para que a proteção não dependa de o serviço
+estar inalcançável sem o Caddy. Implementado com a maquinaria de cota que já
+existia, tipo `"tentativa"`, chave `PDFTODXF_TENTATIVAS_POR_IP` (padrão 30).
+
+> **Se a etapa 5 acrescentar limite de taxa no Caddy, os dois convivem** — é
+> defesa em profundidade, não duplicação. O que **não** foi medido é a
+> atomicidade com mais de um processo `uvicorn`; está declarado no PR #9 e é
+> item da etapa 5.
 
 **Menores, detalhados no ledger:** o teste do `compare_digest` ainda passa se a
 implementação chamar `compare_digest` e **descartar** o resultado, decidindo por

@@ -555,6 +555,29 @@ class PedidoDeEntrada(BaseModel):
 # `SemVaga` é o 429. Falhou o login, `confirmar` fixa a vaga; deu certo,
 # `soltar` a devolve — e "login certo não consome" continua valendo, agora sem
 # uma janela aberta entre a conferência e a cobrança.
+#
+# Isso troca dois custos que não existiam antes desta reserva, e os dois
+# merecem estar escritos.
+#
+# **Um login certo agora custa `INSERT` + `UPDATE`** (reservar e depois
+# soltar), onde antes custava zero escrita: a linha fica `'solto'`, não ocupa
+# vaga, e a limpeza de 24 h a varre depois. A troca vale a pena — é o preço de
+# fechar a corrida —, mas é exatamente o mesmo argumento que já vale para
+# **não** reservar quando `PDFTODXF_TENTATIVAS_POR_IP=0`: ali a escrita seria
+# de graça, porque nenhum balde teria teto, e por isso `_reservar_tentativa`
+# não grava nada; aqui a escrita compra atomicidade de verdade, e por isso
+# vale a pena pagar.
+#
+# **"Login certo não consome" é verdade no estado assentado, e falsa durante a
+# janela de voo.** A reserva fica de pé pelos ~110 ms do `scrypt` de
+# `conferir_senha`, e nesse intervalo ela ocupa vaga como qualquer outra.
+# Medido: com teto 2 e 16 logins **certos** simultâneos do mesmo IP, o
+# resultado foi `{200: 10, 429: 6}` — parte dos acertos esbarrou na própria
+# rajada de acertos, não em nenhuma falha. Com o padrão de 30 seria preciso um
+# IP com mais de 30 logins certos em voo no mesmo instante (~270 logins/s)
+# para repetir isso, e esse risco já é dominado pelo teto de falhas que aquele
+# IP compartilha — mas quem lê tem de saber que um pico de logins certos do
+# mesmo IP pode levar 429.
 def _identidade_da_tentativa(ip: str) -> identidade.Identidade:
     """O balde de cota de um pedido de login: **o IP, e só ele.**
 
@@ -611,7 +634,20 @@ def _reservar_tentativa(quem: identidade.Identidade) -> str | None:
 
 
 def _cobrar_tentativa(referencia: str | None) -> None:
-    """Fixa a vaga: **esta tentativa falhou**. Login certo não passa por aqui.
+    """Confirma a reserva desta tentativa: ela falhou. Login certo não passa por aqui.
+
+    **Hoje isto é redundante, e de propósito.** `_contar`, `_libera_em` e a
+    guarda de idempotência de `quotas` filtram tudo por `estado <> 'solto'`, e
+    uma linha `'reservado'` ocupa vaga exatamente como uma `'confirmado'` —
+    confirmar aqui não fixa vaga nenhuma que a própria reserva já não
+    estivesse fixando. A única diferença observável seria um `soltar`
+    posterior sobre esta mesma referência, e as referências deste freio são
+    sorteadas e de uso único (`secrets.token_hex`), então isso nunca acontece.
+
+    Existe assim mesmo, como defesa em profundidade para o dia em que houver
+    uma varredura de reserva órfã: se algo um dia soltar `'reservado'` velho
+    de volta a `'solto'` por conta própria, esta chamada é o que impede essa
+    varredura de devolver a vaga de uma tentativa que já falhou.
 
     Cobrar só a falha é o que impede o freio de trancar quem usa o serviço
     normalmente: entrar e sair algumas vezes no dia esgotaria a conta do próprio
@@ -623,10 +659,19 @@ def _cobrar_tentativa(referencia: str | None) -> None:
 
 
 def _soltar_tentativa(referencia: str | None) -> None:
-    """Devolve a vaga: a senha conferiu, e **login certo não consome**.
+    """Devolve a vaga: a senha conferiu, e **login certo não consome** —
+    no estado assentado.
 
     A linha fica no banco marcada `'solto'`, que não ocupa vaga na janela — o
-    rastro de que aquele IP passou por ali, sem custo de cota.
+    rastro de que aquele IP passou por ali, sem custo de cota depois que esta
+    função roda.
+
+    **Enquanto ela não rodou, a reserva conta.** Entre `_reservar_tentativa` e
+    aqui há os ~110 ms do `scrypt` de `conferir_senha`, e nesse intervalo a
+    linha está `'reservado'` e ocupa vaga como qualquer outra — um pico de
+    logins **certos** do mesmo IP pode esbarrar nela mesma. Medido: teto 2 e
+    16 logins certos simultâneos do mesmo IP deram `{200: 10, 429: 6}`. Ver o
+    comentário acima de `entrar` para o tamanho do risco no teto padrão de 30.
     """
     if referencia is not None:
         quotas.soltar(referencia)

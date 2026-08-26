@@ -568,6 +568,40 @@ def test_conta_sem_confirmar_tem_cota_de_visitante():
     print("OK: conta sem confirmar fica com a cota de visitante")
 
 
+def test_teto_de_tentativa_nao_multiplica_pela_folga():
+    """O teto de "tentativa" já está escrito por IP — multiplicar pela folga
+    do balde configuraria 3 e destrancaria 12.
+
+    Balde de folga 4 de propósito: é a folga que `identidade._folga()` devolve
+    hoje para o balde do IP. Se a multiplicação voltar a `_teto`, a chamada
+    direta já falha (o teto viraria 12), e mesmo que não falhasse a quarta
+    reserva — que tinha que ser a primeira recusada — passaria, e só a décima
+    terceira seria barrada.
+    """
+    limpar_tudo()
+    quem = identidade.Identidade(
+        tipo="visitante", usuario_id=None, confirmado=False,
+        baldes=(identidade.Balde(db.marca("ip:198.51.100.9"), 4),),
+        cookie_novo=None)
+    os.environ["PDFTODXF_TENTATIVAS_POR_IP"] = "3"
+    try:
+        assert quotas._teto(quem, "tentativa", quem.baldes[0]) == 3, (
+            "o teto de tentativa não pode sair multiplicado pela folga do "
+            "balde — configurar 3 não pode destrancar 12")
+        for i in range(3):
+            quotas.reservar(quem, "tentativa", f"tent{i}", AGORA)
+        try:
+            quotas.reservar(quem, "tentativa", "tent3", AGORA)
+            raise AssertionError(
+                "a quarta reserva tinha que ser recusada com teto 3 — só "
+                "passou porque o teto virou 12 (3 x a folga do balde)")
+        except quotas.SemVaga:
+            pass
+    finally:
+        del os.environ["PDFTODXF_TENTATIVAS_POR_IP"]
+    print("OK: o teto de tentativa não multiplica pela folga do balde")
+
+
 if __name__ == "__main__":
     test_visitante_envia_cinco_e_para_no_sexto()
     test_limpar_o_cookie_nao_devolve_cota()
@@ -596,4 +630,5 @@ if __name__ == "__main__":
     test_teto_de_mb_do_logado_e_truncado_no_teto_tecnico()
     test_mb_em_zero_vale_o_teto_tecnico()
     test_conta_sem_confirmar_tem_cota_de_visitante()
+    test_teto_de_tentativa_nao_multiplica_pela_folga()
     print("Todos os testes de cota passaram.")

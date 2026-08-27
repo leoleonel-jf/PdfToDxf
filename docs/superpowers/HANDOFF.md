@@ -57,38 +57,37 @@ Estado em 2026-08-24. Leia isto primeiro ao retomar em sessão nova.
 O plano é `docs/superpowers/plans/2026-08-21-contas-cotas-registros.md`; o
 ledger da execução é `.superpowers/sdd/progress-etapa4.md` (fora do git, só
 nesta máquina, e é onde está o detalhe de cada tarefa). **As tarefas 1 a 11
-estão completas**, no branch `contas-cotas-registros`, 22 commits à frente da
-`main`.
+estão completas**, e estão em **cinco PRs abertos e empilhados**.
+
+> **A bateria foi conferida no topo (2026-08-26): 25 arquivos Python, 2179
+> testes de frontend, build limpo.** O worktree está limpo e nada ficou por
+> commitar.
 
 ### O que fazer, nesta ordem
 
-1. **Rodar a bateria inteira** — receita na seção "Como rodar a bateria
-   inteira", mais abaixo. Depois das três sessões de fundo nada foi conferido
-   junto.
+1. **Mesclar os cinco PRs, nesta ordem.** Cada um tem como base o anterior, e
+   sozinho não aplica:
 
-2. **Trazer o branch `claude/great-keller-c8dc41` para dentro.** Ele saiu de
-   `61da3ce` e tem três commits que ainda **não** estão em
-   `contas-cotas-registros`: paciência na leitura da ficha
-   (`web/api/storage.py`), o teste correspondente, e duas dívidas novas que ele
-   acrescenta à seção "Dívida conhecida" deste arquivo — elas ainda **não**
-   aparecem aqui, chegam junto com o merge. O worktree está limpo, tudo
-   commitado.
+   | PR | Conteúdo | Branch | Commits |
+   |---|---|---|---|
+   | [#4](https://github.com/leoleonel-jf/PdfToDxf/pull/4) | Registros (tarefas 1–2) | `etapa4-registros` | 4 |
+   | [#5](https://github.com/leoleonel-jf/PdfToDxf/pull/5) | Cotas (tarefas 3–6) | `etapa4-cotas` | 7 |
+   | [#6](https://github.com/leoleonel-jf/PdfToDxf/pull/6) | Contas (tarefas 7–9) | `etapa4-contas` | 9 |
+   | [#7](https://github.com/leoleonel-jf/PdfToDxf/pull/7) | Tela (tarefas 10–11) | `etapa4-tela` | 4 |
+   | [#8](https://github.com/leoleonel-jf/PdfToDxf/pull/8) | Paciência na leitura da ficha | `etapa4-ficha-paciente` | 3 |
 
-3. **Cortar os quatro PRs**, no corte já combinado com o usuário — a regra de
-   ouro dele é PRs pequenos:
+   **Não corte PRs novos** — o corte já foi feito, em 2026-08-26. A descrição
+   de cada um traz o que a revisão pegou, com os números medidos; vale ler
+   antes de mesclar.
 
-   | PR | Conteúdo | Faixa |
-   |---|---|---|
-   | 1 | Registros (tarefas 1–2) | `bb99ec2..1904723` |
-   | 2 | Cotas (tarefas 3–6) | `3bcb155..c63350d` |
-   | 3 | Contas (tarefas 7–9) | `2b3875b..d6bab95` |
-   | 4 | Tela (tarefas 10–11) | `0792607..14a7cf3` |
+2. **Apagar as branches locais que sobraram**, depois que os PRs entrarem:
+   `contas-cotas-registros` (duplicata do `etapa4-tela`), e as três `claude/*`
+   das sessões de fundo — duas estão vazias, e o conteúdo da
+   `great-keller-c8dc41` foi rebaseado para o PR #8. **Não mescle a
+   `great-keller` direto:** ela saiu de um commit anterior ao do handoff e
+   reverteria este arquivo.
 
-   Os commits de 2026-08-24 — `61da3ce` e os do `great-keller` — são
-   **posteriores** a esse corte e não têm PR. Decidir se entram no PR 4 ou num
-   quinto é pergunta para o usuário, em múltipla escolha.
-
-4. **Executar a tarefa 12**, a última do plano. Foi deixada de propósito para
+3. **Executar a tarefa 12**, a última do plano. Foi deixada de propósito para
    uma sessão de contexto limpo: `impressao.ts`, as cinco linhas de erro em
    `estados.ts`, `privacidade.html` (que o rodapé já referencia e não existe), e
    o modo nova-senha da tela. Esse último é o **passo 5c**, acrescentado ao
@@ -821,6 +820,27 @@ pontos, porque quem especificou errado foi o plano. Detalhe em
 
 Nada disso bloqueia; está registrado para não se perder.
 
+- **`ler_ficha` tem paciência no `open`, mas não no `exists()`.** Achado em
+  2026-08-24, ao dar a `ler_ficha` a mesma repetição que `gravar_ficha` já
+  tinha. A janela do `os.replace` que fazia a leitura estourar `PermissionError`
+  alcança também o `Path.exists()` da linha de cima — só que ele engole o
+  `OSError` e devolve `False`, e aí `ler_ficha` sai por `return None`. O
+  navegador recebe um 404 "Trabalho não encontrado" no meio da extração, no
+  lugar do 500 de antes: sintoma diferente, mesma janela. A correção é a mesma —
+  passar a conferência de existência pelo `com_paciencia` de
+  `web/api/storage.py`, com teste no molde do
+  `test_falha_transitoria_ao_ler_nao_derruba_a_consulta`. **Diferença
+  importante:** o defeito do `open` foi medido (2 de 6 execuções de
+  `tests/test_api_extracao.py`); este é raciocínio sobre o código, ainda não
+  visto acontecer. Confirme antes de corrigir.
+- **`limpar()` não tolera `PermissionError` vindo de `ler_ficha`.** A leitura
+  agora insiste cinco vezes, mas ainda pode desistir — e o
+  `except (ValueError, KeyError, TypeError)` de `_trabalhos()` não pega
+  `PermissionError`, que é `OSError`. Uma ficha ocupada na hora errada aborta a
+  varredura inteira. O serviço não cai, porque o `except Exception` de
+  `_limpeza_periodica` segura, mas a passagem toda se perde junto — o expurgo de
+  registros, o de e-mails e o do banco vêm depois de `storage.limpar` no mesmo
+  `try` — e só volta a rodar 10 minutos depois.
 - **Contar páginas de um PDF não tem função pública no núcleo.** A CLI
   (`_inspecionar`) e `web/api/main.py` abrem o `fitz` na mão para isso, cada uma
   do seu jeito. Um `extractor.contar_paginas(caminho)` acabaria com a

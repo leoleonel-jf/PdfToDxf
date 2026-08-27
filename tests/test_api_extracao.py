@@ -94,6 +94,27 @@ def esperar(job_id: str, pagina: int, limite: float = 60.0) -> dict:
     raise AssertionError(f"a página {pagina} não terminou em {limite}s")
 
 
+def esperar_sumir(caminho, porque: str, limite: float = 30.0) -> None:
+    """Aguarda um arquivo sair do disco.
+
+    `_apagar_origem_se_ocioso` roda **depois** de `_gravar_estado`, então a
+    página fica "pronta" um instante antes de o original sumir. Conferir no
+    mesmo passo em que `esperar` volta é uma corrida, e ela já custou falha
+    intermitente aqui.
+
+    A ordem lá está certa e não é o que se corrige: quem decide apagar lê a
+    ficha, e a página que acabou de terminar só entra nela quando
+    `_gravar_estado` grava — a mesma razão que faz a soltura da cota vir
+    depois. Quem tem de ter paciência é este lado.
+    """
+    fim = time.time() + limite
+    while time.time() < fim:
+        if not caminho.exists():
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"{porque} (esperei {limite}s por {caminho})")
+
+
 def test_extracao_completa():
     job = enviar(bytes_do_pdf_vetorial())
     r = cliente.post(f"/api/jobs/{job}/pages/1")
@@ -111,8 +132,8 @@ def test_pdf_original_e_apagado():
     job = enviar(bytes_do_pdf_vetorial())
     cliente.post(f"/api/jobs/{job}/pages/1")
     esperar(job, 1)
-    assert not (storage.pasta(job) / "origem.pdf").exists(), \
-        "o PDF original deveria sumir depois da extração"
+    esperar_sumir(storage.pasta(job) / "origem.pdf",
+                  "o PDF original deveria sumir depois da extração")
     print("OK: PDF original é apagado após a extração")
 
 
@@ -186,8 +207,8 @@ def test_original_some_quando_todas_as_paginas_terminam():
 
     cliente.post(f"/api/jobs/{job}/pages/2")
     esperar(job, 2)
-    assert not (storage.pasta(job) / "origem.pdf").exists(), \
-        "extraídas todas as páginas, o original deveria sumir"
+    esperar_sumir(storage.pasta(job) / "origem.pdf",
+                  "extraídas todas as páginas, o original deveria sumir")
     print("OK: original só some quando todas as páginas terminam")
 
 
@@ -271,7 +292,7 @@ def test_falha_transitoria_ao_gravar_nao_prende_a_pagina():
     job = enviar(bytes_do_pdf_vetorial())
 
     real = os.replace
-    POR_GRAVACAO = 3          # menos que storage.TENTATIVAS_DE_TROCA
+    POR_GRAVACAO = 3          # menos que storage.TENTATIVAS_DE_ACESSO
     restantes = [POR_GRAVACAO]
     total = [0]
 
@@ -304,6 +325,61 @@ def test_falha_transitoria_ao_gravar_nao_prende_a_pagina():
     print("OK: falha passageira ao gravar a ficha não prende a página")
 
 
+def test_falha_transitoria_ao_ler_nao_derruba_a_consulta():
+    """Uma falha passageira ao ler a ficha não pode virar 500 na consulta.
+
+    É a mesma janela do teste acima, vista do outro lado. Enquanto
+    `gravar_ficha` troca o destino, o arquivo fica um instante sem poder ser
+    aberto por mais ninguém — e quem está do outro lado é justamente o
+    navegador, perguntando o estado da página a cada 200 ms enquanto o worker
+    termina. Sem paciência na leitura, o `PermissionError` sobe de `ler_ficha`
+    por `jobs.estado` e a pergunta volta como 500 no meio da extração.
+    """
+    from web.api import storage
+
+    job = enviar(bytes_do_pdf_vetorial())
+    cliente.post(f"/api/jobs/{job}/pages/1")
+    assert esperar(job, 1)["situacao"] == "pronta"
+
+    real = open
+    POR_LEITURA = 3           # menos que storage.TENTATIVAS_DE_ACESSO
+    restantes = [POR_LEITURA]
+    total = [0]
+
+    def open_teimoso(arquivo, *args, **kwargs):
+        """Faz toda abertura da ficha falhar 3 vezes antes de deixar passar.
+
+        A rota lê a ficha duas vezes — uma em `_ficha_ou_404`, outra em
+        `jobs.estado` —, e o contador volta ao cheio depois de cada abertura
+        que passa, para que as duas leituras percorram o caminho de repetição.
+        O temporário de `gravar_ficha` não entra aqui: o nome dele termina em
+        `.tmp`, não em `ficha.json`.
+        """
+        if str(arquivo).endswith("ficha.json") and restantes[0] > 0:
+            restantes[0] -= 1
+            total[0] += 1
+            raise PermissionError(13, "Permission denied (simulado)")
+        resposta = real(arquivo, *args, **kwargs)
+        if str(arquivo).endswith("ficha.json"):
+            restantes[0] = POR_LEITURA
+        return resposta
+
+    # Nome no módulo, e não em `builtins`: `ler_ficha` procura `open` primeiro
+    # nos globais de `storage`, então basta pôr um lá e tirá-lo depois — o
+    # resto do processo continua com o `open` de verdade.
+    storage.open = open_teimoso
+    try:
+        r = cliente.get(f"/api/jobs/{job}/pages/1")
+    finally:
+        del storage.open
+
+    assert total[0] >= POR_LEITURA, \
+        f"só {total[0]} falhas: a leitura não chegou a ser exercitada"
+    assert r.status_code == 200, r.text
+    assert r.json()["situacao"] == "pronta", r.text
+    print("OK: falha passageira ao ler a ficha não derruba a consulta")
+
+
 def test_erro_inesperado_nao_se_disfarca_de_recurso():
     """Um defeito no servidor tem de chegar como `interno`, não como `recurso`.
 
@@ -334,5 +410,6 @@ if __name__ == "__main__":
     test_pedidos_simultaneos_submetem_uma_vez()
     test_trabalho_apagado_nao_ressuscita_como_toco()
     test_falha_transitoria_ao_gravar_nao_prende_a_pagina()
+    test_falha_transitoria_ao_ler_nao_derruba_a_consulta()
     test_erro_inesperado_nao_se_disfarca_de_recurso()
     print("Todos os testes de extração passaram.")

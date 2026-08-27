@@ -24,7 +24,7 @@ from . import limits
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
 
-TENTATIVAS_DE_TROCA = 5
+TENTATIVAS_DE_ACESSO = 5
 
 
 def raiz() -> Path:
@@ -74,24 +74,34 @@ def caminho_ficha(job_id: str) -> Path:
     return pasta(job_id) / "ficha.json"
 
 
-def trocar_com_paciencia(temporario: Path, destino: Path) -> None:
-    """`os.replace` insistindo um pouco antes de desistir.
+def com_paciencia(acao):
+    """Repete `acao` enquanto o Windows disser que o arquivo está ocupado.
 
-    No Windows a troca volta como `PermissionError` quando outro processo —
-    antivírus, indexador, um envio ainda aberto — segura o arquivo por alguns
-    milissegundos. Desistir na primeira tentativa deixaria a ficha
-    desatualizada, e quando quem grava é o callback da extração o
-    `concurrent.futures` engole a exceção: a página ficaria em "na_fila" para
-    sempre, com o navegador perguntando sem nunca receber resposta.
+    Lá o acesso volta como `PermissionError` quando outro processo — antivírus,
+    indexador, um envio ainda aberto — segura o arquivo por alguns
+    milissegundos. Os dois lados da ficha caem nessa janela, e desistir na
+    primeira tentativa custa caro em ambos:
+
+    - quem grava deixaria a ficha desatualizada, e como quem grava é o callback
+      da extração o `concurrent.futures` engole a exceção: a página ficaria em
+      "na_fila" para sempre, com o navegador perguntando sem nunca receber
+      resposta;
+    - quem lê devolveria 500, e é o mesmo navegador perguntando o estado a cada
+      200 ms — justamente enquanto o worker termina e o `os.replace` do outro
+      lado abre a janela.
     """
-    for tentativa in range(TENTATIVAS_DE_TROCA):
+    for tentativa in range(TENTATIVAS_DE_ACESSO):
         try:
-            os.replace(temporario, destino)
-            return
+            return acao()
         except PermissionError:
-            if tentativa == TENTATIVAS_DE_TROCA - 1:
+            if tentativa == TENTATIVAS_DE_ACESSO - 1:
                 raise
             time.sleep(0.05 * (tentativa + 1))
+
+
+def trocar_com_paciencia(temporario: Path, destino: Path) -> None:
+    """`os.replace` insistindo um pouco antes de desistir."""
+    com_paciencia(lambda: os.replace(temporario, destino))
 
 
 def gravar_ficha(job_id: str, ficha: dict) -> None:
@@ -114,8 +124,12 @@ def ler_ficha(job_id: str) -> dict | None:
     p = caminho_ficha(job_id)
     if not p.exists():
         return None
-    with open(p, encoding="utf-8") as f:
-        return json.load(f)
+
+    def abrir_e_ler() -> dict:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+
+    return com_paciencia(abrir_e_ler)
 
 
 def _tamanho(pasta: Path) -> int:

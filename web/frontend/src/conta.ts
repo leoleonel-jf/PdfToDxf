@@ -46,16 +46,14 @@ export function textoDaCota(c: Cota, agora: number): string {
 }
 
 /**
- * A guarda de "em voo" das releituras de cota (I4).
+ * A guarda de "em voo" das releituras de cota (I4), em uma linha.
  *
- * `main.ts` pega um número de sequência antes de cada `await lerCota()`; ao
- * voltar, a resposta só vale se `sequencia` ainda for o último número emitido
- * — senão uma leitura mais nova já saiu e chegou primeiro, e escrever por
- * cima dela deixaria o canto mostrando um estado velho. Extraída como função
- * pura porque `atualizarCota` mora em `main.ts`, que não é importável sem DOM
- * — o topo do arquivo lê `document.querySelector("#desenho")!` de verdade.
+ * Detalhe de `criarReleitura`, logo abaixo, e de mais ninguém: uma resposta
+ * só vale se a sequência dela ainda for a última emitida — senão uma leitura
+ * mais nova já saiu e chegou primeiro, e escrever por cima dela deixaria o
+ * canto mostrando um estado velho.
  */
-export function respostaAindaVale(sequencia: number, ultimoEmitido: number): boolean {
+function respostaAindaVale(sequencia: number, ultimoEmitido: number): boolean {
   return sequencia === ultimoEmitido;
 }
 
@@ -188,7 +186,10 @@ export function proximoFocavel<T>(lista: readonly T[], atual: T,
                                   paraTras: boolean): T | null {
   if (lista.length === 0) return null;
   const i = lista.indexOf(atual);
-  if (i === -1) return null;
+  // Foco fora do painel — o clique no véu o joga no `body`. Deixar passar
+  // mandaria o `Tab` para a barra atrás do diálogo, que é o buraco que o
+  // `Escape` já teve de fechar: traga-o para dentro, pela borda de entrada.
+  if (i === -1) return paraTras ? lista[lista.length - 1]! : lista[0]!;
   const naBorda = paraTras ? i === 0 : i === lista.length - 1;
   if (!naBorda) return null;
   return paraTras ? lista[lista.length - 1]! : lista[0]!;

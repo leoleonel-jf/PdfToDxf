@@ -190,8 +190,12 @@ describe("proximoFocavel", () => {
     expect(proximoFocavel([], 1, false)).toBeNull();
   });
 
-  it("elemento atual fora da lista nao interfere", () => {
-    expect(proximoFocavel(lista, 9, false)).toBeNull();
+  it("foco fora do painel e trazido para dentro", () => {
+    // O clique no véu joga o foco no `body`, que não está na lista. Deixar
+    // passar mandaria o `Tab` para a barra atrás do diálogo — o mesmo buraco
+    // que o `Escape` teve de fechar.
+    expect(proximoFocavel(lista, 9, false)).toBe(1);
+    expect(proximoFocavel(lista, 9, true)).toBe(3);
   });
 });
 

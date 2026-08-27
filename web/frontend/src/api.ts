@@ -166,9 +166,24 @@ export function enviarPdf(arquivo: File, sinal?: AbortSignal,
     // `void` e não `await`: `enviarPdf` devolve `Promise` mas não é `async`, e
     // a coleta é rápida. Se ela falhar, o envio segue sem o cabeçalho — a
     // impressão nunca pode impedir alguém de converter uma planta.
+    //
+    // Entre `x.open()` (acima) e `x.send()` (aqui dentro) existe uma janela em
+    // que o XHR está aberto mas não enviado: um `x.abort()` nesse estado não
+    // dispara evento nenhum (é o que `desistir` faria via o `sinal`), então
+    // sem reconferir `sinal?.aborted` aqui o envio subiria mesmo cancelado. E
+    // sem o `.catch()`, uma exceção de `setRequestHeader`/`send` sumiria no
+    // `void` e a promessa de `enviarPdf` nunca liquidaria.
     void coletar().then((impressao) => {
+      if (sinal?.aborted) {
+        limpar();
+        reject(new DOMException("Aborted", "AbortError"));
+        return;
+      }
       if (impressao) x.setRequestHeader("X-Impressao", impressao);
       x.send(forma);
+    }).catch((erro: unknown) => {
+      limpar();
+      reject(erro instanceof Error ? erro : new Error(String(erro)));
     });
   });
 }

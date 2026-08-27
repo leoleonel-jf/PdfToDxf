@@ -206,4 +206,25 @@ describe("api.ts", () => {
     await expect(lerGeometriaBruta("a".repeat(32), 1, "esqueleto"))
       .rejects.toSatisfy((e: unknown) => e instanceof ErroDaApi && e.status === 409);
   });
+
+  /**
+   * `ErroDaApi.codigo` chegou na tarefa 11 (`main.py:343` põe `codigo` ao
+   * lado de `detail` na mesma `Recusa`), mas foi para produção sem teste — é
+   * o item I1 da revisão. A tela inteira das cinco linhas de erro (tarefa 12)
+   * distingue "sem vaga por cota" de "arquivo grande" por este campo, e não
+   * por texto; um regressão aqui quebraria as cinco em silêncio.
+   */
+  it("preenche codigo a partir do corpo JSON de uma resposta de erro", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      respostaDe({ detail: "sem vaga", codigo: "cota_arquivos" }, 429)));
+    await expect(lerEstado("a".repeat(32), 1)).rejects.toSatisfy(
+      (e: unknown) => e instanceof ErroDaApi && e.codigo === "cota_arquivos");
+  });
+
+  it("resposta de erro sem codigo deixa o campo vazio", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      respostaDe({ detail: "não achei" }, 404)));
+    await expect(lerEstado("a".repeat(32), 1)).rejects.toSatisfy(
+      (e: unknown) => e instanceof ErroDaApi && e.codigo === "");
+  });
 });

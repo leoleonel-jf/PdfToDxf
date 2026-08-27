@@ -15,7 +15,9 @@ import {
   lerCota, lerGeometriaBruta, lerMeta, pedirExtracao, pedirSenha, registrar,
   sair, type Cota, type Meta,
 } from "./api.js";
-import { acaoDaUrl, montarCaixaDeConta, type ModoDaCaixa } from "./conta.js";
+import {
+  acaoDaUrl, montarCaixaDeConta, respostaAindaVale, type ModoDaCaixa,
+} from "./conta.js";
 import { enquadrar, pontoDaTela, type Vista } from "./canvas.js";
 import { intercalar, lerGeometria, type Geometria } from "./formato.js";
 import {
@@ -620,12 +622,28 @@ let cota: Cota | null = null;
 let modoDaConta: ModoDaCaixa = null;
 let recadoDaConta = "";
 let erroDaConta = "";
+// O último e-mail submetido na caixa (I2), para sobreviver a uma remontagem
+// que só apagaria a senha — nunca este campo. `abrirConta` e `confirmarConta`
+// são os únicos dois lugares que escrevem aqui: a caixa continua sem estado
+// próprio, e `montarConta` só lê o valor para preencher o campo.
+let ultimoEmailDaConta = "";
+// O elemento que estava focado quando a caixa abriu (I3): é para ele que o
+// foco volta quando ela fecha. `HTMLElement.focus()` num elemento que já
+// saiu do DOM não faz nada — daí a conferência de `isConnected` em
+// `fecharCaixaDeConta`, e não uma suposição de que ele ainda está lá.
+let elementoAntesDaConta: HTMLElement | null = null;
 // O token do modo `nova-senha`, lido da URL e nunca digitado: é ele que
 // identifica a conta, e é por isso que a caixa daquele modo não pede e-mail.
 let tokenDeSenha = "";
 // Uma vez por carga: repetir o aviso a cada leitura de cota cobriria a planta
 // a cada envio, e a conta não confirmada não é um erro novo a cada tique.
 let jaAvisouDaConfirmacao = false;
+// A guarda de "em voo" da releitura de cota (I4): cada chamada de
+// `atualizarCota` pega o próximo número aqui, antes do `await`. Duas em voo
+// e a mais velha pode aterrissar por último — sem a guarda, ela sobrescrevia
+// a mais nova, e o canto voltava a mostrar "Entrar" com a cota de visitante
+// depois de um login que já tinha acontecido.
+let sequenciaDaCota = 0;
 
 /**
  * Relê a cota e remonta o topo.
@@ -633,13 +651,21 @@ let jaAvisouDaConfirmacao = false;
  * Falha aqui **não vira aviso na tela**: a cota é informação de canto, e um
  * erro de rede ao lê-la não pode cobrir a planta com um painel. O canto
  * simplesmente não mostra saldo até a próxima leitura dar certo.
+ *
+ * A checagem de `respostaAindaVale` vem antes de qualquer escrita — vale para
+ * o caminho de sucesso e para o de erro igualmente, por isso o `try/catch` só
+ * decide `nova` e a guarda entra depois dos dois.
  */
 async function atualizarCota(): Promise<void> {
+  const minha = ++sequenciaDaCota;
+  let nova: Cota | null;
   try {
-    cota = await lerCota();
+    nova = await lerCota();
   } catch {
-    cota = null;
+    nova = null;
   }
+  if (!respostaAindaVale(minha, sequenciaDaCota)) return;
+  cota = nova;
   // Aviso, e não erro: a conta funciona, só não destravou a cota maior. Uma
   // vez por carga — repetir a cada leitura cobriria a planta a cada envio. E
   // só quando a sobreposição está livre: se um aviso alheio já estiver na
@@ -669,10 +695,33 @@ async function encerrarSessao(): Promise<void> {
   await atualizarCota();
 }
 
+/**
+ * Fecha a caixa (I3): devolve o foco a quem a abriu e esquece o e-mail
+ * guardado (I2) — a próxima abertura começa de um formulário limpo.
+ */
+function fecharCaixaDeConta(): void {
+  modoDaConta = null;
+  ultimoEmailDaConta = "";
+  if (elementoAntesDaConta?.isConnected) elementoAntesDaConta.focus();
+  elementoAntesDaConta = null;
+}
+
 function abrirConta(modo: ModoDaCaixa): void {
-  modoDaConta = modo;
-  recadoDaConta = "";
-  erroDaConta = "";
+  // Só guarda o foco de origem na borda fechado→aberto: uma troca de modo com
+  // a caixa já aberta (ex.: "Esqueci a senha") aconteceria com o foco dentro
+  // da própria caixa, e guardá-lo ali devolveria o foco para um campo dela
+  // mesma em vez de para o botão que a abriu de fato.
+  if (modo !== null && modoDaConta === null) {
+    const ativo = document.activeElement;
+    elementoAntesDaConta = ativo instanceof HTMLElement ? ativo : null;
+  }
+  if (modo === null) {
+    fecharCaixaDeConta();
+  } else {
+    modoDaConta = modo;
+    recadoDaConta = "";
+    erroDaConta = "";
+  }
   montarConta();
 }
 
@@ -680,6 +729,7 @@ function montarConta(): void {
   montarCaixaDeConta(caixaDaConta, modoDaConta, {
     recado: recadoDaConta,
     erro: erroDaConta,
+    email: ultimoEmailDaConta,
     aoTrocarModo: (m) => abrirConta(m),
     aoFechar: () => abrirConta(null),
     aoConfirmar: (modo, email, senha) => void confirmarConta(modo, email, senha),
@@ -690,10 +740,14 @@ async function confirmarConta(modo: Exclude<ModoDaCaixa, null>,
                               email: string, senha: string): Promise<void> {
   erroDaConta = "";
   recadoDaConta = "";
+  // I2: guardado antes do pedido, para sobreviver tanto a um erro quanto a um
+  // sucesso que não fecha a caixa (`cadastrar`, `senha`) — só `fecharCaixaDeConta`
+  // o apaga de novo.
+  ultimoEmailDaConta = email;
   try {
     if (modo === "entrar") {
       await entrar(email, senha);
-      modoDaConta = null;
+      fecharCaixaDeConta();
     } else if (modo === "cadastrar") {
       recadoDaConta = (await registrar(email, senha)).mensagem;
     } else if (modo === "senha") {
@@ -702,7 +756,7 @@ async function confirmarConta(modo: Exclude<ModoDaCaixa, null>,
       // `nova-senha`: o token veio da URL, não do formulário — a caixa
       // daquele modo não tem campo de e-mail nem de token para digitar.
       await concluirSenha(tokenDeSenha, senha);
-      modoDaConta = null;
+      fecharCaixaDeConta();
       // O recado vai para a tela, e não para a caixa: ela está fechando.
       mostrarAviso({
         titulo: "Senha alterada",

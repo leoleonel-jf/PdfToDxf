@@ -20,8 +20,15 @@ export type AcoesDaConta = {
   aoCadastrar: () => void;
 };
 
-/** `14h05` — hora local, que é a que o usuário lê no relógio dele. */
-export function horaDeLiberar(epoch: number, _agora: number): string {
+/**
+ * `14h05` — hora local, que é a que o usuário lê no relógio dele.
+ *
+ * `""` quando `epoch` já passou de `agora`: a tela não pode prometer uma hora
+ * que já ficou para trás. É `textoDaCota` que decide o texto de reserva —
+ * aqui só se decide se há hora para mostrar.
+ */
+export function horaDeLiberar(epoch: number, agora: number): string {
+  if (epoch * 1000 <= agora) return "";
   const d = new Date(epoch * 1000);
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
@@ -32,9 +39,24 @@ export function textoDaCota(c: Cota, agora: number): string {
   const a = c.arquivos;
   if (a.restam === null || a.de === null) return "";
   if (a.restam === 0 && a.libera_em) {
-    return `sem arquivos — libera às ${horaDeLiberar(a.libera_em, agora)}`;
+    const hora = horaDeLiberar(a.libera_em, agora);
+    return hora ? `sem arquivos — libera às ${hora}` : "sem arquivos por enquanto";
   }
   return `${a.restam} de ${a.de} arquivos`;
+}
+
+/**
+ * A guarda de "em voo" das releituras de cota (I4).
+ *
+ * `main.ts` pega um número de sequência antes de cada `await lerCota()`; ao
+ * voltar, a resposta só vale se `sequencia` ainda for o último número emitido
+ * — senão uma leitura mais nova já saiu e chegou primeiro, e escrever por
+ * cima dela deixaria o canto mostrando um estado velho. Extraída como função
+ * pura porque `atualizarCota` mora em `main.ts`, que não é importável sem DOM
+ * — o topo do arquivo lê `document.querySelector("#desenho")!` de verdade.
+ */
+export function respostaAindaVale(sequencia: number, ultimoEmitido: number): boolean {
+  return sequencia === ultimoEmitido;
 }
 
 export function cantoDaConta(c: Cota | null, acoes: AcoesDaConta): HTMLElement {
@@ -106,6 +128,15 @@ export type AcoesDaCaixa = {
   aoFechar: () => void;
   recado: string;
   erro: string;
+  /**
+   * O e-mail com que a caixa nasce preenchida (I2).
+   *
+   * A caixa não guarda estado próprio: `main.ts` remonta ela inteira a cada
+   * erro de submit, e sem isto o `replaceChildren` levava junto o e-mail que
+   * o usuário tinha acabado de digitar — não só a senha errada, que é o único
+   * campo que **deve** ser apagado depois de uma tentativa que falhou.
+   */
+  email?: string;
 };
 
 const TITULOS: Record<Exclude<ModoDaCaixa, null>, string> = {
@@ -133,9 +164,15 @@ export function montarCaixaDeConta(raiz: HTMLElement, modo: ModoDaCaixa,
   const painel = document.createElement("form");
   painel.className = "caixa-de-conta";
   painel.dataset["teste"] = `caixa-${modo}`;
+  // I3: a caixa é um diálogo modal, não um painel qualquer sobre a planta —
+  // quem navega por teclado ou leitor de tela precisa saber que entrou nela.
+  painel.setAttribute("role", "dialog");
+  painel.setAttribute("aria-modal", "true");
 
   const titulo = document.createElement("h2");
+  titulo.id = "titulo-caixa-de-conta";
   titulo.textContent = TITULOS[modo];
+  painel.setAttribute("aria-labelledby", titulo.id);
 
   const email = document.createElement("input");
   email.type = "email";
@@ -144,6 +181,9 @@ export function montarCaixaDeConta(raiz: HTMLElement, modo: ModoDaCaixa,
   email.autocomplete = "email";
   email.placeholder = "seu@email.com";
   email.dataset["teste"] = "campo-email";
+  // I2: o valor inicial que `main.ts` guarda entre montagens — nunca a senha,
+  // que é apagada de propósito a cada remontagem.
+  email.value = acoes.email ?? "";
 
   const senha = document.createElement("input");
   senha.type = "password";
@@ -216,6 +256,14 @@ export function montarCaixaDeConta(raiz: HTMLElement, modo: ModoDaCaixa,
   painel.addEventListener("submit", (e) => {
     e.preventDefault();
     acoes.aoConfirmar(modo, email.value.trim(), senha.value);
+  });
+  // I3: Escape fecha a caixa, como o botão "Fechar". Registrado no próprio
+  // painel — o `keydown` de qualquer campo focado sobe até aqui —, e não em
+  // `document`: a caixa é remontada a cada mudança de estado, e um ouvinte em
+  // `document` teria de ser removido a mão para não vazar. Este morre sozinho
+  // com o `replaceChildren` que troca o painel antigo pelo novo.
+  painel.addEventListener("keydown", (e) => {
+    if ((e as KeyboardEvent).key === "Escape") acoes.aoFechar();
   });
 
   raiz.append(painel);

@@ -1,6 +1,6 @@
 # Handoff — versão web do PdfToDxf
 
-Estado em 2026-08-24. Leia isto primeiro ao retomar em sessão nova.
+Estado em 2026-08-27. Leia isto primeiro ao retomar em sessão nova.
 
 > ## Se o pedido foi só "continuar", faça isto
 >
@@ -9,11 +9,12 @@ Estado em 2026-08-24. Leia isto primeiro ao retomar em sessão nova.
 > mostra 606. Era o `DIMLFAC`. **O app está certo; não há nada a corrigir.**
 > Detalhe logo abaixo, em "A questão do ×100, encerrada".
 >
-> **A etapa 4 está quase pronta e parou num ponto combinado.** O plano existe
-> (`docs/superpowers/plans/2026-08-21-contas-cotas-registros.md`), as tarefas 1
-> a 11 estão completas no branch `contas-cotas-registros`, e falta a tarefa 12
-> mais o corte dos PRs. **Leia "Onde a etapa 4 parou" logo abaixo** — é a lista
-> ordenada do que fazer, e ela substitui este parágrafo como primeiro passo.
+> **A etapa 4 está completa.** As tarefas 1 a 12 estão feitas: os seis PRs
+> (#4 a #9) foram mesclados em 2026-08-26, e a tarefa 12 está no **PR #10**
+> (branch `etapa4-erros-e-privacidade`), revisado, com bateria verde e
+> aprovado para merge — falta só o usuário mesclar. **Leia "Onde a etapa 4
+> parou" logo abaixo** para o estado, a lista ordenada e as dívidas; depois
+> do PR #10, o próximo trabalho de sessão é planejar a etapa 5.
 >
 > **Para subir a tela**, quando ele pedir ou quando você precisar conferir algo:
 > existe `.claude/launch.json` com dois alvos. Use a ferramenta de preview, não
@@ -52,57 +53,57 @@ Estado em 2026-08-24. Leia isto primeiro ao retomar em sessão nova.
 > porque cada uma só via o seu pedaço; a revisão final do branch pegou. **Antes
 > de escrever qualquer conversão, procure se ela já existe no núcleo.**
 
-## Onde a etapa 4 parou (2026-08-24)
+## Onde a etapa 4 parou (2026-08-27)
 
 O plano é `docs/superpowers/plans/2026-08-21-contas-cotas-registros.md`; o
 ledger da execução é `.superpowers/sdd/progress-etapa4.md` (fora do git, só
-nesta máquina, e é onde está o detalhe de cada tarefa). **As tarefas 1 a 11
-estão completas**, e estão em **cinco PRs abertos e empilhados**.
+nesta máquina, e é onde está o detalhe de cada tarefa). **As tarefas 1 a 12
+estão completas.** Os seis PRs (#4 a #9) foram mesclados na `main` em
+2026-08-26, as branches locais órfãs (`contas-cotas-registros` e as três
+`claude/*`) foram apagadas e os worktrees removidos.
 
-> **A bateria foi conferida no topo (2026-08-26): 25 arquivos Python, 2179
-> testes de frontend, build limpo.** O worktree está limpo e nada ficou por
-> commitar.
+**A tarefa 12 foi executada em 2026-08-27**, no branch
+`etapa4-erros-e-privacidade` ([PR #10](https://github.com/leoleonel-jf/PdfToDxf/pull/10)):
+as cinco linhas de erro em `estados.ts`, `impressao.ts` (hash do navegador no
+cabeçalho `X-Impressao`), `privacidade.html`, a recusa por tamanho antes do
+envio, e o **passo 5c** — a caixa de nova senha para `/?senha=<token>`, o
+aviso de `?confirmado=1`, e `acaoDaUrl` em `conta.ts` (`senha` ganha quando os
+dois vêm juntos; a URL é limpa com `replaceState` preservando o resto da
+query e o hash). O item **I1** (teste do `ErroDaApi.codigo`) foi coberto
+antes de construir em cima, como pedido. Processo completo: implementador,
+revisão por tarefa (2 Importantes achados e corrigidos — janela de abort no
+`enviarPdf` e cobertura zero do `X-Impressao`), re-revisão, revisão final do
+branch com triagem, rodada final de sete Menores, veredito **pronto para
+merge**.
+
+> **Bateria no topo do PR #10 (2026-08-27): 25/25 arquivos Python, 2199
+> testes de frontend em 19 arquivos, build limpo, e2e 22/22 três vezes
+> seguidas.** O worktree está limpo.
 
 ### O que fazer, nesta ordem
 
-1. **Mesclar os cinco PRs, nesta ordem.** Cada um tem como base o anterior, e
-   sozinho não aplica:
+1. **Mesclar o [PR #10](https://github.com/leoleonel-jf/PdfToDxf/pull/10)** e
+   conferir a bateria sobre a `main` mesclada.
 
-   | PR | Conteúdo | Branch | Commits |
-   |---|---|---|---|
-   | [#4](https://github.com/leoleonel-jf/PdfToDxf/pull/4) | Registros (tarefas 1–2) | `etapa4-registros` | 4 |
-   | [#5](https://github.com/leoleonel-jf/PdfToDxf/pull/5) | Cotas (tarefas 3–6) | `etapa4-cotas` | 7 |
-   | [#6](https://github.com/leoleonel-jf/PdfToDxf/pull/6) | Contas (tarefas 7–9) | `etapa4-contas` | 9 |
-   | [#7](https://github.com/leoleonel-jf/PdfToDxf/pull/7) | Tela (tarefas 10–11) | `etapa4-tela` | 4 |
-   | [#8](https://github.com/leoleonel-jf/PdfToDxf/pull/8) | Paciência na leitura da ficha | `etapa4-ficha-paciente` | 3 |
-   | [#9](https://github.com/leoleonel-jf/PdfToDxf/pull/9) | Freio de tentativas de login por IP | `etapa4-freio-login` | 3 |
+2. **Decidir a dívida prioritária da revisão final:** as mensagens de
+   `cota_arquivos` e `tamanho` dizem "com uma conta gratuita o limite sobe…"
+   **também para quem já está logado** — conselho impossível de seguir. O
+   texto veio verbatim do plano (passo 4 da tarefa 12) e o teste o exige, então
+   mudar é decisão do usuário: exige passar o tipo da conta a `avisoDoErro` e
+   ajustar o contrato do teste. Ver "Pendências abertas" abaixo.
 
-   **Não corte PRs novos** — o corte já foi feito, em 2026-08-26. A descrição
-   de cada um traz o que a revisão pegou, com os números medidos; vale ler
-   antes de mesclar.
+3. **Planejar a etapa 5 — deploy.** A etapa 4 acabou; é o item 9 de "O que
+   falta".
 
-2. **Apagar as branches locais que sobraram**, depois que os PRs entrarem:
-   `contas-cotas-registros` (duplicata do `etapa4-tela`), e as três `claude/*`
-   das sessões de fundo — duas estão vazias, e o conteúdo da
-   `great-keller-c8dc41` foi rebaseado para o PR #8. **Não mescle a
-   `great-keller` direto:** ela saiu de um commit anterior ao do handoff e
-   reverteria este arquivo.
-
-3. **Executar a tarefa 12**, a última do plano. Foi deixada de propósito para
-   uma sessão de contexto limpo: `impressao.ts`, as cinco linhas de erro em
-   `estados.ts`, `privacidade.html` (que o rodapé já referencia e não existe), e
-   o modo nova-senha da tela. Esse último é o **passo 5c**, acrescentado ao
-   brief para tapar um buraco do plano que a revisão da tarefa 9 pegou: o e-mail
-   de redefinição manda para `/?senha=<token>` e nenhuma tarefa construía essa
-   tela.
-
-### As três sessões de fundo, encerradas
+### As três sessões de fundo, encerradas e absorvidas
 
 | Worktree | O que fez | Situação |
 |---|---|---|
-| `friendly-meninsky-f40d3f` | teste intermitente da limpeza periódica | **já em `contas-cotas-registros`** (`61da3ce`) |
-| `great-keller-c8dc41` | `PermissionError` na ficha sob carga | commitado **no próprio branch**, falta trazer |
+| `friendly-meninsky-f40d3f` | teste intermitente da limpeza periódica | **na `main`** (via PR #7) |
+| `great-keller-c8dc41` | `PermissionError` na ficha sob carga | **na `main`** (rebaseado no PR #8) |
 | `festive-wright-42fee4` | — | vazio, nada a trazer |
+
+Branches e worktrees apagados em 2026-08-27.
 
 O que a primeira corrigiu, porque o padrão se repete: o teste da limpeza
 periódica dormia 0,3 s de relógio antes de cancelar a tarefa, e uma volta do
@@ -112,12 +113,27 @@ antes e 10/10 depois. **Espere a condição, nunca um tempo de relógio.**
 
 ### Pendências abertas da etapa 4
 
-Nenhuma bloqueia o corte dos PRs. Todas vêm do ledger, menos a última seção.
+Nenhuma bloqueia o merge do PR #10. Todas vêm do ledger, menos a última seção.
+
+**Dívidas registradas na revisão final da tarefa 12 (2026-08-27):**
+
+- **Prioritária, decisão do usuário:** mensagens de `cota_arquivos` e
+  `tamanho` erradas para usuário logado (item 2 de "O que fazer" acima).
+- `lerCota` não manda `X-Impressao`, então o saldo do canto ignora o balde da
+  impressão: quando ele for o vinculante (cookie apagado, IP trocado), a tela
+  mostra vaga e o envio leva 429.
+- O token de redefinição fica irrecuperável se o usuário fechar a caixa
+  `nova-senha` (a URL já foi limpa); o fallback "Esqueci a senha" existe e
+  funciona.
+- O token de senha viaja no path do `POST /api/auth/senha/{token}` e entra nos
+  logs de acesso — desenho da rota (tarefa 9), não do frontend.
+- A asserção negativa do teste do I1 passaria se `erroDaRecusa` nunca tocasse
+  `codigo`; o teste positivo irmão cobre.
 
 **Da tarefa 11 (tela)** — a revisão aprovou com ressalvas, tudo cobertura e UX:
 
-- **I1.** `ErroDaApi.codigo` foi para produção **sem teste**, e é o alicerce da
-  tarefa 12. Cubra antes de construir em cima dele.
+- ~~**I1.** `ErroDaApi.codigo` sem teste.~~ **Fechado na tarefa 12**
+  (`testes/api.test.ts`), antes de construir em cima, como pedido.
 - **I2.** Erro no submit apaga os dois campos: senha errada faz o e-mail sumir
   junto.
 - **I3.** `Escape` não fecha a caixa; sem `role="dialog"`; o foco não volta ao
@@ -764,10 +780,10 @@ por plataforma.
 
 ### Trabalho de sessão
 
-8. **Terminar a etapa 4 — contas, cotas e registros.** O plano foi escrito em
-   2026-08-21 e as tarefas 1 a 11 estão feitas; falta a tarefa 12 e o corte dos
-   PRs. **A lista ordenada está em "Onde a etapa 4 parou", no topo** — é o que
-   "continuar" significa hoje.
+8. ~~**Terminar a etapa 4 — contas, cotas e registros.**~~ **Feita em
+   2026-08-27**: as 12 tarefas completas, seis PRs mesclados e a tarefa 12 no
+   PR #10, aprovado para merge. O que sobrou vive em "Pendências abertas da
+   etapa 4", no topo.
 
    **Por que a etapa 4 antes da auto-escala**, decidido em 2026-08-09: as
    etapas 4 e 5 são o que leva o projeto ao objetivo declarado — versão web

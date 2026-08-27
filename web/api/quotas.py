@@ -179,8 +179,9 @@ def _consumir(ident, tipo: str, referencia: str, estado: str,
     con.execute("BEGIN IMMEDIATE")
     try:
         # A guarda de repetição é pelo **balde identificador** — o primeiro da
-        # tupla, que `identidade.resolver` garante ser o `cookie:` do visitante
-        # e o `usuario:` do logado. Ela responde "esta identidade já pagou por
+        # tupla, que `identidade.resolver` garante ser o `cookie:` do
+        # visitante e do logado **sem confirmar**, e o `usuario:` só do
+        # logado **confirmado**. Ela responde "esta identidade já pagou por
         # esta referência?": se já pagou, repetir não custa de novo (clique
         # duplicado e reenvio saem de graça); se não pagou, paga em **todos**
         # os baldes dela.

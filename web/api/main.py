@@ -15,10 +15,11 @@ import math
 import fitz
 from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import db, exportacao, identidade, jobs, quotas, registros, storage
+from . import (auth, db, enviador, exportacao, identidade, jobs, quotas,
+               registros, storage)
 
 PEDACO = 1024 * 1024   # 1 MB por leitura do envio
 INTERVALO_LIMPEZA = 10 * 60   # 10 minutos
@@ -36,6 +37,14 @@ async def _limpeza_periodica() -> None:
             apagados = await asyncio.to_thread(registros.expurgar)
             if apagados:
                 print(f"limpeza: {len(apagados)} registros com mais de 1 ano")
+            # Os e-mails gravados em arquivo trazem o token **em claro**. Depois
+            # de 48 h a linha do token já saiu do banco pelo `db.limpar` e o
+            # arquivo é inerte, mas guardar segredo vencido para sempre é
+            # sujeira. `storage.limpar` não pega esta pasta de propósito — ela
+            # não passa por `validar_id` — então o expurgo é do próprio módulo.
+            cartas = await asyncio.to_thread(enviador.expurgar)
+            if cartas:
+                print(f"limpeza: {len(cartas)} e-mails gravados em arquivo")
             do_banco = await asyncio.to_thread(db.limpar)
             if do_banco["consumo"] or do_banco["tokens"]:
                 print(f"limpeza: {do_banco['consumo']} consumos e "
@@ -50,6 +59,13 @@ async def ciclo_de_vida(_app: FastAPI):
     # permissão no arquivo do banco aparece ao subir, e não na cara do primeiro
     # usuário.
     await asyncio.to_thread(lambda: db.criar_tabelas(db.conexao()))
+    # Pré-aquece o hash de mentira do `queimar_tempo`: sem isto, a primeira
+    # chamada depois da subida paga `hash_senha` (~120 ms) *e* `conferir_senha`
+    # (~110 ms) — 239 ms contra ~110 ms das chamadas seguintes e ~167 ms de um
+    # `conferir_senha` real —, um oráculo de tiro único no primeiro login com
+    # e-mail inexistente. Em thread pelo mesmo motivo das tabelas acima: um
+    # `scrypt` de ~100 ms no laço de eventos atrasaria a subida.
+    await asyncio.to_thread(auth.queimar_tempo)
     tarefa = asyncio.create_task(_limpeza_periodica())
     try:
         yield
@@ -69,13 +85,55 @@ def _mb(n: int) -> int:
     return n // (1024 * 1024)
 
 
+def _gravar_sessao(resposta: Response, uid: int, seguro: bool) -> None:
+    resposta.set_cookie(auth.COOKIE_SESSAO, auth.criar_sessao(uid),
+                        max_age=auth.PRAZO_SESSAO_S, httponly=True,
+                        samesite="lax", secure=seguro, path="/")
+
+
+def quem_pede(request: Request, resposta: Response) -> identidade.Identidade:
+    """A identidade do pedido, com a sessão já resolvida e o cookie renovado.
+
+    Um lugar só. Cada rota resolvendo sessão por conta própria seria a receita
+    para uma delas esquecer, e a cota do logado virar cota de visitante em
+    silêncio — defeito que nenhum teste de unidade pega.
+
+    **Toca o banco** (`auth.por_id`). Numa rota `async def` ela tem de ir para
+    `asyncio.to_thread`, como `quotas.reservar` — ver o comentário em `enviar`.
+    """
+    seguro = request.url.scheme == "https"
+    dono = auth.dono_da_sessao(request)
+    if dono is not None and auth.precisa_renovar(request):
+        _gravar_sessao(resposta, dono.id, seguro)
+    ident = identidade.resolver(request, dono=dono)
+    identidade.gravar_cookie(resposta, ident, seguro=seguro)
+    return ident
+
+
 @app.post("/api/jobs")
 async def enviar(request: Request, resposta: Response,
                  arquivo: UploadFile = File(...)) -> dict:
     """Recebe o PDF, confere o teto do plano, reserva a vaga e conta as páginas."""
-    ident = identidade.resolver(request)
-    identidade.gravar_cookie(resposta, ident,
-                             seguro=request.url.scheme == "https")
+    # Em thread pelo mesmo motivo do `reservar` lá embaixo: `quem_pede` lê o
+    # banco (`auth.por_id`), e esta rota é `async def` — ela roda no fio do laço
+    # de eventos.
+    #
+    # O que isto preserva é um **invariante**, e não uma espera: nenhum fio de
+    # laço de eventos abre conexão de SQLite. A subida e a limpeza já usam
+    # `to_thread`, e com este aqui a contagem de conexões nascidas no fio do
+    # laço é **zero**; tirando o `to_thread`, é **uma** (medido, contando o fio
+    # de nascimento de cada conexão num envio de logado). O invariante é o que
+    # torna a regra auditável de uma olhada — "o laço não fala com o banco" —
+    # em vez de obrigar a reavaliar, consulta a consulta, se aquela consulta
+    # pode bloquear.
+    #
+    # **Não é pelo `busy_timeout` de 5 s**, que era o motivo escrito aqui antes
+    # e não acontece: com o lock de escrita preso de propósito, `db.conexao()`
+    # sai em poucas dezenas de milissegundos no pior caso, porque
+    # `PRAGMA journal_mode` num banco já em WAL e `CREATE TABLE IF NOT EXISTS`
+    # sobre tabela existente não pedem o lock — três ordens de grandeza abaixo
+    # dos 5 s. E, para visitante, `quem_pede` não toca o banco vez nenhuma.
+    ident = await asyncio.to_thread(quem_pede, request, resposta)
     teto = quotas.limites(ident)["bytes"]
 
     # O `content-length` primeiro, e o teto de novo durante a leitura. O
@@ -343,9 +401,9 @@ def exportar(job_id: str, pagina: int, pedido: PedidoDeExportacao,
     referencia = f"{job_id}:{ch}"
 
     if not ja_existe:
-        ident = identidade.resolver(request)
-        identidade.gravar_cookie(resposta, ident,
-                                 seguro=request.url.scheme == "https")
+        # Direto, sem `to_thread`: esta rota é síncrona, e o FastAPI já a roda
+        # no pool de threads.
+        ident = quem_pede(request, resposta)
         try:
             quotas.reservar(ident, "download", referencia)
         except quotas.SemVaga as e:
@@ -382,6 +440,223 @@ def baixar(job_id: str, ch: str) -> FileResponse:
             return FileResponse(caminho, media_type="application/dxf",
                                 filename=nome)
     raise HTTPException(status_code=404, detail="Arquivo não encontrado.")
+
+
+class PedidoDeRegistro(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    senha: str = Field(min_length=8, max_length=200)
+
+
+@app.post("/api/auth/registro")
+def registrar(pedido: PedidoDeRegistro, request: Request) -> dict:
+    """Cria a conta e dispara o link. **A resposta é a mesma nos dois casos.**
+
+    E-mail já cadastrado recebe um aviso, e não o link — assim o dono do
+    endereço fica sabendo, e quem sondou não descobre nada.
+    """
+    if not auth.email_valido(pedido.email):
+        # `Recusa` e não `HTTPException`: com `codigo` a tela distingue isto de
+        # um 422 do Pydantic, que tem outro formato de corpo.
+        raise Recusa(422, "E-mail inválido.", "email_invalido")
+
+    ip = identidade.ip_do_pedido(request)
+    # Antes de `criar_conta`, e igual nos dois caminhos: a recusa não depende de
+    # o endereço já existir, então ela não conta nada a quem sonda.
+    teto = auth.teto_de_contas_por_ip()
+    if teto and auth.contas_do_ip_hoje(ip) >= teto:
+        raise Recusa(429, "Muitas contas criadas deste endereço hoje. "
+                          "Tente amanhã.", "contas_demais")
+
+    uid = auth.criar_conta(pedido.email, pedido.senha, ip)
+    if uid is None:
+        # **Nada de `queimar_tempo` aqui.** `criar_conta` avalia
+        # `hash_senha(senha)` como argumento do `INSERT`, ou seja, paga o
+        # `scrypt` antes de o `IntegrityError` disparar — nos dois caminhos. É
+        # isso que iguala os tempos. Um hash a mais neste ramo faria o e-mail
+        # repetido custar o dobro do novo e criaria o oráculo de enumeração que
+        # a resposta idêntica existe para fechar (medido: 2.13x, faixas sem
+        # sobreposição).
+        enviador.enviar(
+            auth.normalizar(pedido.email),
+            "Tentativa de cadastro no PdfToDxf",
+            "Alguém tentou criar uma conta no PdfToDxf com este endereço, que "
+            "já tem cadastro.\n\nSe foi você, entre normalmente em "
+            f"{auth.url_base()}/ — e use 'Esqueci a senha' se precisar.\n\n"
+            "Se não foi você, pode ignorar esta mensagem: nada mudou na sua "
+            "conta.")
+    else:
+        token = auth.novo_token(uid, "confirmacao", auth.PRAZO_CONFIRMACAO_S)
+        enviador.enviar(
+            auth.normalizar(pedido.email),
+            "Confirme seu endereço no PdfToDxf",
+            "Para ativar a cota maior da sua conta, confirme este endereço:\n\n"
+            f"{auth.url_base()}/api/auth/confirmar/{token}\n\n"
+            "O link vale por 48 horas. Se você não pediu isto, ignore.")
+
+    return {"ok": True,
+            "mensagem": "Se este endereço puder receber, o e-mail já saiu. "
+                        "Confira a caixa de entrada."}
+
+
+@app.get("/api/auth/confirmar/{token}")
+def confirmar(token: str):
+    uid = auth.usar_token(token, "confirmacao")
+    if uid is None:
+        raise Recusa(400, "Este link não vale mais. Peça outro entrando na sua "
+                          "conta.", "token_invalido")
+    auth.confirmar_conta(uid)
+    return RedirectResponse(url="/?confirmado=1", status_code=303)
+
+
+class PedidoDeEntrada(BaseModel):
+    # O mínimo da senha é `1`, e não `auth.SENHA_MINIMA`: quem já tem uma senha
+    # curta de antes precisa poder entrar para trocá-la, e recusar por
+    # comprimento aqui contaria pela porta dos fundos que aquele endereço não
+    # tem senha curta cadastrada.
+    email: str = Field(min_length=3, max_length=254)
+    senha: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/api/auth/entrar")
+def entrar(pedido: PedidoDeEntrada, request: Request,
+           resposta: Response) -> dict:
+    """Confere as credenciais e grava a sessão.
+
+    **A recusa é a mesma nos dois casos**, em texto e em tempo: e-mail que não
+    existe e senha errada saem por aqui com o mesmo status e o mesmo corpo.
+    """
+    linha = auth.por_email(pedido.email)
+    if linha is None:
+        # `scrypt` de mentira: sem ele, "não existe" responde em microssegundos
+        # e "senha errada" em dezenas de milissegundos, e o cronômetro conta o
+        # que a mensagem calou. **Aqui ele serve de verdade**, ao contrário do
+        # cadastro, onde `criar_conta` já paga o hash nos dois caminhos.
+        auth.queimar_tempo()
+        raise Recusa(401, "E-mail ou senha não conferem.", "credenciais")
+
+    if not auth.conferir_senha(pedido.senha, linha["senha"]):
+        raise Recusa(401, "E-mail ou senha não conferem.", "credenciais")
+
+    if auth.precisa_reescrever(linha["senha"]):
+        auth.reescrever_senha(linha["id"], pedido.senha)
+
+    _gravar_sessao(resposta, int(linha["id"]), request.url.scheme == "https")
+    return {"email": linha["email"],
+            "confirmado": linha["confirmado_em"] is not None}
+
+
+class PedidoDeSenha(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+
+class NovaSenha(BaseModel):
+    senha: str = Field(min_length=8, max_length=200)
+
+
+# O piso de resposta de `POST /api/auth/senha`: os dois ramos gastam **este**
+# tempo, e não o tempo do que fizeram. Folgado o bastante para caber o `SELECT`,
+# o `INSERT` do token e o disparo da thread com sobra, e curto o bastante para
+# não virar amplificador — a resposta é uma espera, não CPU.
+#
+# **Por que não `queimar_tempo` aqui.** Diferente do login, os dois ramos não
+# são simétricos: nenhum paga `scrypt`, e o do e-mail existente paga um `INSERT`
+# mais o envio da carta, cujo custo é do transporte de e-mail e não nosso.
+# Somar um `scrypt` só ao ramo do inexistente não iguala nada — desloca. Medido
+# naquela versão, com ordem sorteada: com SMTP em 0 ms (dev e CI) os dois ramos
+# ficavam 10x separados, faixas **disjuntas**, e um limiar único acertava 100%
+# de quem tem conta; com 150 ms e com 500 ms de transporte continuava vazando.
+# O `queimar_tempo` não fechava o canal em latência nenhuma — no melhor caso
+# medido ele ainda deixava a rota classificável bem acima do acaso. Qualquer
+# ponto em que os dois ramos "casassem" seria coincidência de uma máquina e de
+# uma latência, e não propriedade do sistema; é por isso que a defesa é um piso
+# constante, e não um ajuste de custo.
+#
+# **E por que não bastaria só arrancar o `queimar_tempo`.** Isso resolveria o
+# dev (1,28x, faixas sobrepostas) e abriria a produção: sem piso, o ramo do
+# existente carrega a latência do SMTP na resposta — 4,25x com 150 ms. O piso é
+# o que torna a medida **insensível ao transporte**, e por isso a carta sai numa
+# thread, fora do caminho do pedido.
+PISO_DE_SENHA_S = 0.300
+
+
+@app.post("/api/auth/senha")
+def pedir_senha(pedido: PedidoDeSenha) -> dict:
+    """Manda o link de redefinição. **Responde igual para e-mail inexistente.**
+
+    Igual em texto, byte a byte, **e em tempo**: os dois ramos esperam até o
+    mesmo piso (`PISO_DE_SENHA_S`) antes de responder. Sem isso o formulário de
+    "esqueci a senha" vira uma sonda de quem tem conta — e ela responde a
+    qualquer um, sem senha nenhuma.
+
+    O envio da carta sai do caminho do pedido justamente para sair do relógio
+    da resposta: o transporte de e-mail é de fora, varia de dezenas a centenas
+    de milissegundos, e qualquer coisa que dependa dele vaza para o cronômetro.
+    Quem tira é `enviador.enfileirar`, que põe na fila e volta — **não levanta e
+    não bloqueia**. Criar a thread aqui, como esta rota fazia antes, punha o
+    `Thread.start()` dentro do caminho do pedido: `enviador.enviar` nunca
+    levanta, mas o `.start()` levanta `RuntimeError: can't start new thread`, e
+    um 500 só no ramo do e-mail que existe é o mesmo oráculo com outra roupa.
+    """
+    piso = time.monotonic() + PISO_DE_SENHA_S
+    linha = auth.por_email(pedido.email)
+    if linha is not None:
+        token = auth.novo_token(linha["id"], "senha", auth.PRAZO_SENHA_S)
+        enviador.enfileirar(
+            linha["email"], "Redefinir a senha do PdfToDxf",
+            "Para escolher uma senha nova, abra:\n\n"
+            f"{auth.url_base()}/?senha={token}\n\n"
+            "O link vale por 1 hora. Se você não pediu isto, ignore — "
+            "nada mudou na sua conta.")
+    falta = piso - time.monotonic()
+    if falta > 0:
+        time.sleep(falta)
+    else:
+        # Estourou o piso: o trabalho custou mais do que ele, e daí em diante a
+        # resposta passa a contar o tempo do **trabalho** em vez do piso — que é
+        # justamente o oráculo que o piso existe para fechar. Nada de esticar o
+        # piso dinamicamente: um piso que cresce junto com o custo do ramo é o
+        # mesmo canal por outro nome. Aqui só se torna o evento visível.
+        #
+        # **Estouro frequente quer dizer que `PISO_DE_SENHA_S` ficou curto para
+        # esta implantação** — o caso plausível é o `INSERT` do token esperando
+        # no `PRAGMA busy_timeout=5000` de `db.conexao` enquanto o `SELECT` do
+        # outro ramo, que é leitor de WAL, não espera por ninguém.
+        print(f"pedir_senha: piso de {PISO_DE_SENHA_S:.3f}s estourado em "
+              f"{-falta:.3f}s")
+    return {"ok": True,
+            "mensagem": "Se este endereço tiver conta, o e-mail já saiu."}
+
+
+@app.post("/api/auth/senha/{token}")
+def concluir_senha(token: str, pedido: NovaSenha) -> dict:
+    """Troca a senha, consumindo o token. **Derruba as sessões abertas.**
+
+    É `POST`, e o link do e-mail aponta para a **tela** (`/?senha=<token>`), não
+    para cá: um `GET` que já trocasse a senha seria disparado por qualquer
+    pré-carregador de link do cliente de e-mail, e o token morreria antes de o
+    dono clicar.
+
+    O expulsar de quem estava dentro sai de graça de `reescrever_senha`: o hash
+    guardado muda, e a impressão que cada cookie de sessão carrega deixa de
+    bater (ver `auth.criar_sessao`). Não há nada a apagar aqui — a não ser os
+    **outros** links de redefinição que aquele usuário tenha pedido: quem pede
+    três e usa o terceiro deixava os dois primeiros de pé por até 1 h.
+    """
+    uid = auth.usar_token(token, "senha")
+    if uid is None:
+        raise Recusa(400, "Este link não vale mais. Peça outro.",
+                     "token_invalido")
+    auth.reescrever_senha(uid, pedido.senha)
+    # Depois da troca, e não antes: se a reescrita falhar, os links pendentes
+    # continuam sendo o caminho de recuperação de quem os pediu.
+    auth.invalidar_tokens(uid, "senha")
+    return {"ok": True}
+
+
+@app.post("/api/auth/sair")
+def sair(resposta: Response) -> dict:
+    resposta.delete_cookie(auth.COOKIE_SESSAO, path="/")
+    return {"ok": True}
 
 
 from fastapi.staticfiles import StaticFiles

@@ -1,0 +1,192 @@
+/**
+ * O canto da conta e as caixas de entrar e cadastrar.
+ *
+ * Nada de biblioteca: são dois formulários e um menu. O CSS é o mesmo do resto
+ * da tela.
+ *
+ * A regra que governa o texto da cota é a mesma do progresso: **não inventar
+ * número**. Sem limite não vira "∞ arquivos", vira texto nenhum.
+ *
+ * `document.createElement` e nunca `innerHTML`: o e-mail sai do que o usuário
+ * digitou e volta do servidor, e montar HTML com string faria dele um vetor de
+ * injeção. Mesma razão de `ui/controles.ts`.
+ */
+import { criarBotao } from "./ui/controles.js";
+import type { Cota } from "./api.js";
+
+export type AcoesDaConta = {
+  aoEntrar: () => void;
+  aoSair: () => void;
+  aoCadastrar: () => void;
+};
+
+/** `14h05` — hora local, que é a que o usuário lê no relógio dele. */
+export function horaDeLiberar(epoch: number, _agora: number): string {
+  const d = new Date(epoch * 1000);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}h${mm}`;
+}
+
+export function textoDaCota(c: Cota, agora: number): string {
+  const a = c.arquivos;
+  if (a.restam === null || a.de === null) return "";
+  if (a.restam === 0 && a.libera_em) {
+    return `sem arquivos — libera às ${horaDeLiberar(a.libera_em, agora)}`;
+  }
+  return `${a.restam} de ${a.de} arquivos`;
+}
+
+export function cantoDaConta(c: Cota | null, acoes: AcoesDaConta): HTMLElement {
+  const caixa = document.createElement("div");
+  caixa.className = "canto-da-conta";
+  caixa.dataset["teste"] = "canto-da-conta";
+
+  if (c) {
+    const texto = textoDaCota(c, Date.now());
+    if (texto) {
+      const saldo = document.createElement("span");
+      saldo.className = "apoio secundario";
+      saldo.dataset["teste"] = "cota";
+      saldo.textContent = texto;
+      caixa.append(saldo);
+    }
+  }
+
+  if (c && c.tipo === "logado") {
+    const email = document.createElement("span");
+    email.className = "apoio";
+    email.dataset["teste"] = "email-da-conta";
+    email.textContent = c.email;
+    caixa.append(email, criarBotao({
+      rotulo: "Sair", classe: "discreto", teste: "sair", aoClicar: acoes.aoSair,
+    }));
+    return caixa;
+  }
+
+  caixa.append(criarBotao({
+    rotulo: "Entrar", icone: "usuario", classe: "discreto", teste: "entrar",
+    aoClicar: acoes.aoEntrar,
+  }));
+  return caixa;
+}
+
+export type ModoDaCaixa = "entrar" | "cadastrar" | "senha" | null;
+
+export type AcoesDaCaixa = {
+  aoConfirmar: (modo: Exclude<ModoDaCaixa, null>,
+                email: string, senha: string) => void;
+  aoTrocarModo: (modo: Exclude<ModoDaCaixa, null>) => void;
+  aoFechar: () => void;
+  recado: string;
+  erro: string;
+};
+
+const TITULOS: Record<Exclude<ModoDaCaixa, null>, string> = {
+  entrar: "Entrar",
+  cadastrar: "Criar conta",
+  senha: "Recuperar a senha",
+};
+
+/**
+ * Monta a caixa dentro da sobreposição, ou a esconde com `modo === null`.
+ *
+ * O `hidden` não é enfeite: a sobreposição é `position: fixed; inset: 0` e
+ * cobre a tela inteira, inclusive o canvas. Fechada, ela **precisa** sair do
+ * fluxo — é o `[hidden] { display: none !important }` do topo do `estilo.css`
+ * que garante isso contra o `display: flex` da própria regra da sobreposição.
+ * Foi assim que o painel de aviso da etapa 3 engolia a planta.
+ */
+export function montarCaixaDeConta(raiz: HTMLElement, modo: ModoDaCaixa,
+                                   acoes: AcoesDaCaixa): void {
+  raiz.replaceChildren();
+  raiz.hidden = modo === null;
+  if (modo === null) return;
+
+  const painel = document.createElement("form");
+  painel.className = "caixa-de-conta";
+  painel.dataset["teste"] = `caixa-${modo}`;
+
+  const titulo = document.createElement("h2");
+  titulo.textContent = TITULOS[modo];
+
+  const email = document.createElement("input");
+  email.type = "email";
+  email.className = "campo campo-largo";
+  email.required = true;
+  email.autocomplete = "email";
+  email.placeholder = "seu@email.com";
+  email.dataset["teste"] = "campo-email";
+
+  const senha = document.createElement("input");
+  senha.type = "password";
+  senha.className = "campo campo-largo";
+  senha.required = true;
+  senha.minLength = 8;
+  senha.autocomplete = modo === "entrar" ? "current-password" : "new-password";
+  senha.placeholder = "sua senha";
+  senha.dataset["teste"] = "campo-senha";
+
+  painel.append(titulo, email);
+  // O campo de senha não é escondido, é **omitido**: "Recuperar a senha" manda
+  // só o e-mail, e um `required` invisível travaria o `submit` sem dizer por quê.
+  if (modo !== "senha") painel.append(senha);
+
+  if (modo === "cadastrar") {
+    const explica = document.createElement("p");
+    explica.className = "explica";
+    explica.textContent = "Com conta você envia 15 arquivos por vez em vez de " +
+      "5, gera 45 DXF em vez de 15, e o limite de tamanho sobe de 10 MB para " +
+      "100 MB.";
+    painel.append(explica);
+  }
+
+  if (acoes.erro) {
+    const erro = document.createElement("p");
+    erro.className = "explica erro";
+    erro.dataset["teste"] = "erro-da-conta";
+    erro.textContent = acoes.erro;
+    painel.append(erro);
+  }
+  if (acoes.recado) {
+    const recado = document.createElement("p");
+    recado.className = "explica";
+    recado.dataset["teste"] = "recado-da-conta";
+    recado.textContent = acoes.recado;
+    painel.append(recado);
+  }
+
+  const confirmar = document.createElement("button");
+  confirmar.type = "submit";
+  confirmar.className = "botao principal";
+  confirmar.dataset["teste"] = "confirmar-conta";
+  confirmar.textContent = TITULOS[modo];
+  painel.append(confirmar);
+
+  const outros = document.createElement("div");
+  outros.className = "apoio";
+  const alternativas: Array<[Exclude<ModoDaCaixa, null>, string]> = [
+    ["entrar", "Já tenho conta"],
+    ["cadastrar", "Criar uma conta"],
+    ["senha", "Esqueci a senha"],
+  ];
+  for (const [alvo, rotulo] of alternativas) {
+    if (alvo === modo) continue;
+    outros.append(criarBotao({
+      rotulo, classe: "discreto", teste: `ir-para-${alvo}`,
+      aoClicar: () => acoes.aoTrocarModo(alvo),
+    }));
+  }
+  painel.append(outros, criarBotao({
+    rotulo: "Fechar", classe: "discreto", teste: "fechar-conta",
+    aoClicar: acoes.aoFechar,
+  }));
+
+  painel.addEventListener("submit", (e) => {
+    e.preventDefault();
+    acoes.aoConfirmar(modo, email.value.trim(), senha.value);
+  });
+
+  raiz.append(painel);
+  email.focus();
+}

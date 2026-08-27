@@ -22,7 +22,8 @@ import {
   aplicarArrasto, aplicarZoom, centro, distancia, fatorDaRoda,
   PAUSA_DO_GESTO_MS,
 } from "./gestos.js";
-import { avisoDaSituacao, avisoDoErro, type Aviso } from "./estados.js";
+import { avisoDaSituacao, avisoDoErro, conselhoDeTamanho,
+         type Aviso } from "./estados.js";
 import {
   escalaPorDoisPontos, escalaValidaParaExportar, iniciarCalibragem,
   marcarPonto, medidaDigitada, posicaoDaLupa, type Calibragem,
@@ -448,10 +449,7 @@ async function abrir(arquivo: File): Promise<void> {
     mostrarAviso({
       titulo: "O arquivo passa do tamanho permitido",
       detalhe: `Este arquivo tem ${(arquivo.size / (1024 * 1024)).toFixed(1)} ` +
-               `MB e o limite é de ${mb} MB.` +
-               (cota.tipo === "visitante"
-                 ? " Com uma conta gratuita o limite sobe para 100 MB."
-                 : ""),
+               `MB e o limite é de ${mb} MB.` + conselhoDeTamanho(cota),
       podeTentarDeNovo: false,
     });
     return;
@@ -500,7 +498,7 @@ async function abrir(arquivo: File): Promise<void> {
       return;
     }
     esconderProgresso("aviso");
-    mostrarAviso(avisoDoErro(erro));
+    mostrarAviso(avisoDoErro(erro, cota));
     // Também na recusa: um 429 de cota é justamente o momento em que o saldo
     // do canto ficou desatualizado.
     void atualizarCota();
@@ -612,7 +610,7 @@ async function carregarPagina(): Promise<void> {
     if (sinal.aborted) return;
     esconderProgresso("aviso");
     esconderProgresso("faixa");
-    mostrarAviso(avisoDoErro(erro));
+    mostrarAviso(avisoDoErro(erro, cota));
   }
 }
 
@@ -870,7 +868,7 @@ async function baixar(): Promise<void> {
     link.remove();
   } catch (erro) {
     esconderProgresso("aviso");
-    mostrarAviso(avisoDoErro(erro));
+    mostrarAviso(avisoDoErro(erro, cota));
   } finally {
     // Nos dois desfechos: o DXF gerado consumiu uma vaga de download, e a
     // recusa por cota é a outra metade da mesma notícia. Fora do `try` de

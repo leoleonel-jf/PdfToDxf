@@ -59,13 +59,41 @@ export function avisoDaSituacao(situacao: string, codigo?: string,
   };
 }
 
-export function avisoDoErro(erro: unknown): Aviso {
+/** O que a mensagem de cota pode aconselhar depende de quem está ouvindo. */
+export type QuemPede = { tipo: "visitante" | "logado"; confirmado: boolean };
+
+// O conselho tem que ser possível de seguir: "crie uma conta" só serve a quem
+// não tem uma. Sem `quem` (a leitura de cota falhou), vale o texto de
+// visitante — é o caso comum de quem esbarra no limite.
+function conselhoDeCota(quem: QuemPede | null | undefined): string {
+  if (quem?.tipo !== "logado") {
+    return " Com uma conta gratuita o limite sobe de 5 para 15 arquivos, e o " +
+           "tamanho máximo de 10 MB para 100 MB.";
+  }
+  if (!quem.confirmado) {
+    return " Confirme seu e-mail para destravar o limite maior — enquanto " +
+           "isso a conta fica com a cota de visitante.";
+  }
+  return " A cota libera sozinha com o tempo; tente de novo mais tarde.";
+}
+
+export function conselhoDeTamanho(quem: QuemPede | null | undefined): string {
+  if (quem?.tipo !== "logado") {
+    return " Com uma conta gratuita o limite sobe para 100 MB.";
+  }
+  if (!quem.confirmado) {
+    return " Confirme seu e-mail para destravar o limite de 100 MB.";
+  }
+  return " Exporte do CAD um PDF menor, ou divida a planta em partes.";
+}
+
+export function avisoDoErro(erro: unknown,
+                            quem?: QuemPede | null): Aviso {
   if (erro instanceof ErroDaApi) {
     if (erro.codigo === "cota_arquivos") {
       return {
         titulo: "Você chegou ao limite de arquivos por enquanto",
-        detalhe: erro.message + " Com uma conta gratuita o limite sobe de 5 " +
-                 "para 15 arquivos, e o tamanho máximo de 10 MB para 100 MB.",
+        detalhe: erro.message + conselhoDeCota(quem),
         podeTentarDeNovo: false,
       };
     }
@@ -80,8 +108,7 @@ export function avisoDoErro(erro: unknown): Aviso {
     if (erro.codigo === "tamanho") {
       return {
         titulo: "O arquivo passa do tamanho permitido",
-        detalhe: erro.message + " Com uma conta gratuita o limite sobe para " +
-                 "100 MB.",
+        detalhe: erro.message + conselhoDeTamanho(quem),
         podeTentarDeNovo: false,
       };
     }

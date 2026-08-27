@@ -72,4 +72,34 @@ describe("estados.ts", () => {
     const a = avisoDoErro(new ErroDaApi(429, "sem vaga", "cota_arquivos"));
     expect(tudo(a).toLowerCase()).not.toMatch(/cookie|endereço ip|impressão/);
   });
+
+  it("cota e tamanho não oferecem conta a quem já está logado", () => {
+    // O conselho tem que ser possível de seguir: quem já tem conta não pode
+    // ouvir "crie uma conta".
+    const confirmado = { tipo: "logado" as const, confirmado: true };
+    const cota = avisoDoErro(
+      new ErroDaApi(429, "sem vaga", "cota_arquivos"), confirmado);
+    expect(tudo(cota).toLowerCase()).not.toMatch(/conta gratuita/);
+    expect(tudo(cota)).toMatch(/mais tarde|libera/i);
+
+    const tamanho = avisoDoErro(
+      new ErroDaApi(413, "grande", "tamanho"), confirmado);
+    expect(tudo(tamanho).toLowerCase()).not.toMatch(/conta gratuita/);
+    expect(tudo(tamanho)).toMatch(/menor|divida/i);
+
+    // Logado sem confirmar: o que destrava o limite é a confirmação.
+    const pendente = { tipo: "logado" as const, confirmado: false };
+    expect(tudo(avisoDoErro(
+      new ErroDaApi(429, "sem vaga", "cota_arquivos"), pendente)))
+      .toMatch(/confirm/i);
+    expect(tudo(avisoDoErro(
+      new ErroDaApi(413, "grande", "tamanho"), pendente)))
+      .toMatch(/confirm/i);
+
+    // Visitante explícito continua recebendo a oferta, como o padrão sem cota.
+    const visitante = { tipo: "visitante" as const, confirmado: false };
+    expect(tudo(avisoDoErro(
+      new ErroDaApi(429, "sem vaga", "cota_arquivos"), visitante)))
+      .toMatch(/conta/i);
+  });
 });

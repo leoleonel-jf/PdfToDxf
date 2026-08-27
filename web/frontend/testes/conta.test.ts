@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { horaDeLiberar, textoDaCota } from "../src/conta.js";
+import { acaoDaUrl, horaDeLiberar, textoDaCota } from "../src/conta.js";
 import type { Cota } from "../src/api.js";
 
 const AGORA = new Date("2026-08-21T12:00:00").getTime();
@@ -40,5 +40,42 @@ describe("conta.ts", () => {
   it("a hora de liberar sai no relógio local", () => {
     const epoch = new Date("2026-08-21T14:05:00").getTime() / 1000;
     expect(horaDeLiberar(epoch, AGORA)).toBe("14h05");
+  });
+});
+
+/**
+ * `acaoDaUrl` é testável em Node porque é pura — o ambiente de teste roda sem
+ * DOM (`vite.config.ts`: `environment: "node"`), e ler `window.location` de
+ * verdade aqui não seria possível.
+ */
+describe("acaoDaUrl", () => {
+  it("?senha=abc devolve o token", () => {
+    expect(acaoDaUrl("?senha=abc")).toEqual({ tipo: "nova-senha", token: "abc" });
+  });
+
+  it("?confirmado=1 devolve confirmado", () => {
+    expect(acaoDaUrl("?confirmado=1")).toEqual({ tipo: "confirmado" });
+  });
+
+  it("string vazia devolve null", () => {
+    expect(acaoDaUrl("")).toBeNull();
+  });
+
+  it("?senha= vazio devolve null", () => {
+    expect(acaoDaUrl("?senha=")).toBeNull();
+  });
+
+  it("um token com caracteres de escape volta decodificado", () => {
+    expect(acaoDaUrl("?senha=a%2Fb%20c")).toEqual(
+      { tipo: "nova-senha", token: "a/b c" });
+  });
+
+  // Os dois juntos: `senha` ganha. É o token sensível — precisa sair da URL e
+  // ser tratado agora, ou fica ali, utilizável, até vencer. `confirmado` é só
+  // um aviso; perdê-lo custa uma frase, não uma conta que ninguém troca de
+  // senha. Ver o comentário em `acaoDaUrl`.
+  it("com os dois juntos, senha ganha de confirmado", () => {
+    expect(acaoDaUrl("?senha=abc&confirmado=1")).toEqual(
+      { tipo: "nova-senha", token: "abc" });
   });
 });

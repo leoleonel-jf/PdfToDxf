@@ -49,4 +49,27 @@ describe("estados.ts", () => {
     expect(aviso.detalhe.length).toBeGreaterThan(0);
     expect(aviso.podeTentarDeNovo).toBe(true);
   });
+
+  it("as cinco linhas de erro da etapa 4 existem e são acionáveis", () => {
+    const cota = avisoDoErro(new ErroDaApi(429, "sem vaga", "cota_arquivos"));
+    expect(tudo(cota)).toMatch(/conta/i);   // oferece o cadastro ao visitante
+
+    const baixar = avisoDoErro(new ErroDaApi(429, "sem vaga", "cota_downloads"));
+    expect(tudo(baixar)).toMatch(/já gerou|de novo|liberado/i);
+
+    const tamanho = avisoDoErro(new ErroDaApi(413, "grande", "tamanho"));
+    expect(tudo(tamanho)).toMatch(/tamanho|MB/i);
+
+    const naoConfirmada = avisoDoErro(
+      new ErroDaApi(403, "confirme", "conta_nao_confirmada"));
+    expect(tudo(naoConfirmada)).toMatch(/confirm/i);
+
+    // A quinta é o trabalho expirado, que a etapa 3 já tinha.
+    expect(tudo(avisoDoErro(new ErroDaApi(404, "sumiu")))).toMatch(/expir/i);
+  });
+
+  it("cota esgotada não conta qual balde estourou", () => {
+    const a = avisoDoErro(new ErroDaApi(429, "sem vaga", "cota_arquivos"));
+    expect(tudo(a).toLowerCase()).not.toMatch(/cookie|endereço ip|impressão/);
+  });
 });

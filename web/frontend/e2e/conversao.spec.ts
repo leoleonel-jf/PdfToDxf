@@ -538,3 +538,14 @@ test("cancelar depois de o envio progredir esconde a barra e destrava a tela", a
   await expect(progresso).toBeHidden();
   await expect(t(page, "exportar")).toBeDisabled();
 });
+
+test("o canto da conta mostra a cota e a caixa de entrar abre", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator('[data-teste="cota"]')).toContainText("arquivos");
+  await page.locator('[data-teste="entrar"]').click();
+  await expect(page.locator('[data-teste="caixa-entrar"]')).toBeVisible();
+  await page.locator('[data-teste="ir-para-cadastrar"]').click();
+  await expect(page.locator('[data-teste="caixa-cadastrar"]')).toBeVisible();
+  await page.locator('[data-teste="fechar-conta"]').click();
+  await expect(page.locator('[data-teste="caixa-cadastrar"]')).toBeHidden();
+});

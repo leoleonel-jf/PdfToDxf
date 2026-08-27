@@ -71,7 +71,33 @@ export function cantoDaConta(c: Cota | null, acoes: AcoesDaConta): HTMLElement {
   return caixa;
 }
 
-export type ModoDaCaixa = "entrar" | "cadastrar" | "senha" | null;
+export type ModoDaCaixa = "entrar" | "cadastrar" | "senha" | "nova-senha" | null;
+
+/**
+ * Os dois parâmetros de URL que os e-mails produzem.
+ *
+ * `?senha=<token>` vem do link de "esqueci a senha" (`/?senha=<token>`);
+ * `?confirmado=1` é para onde `GET /api/auth/confirmar/{token}` redireciona.
+ * Pura, e não lida de `window.location` diretamente: o ambiente de teste roda
+ * sem DOM (`vite.config.ts`), e é assim que ela fica testável em Node.
+ */
+export type AcaoDaUrl =
+  | { tipo: "nova-senha"; token: string }
+  | { tipo: "confirmado" }
+  | null;
+
+export function acaoDaUrl(busca: string): AcaoDaUrl {
+  const params = new URLSearchParams(busca);
+  const token = params.get("senha");
+  // Se os dois parâmetros vierem juntos, `senha` ganha. É o token sensível: já
+  // saiu do e-mail, e uma vez lido precisa sumir da barra de endereço agora —
+  // se `confirmado` ganhasse, o link de redefinição ficaria ali, utilizável,
+  // até vencer. Perder o aviso de "confirmado" custa uma frase; perder a
+  // janela de trocar a senha é o usuário ter de pedir outro link.
+  if (token) return { tipo: "nova-senha", token };
+  if (params.get("confirmado") === "1") return { tipo: "confirmado" };
+  return null;
+}
 
 export type AcoesDaCaixa = {
   aoConfirmar: (modo: Exclude<ModoDaCaixa, null>,
@@ -86,6 +112,7 @@ const TITULOS: Record<Exclude<ModoDaCaixa, null>, string> = {
   entrar: "Entrar",
   cadastrar: "Criar conta",
   senha: "Recuperar a senha",
+  "nova-senha": "Nova senha",
 };
 
 /**
@@ -127,9 +154,13 @@ export function montarCaixaDeConta(raiz: HTMLElement, modo: ModoDaCaixa,
   senha.placeholder = "sua senha";
   senha.dataset["teste"] = "campo-senha";
 
-  painel.append(titulo, email);
-  // O campo de senha não é escondido, é **omitido**: "Recuperar a senha" manda
-  // só o e-mail, e um `required` invisível travaria o `submit` sem dizer por quê.
+  painel.append(titulo);
+  // Os dois campos são **omitidos**, não escondidos, quando não fazem sentido
+  // no modo: um `required` invisível travaria o `submit` sem dizer por quê.
+  // "Recuperar a senha" manda só o e-mail; "nova-senha" — a caixa que abre a
+  // partir de `?senha=<token>` — não pede e-mail nenhum, porque o token já
+  // identifica a conta.
+  if (modo !== "nova-senha") painel.append(email);
   if (modo !== "senha") painel.append(senha);
 
   if (modo === "cadastrar") {

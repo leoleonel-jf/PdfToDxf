@@ -61,6 +61,46 @@ export function avisoDaSituacao(situacao: string, codigo?: string,
 
 export function avisoDoErro(erro: unknown): Aviso {
   if (erro instanceof ErroDaApi) {
+    if (erro.codigo === "cota_arquivos") {
+      return {
+        titulo: "Você chegou ao limite de arquivos por enquanto",
+        detalhe: erro.message + " Com uma conta gratuita o limite sobe de 5 " +
+                 "para 15 arquivos, e o tamanho máximo de 10 MB para 100 MB.",
+        podeTentarDeNovo: false,
+      };
+    }
+    if (erro.codigo === "cota_downloads") {
+      return {
+        titulo: "Você chegou ao limite de DXF gerados por enquanto",
+        detalhe: erro.message + " Baixar de novo um DXF que você já gerou " +
+                 "continua liberado — só combinações novas contam.",
+        podeTentarDeNovo: false,
+      };
+    }
+    if (erro.codigo === "tamanho") {
+      return {
+        titulo: "O arquivo passa do tamanho permitido",
+        detalhe: erro.message + " Com uma conta gratuita o limite sobe para " +
+                 "100 MB.",
+        podeTentarDeNovo: false,
+      };
+    }
+    if (erro.codigo === "conta_nao_confirmada") {
+      return {
+        titulo: "Falta confirmar seu e-mail",
+        detalhe: "Enquanto o endereço não for confirmado, a conta fica com a " +
+                 "cota de visitante. Procure a mensagem que enviamos — o link " +
+                 "vale por 48 horas.",
+        podeTentarDeNovo: false,
+      };
+    }
+    if (erro.codigo === "contas_demais") {
+      return {
+        titulo: "Muitas contas criadas deste endereço hoje",
+        detalhe: "Tente amanhã, ou entre na conta que você já tem.",
+        podeTentarDeNovo: false,
+      };
+    }
     if (erro.status === 404) {
       return {
         titulo: "Esta planta expirou",

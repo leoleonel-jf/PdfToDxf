@@ -1,5 +1,6 @@
-"""Entrar, sair, e o que a sessão muda na cota."""
+"""Entrar, sair, o freio de tentativas, e o que a sessão muda na cota."""
 
+import contextlib
 import hashlib
 import os
 import sys
@@ -21,7 +22,7 @@ os.environ["PDFTODXF_SEGREDO"] = "segredo-de-teste"
 from fastapi.testclient import TestClient
 
 from tests.test_api_extracao import bytes_do_pdf_vetorial
-from web.api import auth, db, identidade
+from web.api import auth, db, identidade, main, quotas
 from web.api.main import app
 
 # O `tests/test_api_extracao`, importado acima só pela fábrica de PDF, desliga a
@@ -38,9 +39,18 @@ def cliente_novo() -> TestClient:
     return TestClient(app)
 
 
-def limpar_consumo():
+def limpar_consumo(*tipos: str):
+    """Apaga o consumo **dos tipos pedidos**, e só deles.
+
+    Era um `DELETE FROM consumo` sem filtro. Apagar a tabela inteira é uma
+    limpeza que ninguém pediu: o teste de cota de arquivo zerava o freio de
+    login e vice-versa, e a bateria passava a depender da ordem em que os
+    testes rodam. Aqui cada teste diz o que precisa apagar.
+    """
+    assert tipos, "diga o que apagar — apagar tudo é o defeito que isto corrige"
     con = db.conexao()
-    con.execute("DELETE FROM consumo")
+    for tipo in tipos:
+        con.execute("DELETE FROM consumo WHERE tipo = ?", (tipo,))
     con.commit()
 
 
@@ -52,6 +62,56 @@ def conta_pronta(email: str, senha: str = "abc12345") -> int:
 
 def um_pdf():
     return {"arquivo": ("p.pdf", bytes_do_pdf_vetorial(), "application/pdf")}
+
+
+CHAVE_TENTATIVAS = "PDFTODXF_TENTATIVAS_POR_IP"
+CHAVE_PROXIES = "PDFTODXF_PROXIES"
+
+
+@contextlib.contextmanager
+def chave_de_ambiente(nome: str, valor: str | None):
+    """Põe (ou tira) uma chave do ambiente, e **devolve o que havia** ao fim.
+
+    `None` é "chave ausente" — que é um dos casos a testar, e não o mesmo que
+    chave vazia. Restaurar, e não `pop`: um `pop` no `finally` destrói o valor
+    que o operador tivesse posto no ambiente antes de rodar a bateria.
+    """
+    antes = os.environ.get(nome)
+    if valor is None:
+        os.environ.pop(nome, None)
+    else:
+        os.environ[nome] = valor
+    try:
+        yield
+    finally:
+        if antes is None:
+            os.environ.pop(nome, None)
+        else:
+            os.environ[nome] = antes
+
+
+def teto_de_tentativas(valor: str | None):
+    """A chave do freio de login, com a higiene de `chave_de_ambiente`."""
+    return chave_de_ambiente(CHAVE_TENTATIVAS, valor)
+
+
+def tentativas_gravadas() -> int:
+    """Quantas tentativas **ocupam vaga** na janela — o que foi cobrado.
+
+    `estado <> 'solto'` é a mesma conta que `quotas._contar` faz. A rota reserva
+    a vaga antes do `scrypt` e a **solta** quando a senha confere: a linha do
+    login certo fica no banco como rastro, marcada `'solto'`, e contá-la aqui
+    faria "login certo não consome" parecer falso quando é verdade.
+    """
+    linha = db.conexao().execute(
+        "SELECT count(*) AS n FROM consumo "
+        "WHERE tipo = 'tentativa' AND estado <> 'solto'").fetchone()
+    return int(linha["n"])
+
+
+def entrar_com(cliente, email: str, senha: str = "nao-e-a-senha", **kwargs):
+    return cliente.post("/api/auth/entrar",
+                        json={"email": email, "senha": senha}, **kwargs)
 
 
 class PedidoComCookie:
@@ -103,6 +163,9 @@ def test_entrar_e_sair():
 
 
 def test_email_inexistente_e_senha_errada_respondem_igual():
+    # Balde limpo: com o freio de tentativas estourado a rota devolveria 429
+    # antes de olhar o e-mail, e este teste passaria sem medir o que quer medir.
+    limpar_consumo("tentativa")
     conta_pronta("hel@exemplo.com")
     cliente = cliente_novo()
     a = cliente.post("/api/auth/entrar",
@@ -169,7 +232,7 @@ def test_cookie_de_visitante_leva_secure_so_em_https():
     de `_gravar_sessao` podia muito bem existir aqui também, sem teste nenhum
     que falasse nisso.
     """
-    limpar_consumo()
+    limpar_consumo("arquivo")
 
     def enviar(base_url: str) -> str:
         cliente = TestClient(app, base_url=base_url)
@@ -252,6 +315,7 @@ def test_entrar_gasta_o_mesmo_scrypt_nos_dois_jeitos_de_recusar():
     um — e o cronômetro conta o que a mensagem calou. Contador, e não
     cronômetro: o que se afirma é exato.
     """
+    limpar_consumo("tentativa")   # ver o comentário do teste da resposta idêntica
     conta_pronta("olga@exemplo.com")
     cliente = cliente_novo()
     # Pré-aquece o hash de mentira: a **primeira** chamada de `queimar_tempo`
@@ -276,6 +340,275 @@ def test_entrar_gasta_o_mesmo_scrypt_nos_dois_jeitos_de_recusar():
         f"{senha_errada}: a diferença vira um oráculo de quem tem conta, mesmo "
         "com a resposta idêntica byte a byte")
     print("OK: e-mail inexistente e senha errada pagam o mesmo número de scrypt")
+
+
+def test_o_freio_barra_a_tentativa_seguinte():
+    """Estourado o teto do IP, a próxima tentativa nem chega às credenciais."""
+    limpar_consumo("tentativa")
+    conta_pronta("ana@exemplo.com")
+    with teto_de_tentativas("3"):
+        cliente = cliente_novo()
+        for i in range(3):
+            r = entrar_com(cliente, "ana@exemplo.com")
+            assert r.status_code == 401, (i, r.status_code, r.text)
+        assert tentativas_gravadas() == 3, tentativas_gravadas()
+
+        r = entrar_com(cliente, "ana@exemplo.com")
+        assert r.status_code == 429, r.text
+        assert r.json()["codigo"] == "tentativas_demais", r.json()
+        assert r.json()["libera_em"] > time.time(), r.json()
+
+        # E a senha **certa** também é barrada: o teto é do IP, e aquele IP já
+        # gastou o que tinha. É o preço de um freio que não precisa saber quem
+        # está pedindo para valer.
+        r = entrar_com(cliente, "ana@exemplo.com", senha="abc12345")
+        assert r.status_code == 429, r.text
+
+        # O barrado não engorda a própria contagem: 429 não cobra nada.
+        assert tentativas_gravadas() == 3, tentativas_gravadas()
+    print("OK: o freio barra a tentativa seguinte, e o barrado não cobra")
+
+
+def test_o_barrado_nao_gasta_scrypt_e_responde_igual_para_os_dois_emails():
+    """O ponto do freio: **zero `scrypt`** depois do teto, nos dois caminhos.
+
+    Conferir o teto depois de `conferir_senha` limitaria a força bruta e
+    deixaria de pé o amplificador — cada tentativa custa ~110 ms de CPU e
+    ~32 MB, disparados por um `POST` de 40 bytes sem cookie e sem conta. Aqui
+    se mede a **ordem**, por contagem de hashes; e de quebra que o 429 não
+    conta se o e-mail existe.
+    """
+    limpar_consumo("tentativa")
+    conta_pronta("bel@exemplo.com")
+    auth.queimar_tempo()   # pré-aquece: ver o teste da contagem simétrica
+    with teto_de_tentativas("1"):
+        cliente = cliente_novo()
+        gasto = contando_scrypt(
+            lambda: entrar_com(cliente, "bel@exemplo.com"))
+        assert gasto >= 1, "a tentativa que passa pelo freio paga o hash"
+
+        respostas = {}
+        for rotulo, email in (("existe", "bel@exemplo.com"),
+                              ("nao_existe", "ninguem-mesmo@exemplo.com")):
+            caixa = []
+            gasto = contando_scrypt(
+                lambda: caixa.append(entrar_com(cliente, email)))
+            assert gasto == 0, (
+                f"o pedido barrado gastou {gasto} scrypt ({rotulo}): o freio "
+                "está sendo conferido depois do hash, e o amplificador de CPU "
+                "continua aberto")
+            respostas[rotulo] = caixa[0]
+
+        a, b = respostas["existe"], respostas["nao_existe"]
+        assert a.status_code == b.status_code == 429, (a.status_code,
+                                                       b.status_code)
+        assert a.json() == b.json(), (a.json(), b.json())
+    print("OK: barrado gasta zero scrypt e responde igual para os dois e-mails")
+
+
+def test_login_certo_nao_consome():
+    """Cinco entradas certas com teto 2, e o teto continua inteiro."""
+    limpar_consumo("tentativa")
+    conta_pronta("caio@exemplo.com")
+    with teto_de_tentativas("2"):
+        cliente = cliente_novo()
+        for i in range(5):
+            r = entrar_com(cliente, "caio@exemplo.com", senha="abc12345")
+            assert r.status_code == 200, (i, r.text)
+        assert tentativas_gravadas() == 0, (
+            "login certo consumiu tentativa: quem usa o serviço se trancaria "
+            "sozinho")
+
+        # E o freio continua armado para o que falha.
+        for i in range(2):
+            assert entrar_com(cliente, "caio@exemplo.com").status_code == 401, i
+        assert entrar_com(cliente, "caio@exemplo.com").status_code == 429
+    # As duas falhas acima ficam ocupando a janela deste IP; quem vem depois
+    # não tem por que herdá-las.
+    limpar_consumo("tentativa")
+    print("OK: login certo não consome, e o freio continua armado para a falha")
+
+
+def test_teto_de_tentativas_em_zero_nao_limita():
+    limpar_consumo("tentativa")
+    conta_pronta("dora@exemplo.com")
+    quem = main._identidade_da_tentativa("203.0.113.4")
+    with teto_de_tentativas("0"):
+        assert quotas.restante(quem, "tentativa") == (None, None), \
+            quotas.restante(quem, "tentativa")
+        cliente = cliente_novo()
+        for i in range(4):
+            r = entrar_com(cliente, "dora@exemplo.com")
+            assert r.status_code == 401, (i, r.status_code, r.text)
+        # E **nada é gravado**. Com o freio desligado, reservar mesmo assim
+        # passaria sempre — nenhum balde tem teto —, mas ao preço de um
+        # `INSERT` por pedido não autenticado, para nada. Antes desta correção
+        # eram 40 linhas em 40 falhas seguidas.
+        linha = db.conexao().execute(
+            "SELECT count(*) AS n FROM consumo WHERE tipo = 'tentativa'"
+        ).fetchone()
+        assert int(linha["n"]) == 0, (
+            f"teto 0 gravou {int(linha['n'])} linhas: o freio desligado está "
+            "cobrando escrita de graça")
+    print("OK: teto de tentativas em 0 não limita e não grava nada")
+
+
+def test_teto_de_tentativas_negativo_ausente_e_lixo_caem_no_padrao():
+    """`-1` é "sem limite" em outros sistemas; aqui é lixo, e lixo vira padrão.
+
+    Um `max(0, ...)` grampearia o negativo em `0`, que **é** sem limite nesta
+    convenção, e o freio do login sumiria em silêncio. Defeito já corrigido
+    duas vezes neste projeto; aqui ele tem teste.
+    """
+    limpar_consumo("tentativa")
+    quem = main._identidade_da_tentativa("203.0.113.5")
+    for cru in ("-1", "-999", "trinta", "30x", "", "   ", None):
+        with teto_de_tentativas(cru):
+            restam, libera = quotas.restante(quem, "tentativa")
+            assert restam == quotas.TENTATIVAS_POR_IP == 30, (cru, restam)
+            assert libera is None, (cru, libera)
+    print("OK: teto de tentativas negativo, ausente ou lixo cai no padrão de 30")
+
+
+def test_outro_ip_tem_contagem_propria():
+    """O freio é por IP: o vizinho barrado não pode barrar quem não tentou."""
+    limpar_consumo("tentativa")
+    conta_pronta("edu@exemplo.com")
+    # `PDFTODXF_PROXIES=1` faz `ip_do_pedido` ler o `X-Forwarded-For`, que é o
+    # único jeito de o `TestClient` bater à porta com endereços diferentes.
+    # Pelo `chave_de_ambiente`, e não com um `pop` no `finally`: o `pop`
+    # destruía o valor que o operador tivesse posto antes de rodar a bateria.
+    with chave_de_ambiente(CHAVE_PROXIES, "1"), teto_de_tentativas("1"):
+        cliente = cliente_novo()
+
+        def tentar(ip):
+            return entrar_com(cliente, "edu@exemplo.com",
+                              headers={"X-Forwarded-For": ip})
+
+        assert tentar("198.51.100.10").status_code == 401
+        assert tentar("198.51.100.10").status_code == 429, "o IP gastou"
+        assert tentar("203.0.113.10").status_code == 401, \
+            "o vizinho não pode herdar o freio de outro endereço"
+        assert tentar("203.0.113.10").status_code == 429
+    print("OK: cada IP tem a sua contagem de tentativas")
+
+
+class PedidoSemCliente:
+    """Um `Request` **sem** `client` — o que o `TestClient` nunca produz.
+
+    Acontece de verdade atrás de socket unix, em transportes de teste ASGI de
+    terceiros e em alguns proxies: o escopo chega sem `client`, e `request.client`
+    fica `None`.
+    """
+
+    cookies: dict = {}
+    headers: dict = {}
+    client = None
+
+
+def test_pedido_sem_ip_ainda_cai_num_balde():
+    """Sem IP conhecido o balde fica **vazio**, e não deixa de existir.
+
+    Identidade sem balde nenhum é o modo caro de errar: `quotas` varre
+    `ident.baldes`, e uma tupla vazia não tem o que contar — o laço não roda, o
+    teto nunca enche, e o freio vira passe livre justamente para quem chega sem
+    endereço identificável. O lado seguro é todo mundo sem IP conhecido dividir
+    um balde só, apertado.
+
+    O `TestClient` sempre preenche `client.host`, então este caminho não é
+    alcançável pelas rotas nesta bateria; aqui ele é exercitado direto.
+    """
+    limpar_consumo("tentativa")
+    ip = identidade.ip_do_pedido(PedidoSemCliente())
+    assert ip == "", repr(ip)
+
+    quem = main._identidade_da_tentativa(ip)
+    assert len(quem.baldes) == 1, (
+        f"pedido sem IP ficou com {len(quem.baldes)} baldes: sem balde nenhum "
+        "o freio não conta nada e vira passe livre")
+    assert quem.baldes[0].chave == db.marca("ip:"), quem.baldes
+    assert quem.baldes[0].folga == 1, quem.baldes
+
+    # E o balde vazio **conta de verdade**: dois cabem no teto 2, o terceiro não.
+    with teto_de_tentativas("2"):
+        quotas.reservar(quem, "tentativa", "sem-ip-1")
+        quotas.reservar(quem, "tentativa", "sem-ip-2")
+        try:
+            quotas.reservar(quem, "tentativa", "sem-ip-3")
+            raise AssertionError("o balde do IP vazio não limitou nada")
+        except quotas.SemVaga as sem:
+            assert sem.tipo == "tentativa", sem.tipo
+            assert sem.libera_em is not None and sem.libera_em > time.time()
+    limpar_consumo("tentativa")
+    print("OK: pedido sem IP cai num balde vazio que existe e limita")
+
+
+def test_rajada_simultanea_nao_passa_do_teto_em_scrypt():
+    """O freio tem de ser atômico, e não check-then-act.
+
+    Espelha `test_quotas.test_dezesseis_ao_mesmo_tempo_passam_exatamente_cinco`:
+    `threading.Barrier` solta todos os fios juntos, no mesmo instante.
+
+    **O que se afirma é o `scrypt`, não a linha.** As linhas já saíam certas na
+    versão anterior — `BEGIN IMMEDIATE` cuidava disso —, mas a decisão de barrar
+    vinha de um `quotas.restante()` fora de transação e a cobrança só acontecia
+    ~110 ms depois, no fim da rota: todos os pedidos em voo liam o mesmo estado
+    e **todos** pagavam o hash. Medido antes da correção: teto 1 e 24 pedidos
+    simultâneos davam 24 hashes pagos e nenhum 429. Como o freio existe contra o
+    gasto de CPU e memória, o teto real por IP era `teto + largura do pool de
+    fios`, e é isso que este teste tranca.
+
+    Um `TestClient` por fio de propósito: um cliente compartilhado serializaria
+    parte dos pedidos e a rajada mediria menos do que quer medir.
+    """
+    limpar_consumo("tentativa")
+    conta_pronta("noa@exemplo.com")
+    auth.queimar_tempo()   # pré-aquece: ver o teste da contagem simétrica
+
+    teto, n = 2, 16
+    portao = threading.Barrier(n)
+    trava = threading.Lock()
+    status, erros = [], []
+
+    def bater():
+        cliente = TestClient(app)
+        try:
+            portao.wait()
+            r = entrar_com(cliente, "noa@exemplo.com")
+            with trava:
+                status.append(r.status_code)
+        except Exception as e:   # noqa: BLE001 — qualquer erro é falha do teste
+            with trava:
+                erros.append(repr(e))
+        finally:
+            db.fechar()
+
+    fios = [threading.Thread(target=bater) for _ in range(n)]
+
+    def rajada():
+        for f in fios:
+            f.start()
+        for f in fios:
+            f.join()
+
+    with teto_de_tentativas(str(teto)):
+        pagos = contando_scrypt(rajada)
+
+    assert not erros, erros
+    assert len(status) == n, (len(status), status)
+    assert set(status) <= {401, 429}, sorted(set(status))
+    assert pagos <= teto, (
+        f"{n} pedidos simultâneos com teto {teto} pagaram {pagos} scrypt: a "
+        "conferência do freio voltou a ser check-then-act, e cada hash custa "
+        "~110 ms de CPU e ~32 MB")
+    # Cada 401 paga exatamente um hash, e o resto tem de ter sido barrado. Sem
+    # 429 nenhum o teste passaria por não ter havido concorrência, e não por o
+    # freio funcionar.
+    assert status.count(401) == pagos, (status.count(401), pagos)
+    assert status.count(429) >= n - teto, sorted(status)
+    assert tentativas_gravadas() <= teto, tentativas_gravadas()
+    limpar_consumo("tentativa")
+    print(f"OK: {n} pedidos ao mesmo tempo e no máximo {teto} scrypt pagos")
 
 
 def test_entrar_reescreve_hash_de_parametros_fracos():
@@ -330,7 +663,7 @@ def test_trocar_o_segredo_invalida_as_sessoes():
 
 
 def test_logado_confirmado_envia_mais_que_visitante():
-    limpar_consumo()
+    limpar_consumo("arquivo")
     conta_pronta("lia@exemplo.com")
     cliente = cliente_novo()
     cliente.post("/api/auth/entrar",
@@ -346,7 +679,7 @@ def test_logado_confirmado_envia_mais_que_visitante():
 
 
 def test_conta_sem_confirmar_fica_com_cota_de_visitante():
-    limpar_consumo()
+    limpar_consumo("arquivo")
     auth.criar_conta("mar@exemplo.com", "abc12345", "127.0.0.1")
     cliente = cliente_novo()
     cliente.post("/api/auth/entrar",
@@ -378,7 +711,7 @@ def test_conta_sem_confirmar_nao_devolve_vagas_ao_visitante_esgotado():
     estavam certos (`quotas.limites` já dá cota de visitante a quem não
     confirmou); o que estava errado era o **balde**.
     """
-    limpar_consumo()
+    limpar_consumo("arquivo")
     cliente = cliente_novo()
     for i in range(5):
         r = cliente.post("/api/jobs", files=um_pdf())
@@ -405,7 +738,7 @@ def test_conta_sem_confirmar_nao_devolve_vagas_ao_visitante_esgotado():
 
 
 def test_pdf_de_40_mb_e_recusado_ao_visitante_e_aceito_ao_logado():
-    limpar_consumo()
+    limpar_consumo("arquivo")
     grande = b"%PDF-1.4\n" + b"0" * (40 * 1024 * 1024)
 
     visitante = cliente_novo()
@@ -435,6 +768,14 @@ if __name__ == "__main__":
     test_sessao_emitida_no_futuro_nao_vale()
     test_sessao_de_conta_apagada_nao_vale()
     test_entrar_gasta_o_mesmo_scrypt_nos_dois_jeitos_de_recusar()
+    test_o_freio_barra_a_tentativa_seguinte()
+    test_o_barrado_nao_gasta_scrypt_e_responde_igual_para_os_dois_emails()
+    test_login_certo_nao_consome()
+    test_teto_de_tentativas_em_zero_nao_limita()
+    test_teto_de_tentativas_negativo_ausente_e_lixo_caem_no_padrao()
+    test_outro_ip_tem_contagem_propria()
+    test_pedido_sem_ip_ainda_cai_num_balde()
+    test_rajada_simultanea_nao_passa_do_teto_em_scrypt()
     test_entrar_reescreve_hash_de_parametros_fracos()
     test_trocar_o_segredo_invalida_as_sessoes()
     test_logado_confirmado_envia_mais_que_visitante()

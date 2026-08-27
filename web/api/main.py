@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import secrets
 import shutil
 import time
 import traceback
@@ -354,14 +355,21 @@ def _recusa(request: Request, exc: Recusa):
     return resposta
 
 
+def _quando_abre(libera_em: float | None) -> str:
+    """A frase da hora da próxima vaga, ou vazio se não houver hora.
+
+    Hora local do servidor, que é a do usuário nesta implantação. A tela
+    reformata a partir de `libera_em`; este texto é o que sobra para quem lê a
+    resposta crua.
+    """
+    if not libera_em:
+        return ""
+    return time.strftime(" A próxima vaga abre às %H:%M.",
+                         time.localtime(libera_em))
+
+
 def _sem_vaga(e: quotas.SemVaga, ident=None) -> Recusa:
-    quando = ""
-    if e.libera_em:
-        # Hora local do servidor, que é a do usuário nesta implantação. A tela
-        # reformata a partir de `libera_em`; este texto é o que sobra para quem
-        # lê a resposta crua.
-        quando = time.strftime(" A próxima vaga abre às %H:%M.",
-                               time.localtime(e.libera_em))
+    quando = _quando_abre(e.libera_em)
     if e.tipo == "arquivo":
         detalhe = ("Você já enviou o máximo de arquivos permitido nas últimas "
                    "horas." + quando)
@@ -517,6 +525,158 @@ class PedidoDeEntrada(BaseModel):
     senha: str = Field(min_length=1, max_length=200)
 
 
+# O freio de tentativas de entrada existe contra **duas** coisas, não uma.
+#
+# A primeira é a força bruta de senha: sem teto nenhum, dá para testar senhas
+# continuamente, e em paralelo.
+#
+# A segunda é a mais cara, e é a que decide onde este freio entra no caminho: o
+# login é um **amplificador de CPU e memória sem autenticação**. Cada tentativa
+# custa um `scrypt` de ~110 ms e ~32 MB, disparado por um `POST` de 40 bytes,
+# sem cookie e sem conta. Alguns fios de um IP só ocupam o servidor inteiro. Foi
+# esse mesmo cálculo que classificou o problema equivalente do pedido de
+# redefinição de senha (ver `PISO_DE_SENHA_S`).
+#
+# **Por isso a ordem é lei: o teto é conferido antes de qualquer `scrypt`.** Um
+# freio conferido depois do `conferir_senha` ainda limitaria a força bruta — o
+# atacante não chega à senha —, mas o hash já teria sido pago em toda tentativa
+# barrada, e o amplificador continuaria de pé. Conferir antes fecha os dois.
+#
+# **E "antes" não basta: tem de ser atômico.** A primeira versão perguntava
+# `quotas.restante(...)` e só cobrava no fim da rota, ~110 ms depois. Nesse vão
+# todos os pedidos em voo liam o mesmo estado e nenhum via a cobrança do outro:
+# medido, 24 pedidos simultâneos com teto 1 davam **24 hashes pagos e nenhum
+# 429**. As linhas gravadas ficavam certas — `BEGIN IMMEDIATE` cuidava disso —,
+# mas linha gravada não era o que o freio existia para limitar; o teto real por
+# IP virava `teto + largura do pool de fios`, com o pico de memória junto.
+#
+# Por isso a rota **reserva** a vaga como primeira coisa: `quotas.reservar`
+# confere e insere dentro da mesma transação, então a decisão é atômica e o
+# `SemVaga` é o 429. Falhou o login, `confirmar` fixa a vaga; deu certo,
+# `soltar` a devolve — e "login certo não consome" continua valendo, agora sem
+# uma janela aberta entre a conferência e a cobrança.
+#
+# Isso troca dois custos que não existiam antes desta reserva, e os dois
+# merecem estar escritos.
+#
+# **Um login certo agora custa `INSERT` + `UPDATE`** (reservar e depois
+# soltar), onde antes custava zero escrita: a linha fica `'solto'`, não ocupa
+# vaga, e a limpeza de 24 h a varre depois. A troca vale a pena — é o preço de
+# fechar a corrida —, mas é exatamente o mesmo argumento que já vale para
+# **não** reservar quando `PDFTODXF_TENTATIVAS_POR_IP=0`: ali a escrita seria
+# de graça, porque nenhum balde teria teto, e por isso `_reservar_tentativa`
+# não grava nada; aqui a escrita compra atomicidade de verdade, e por isso
+# vale a pena pagar.
+#
+# **"Login certo não consome" é verdade no estado assentado, e falsa durante a
+# janela de voo.** A reserva fica de pé pelos ~110 ms do `scrypt` de
+# `conferir_senha`, e nesse intervalo ela ocupa vaga como qualquer outra.
+# Medido: com teto 2 e 16 logins **certos** simultâneos do mesmo IP, o
+# resultado foi `{200: 10, 429: 6}` — parte dos acertos esbarrou na própria
+# rajada de acertos, não em nenhuma falha. Com o padrão de 30 seria preciso um
+# IP com mais de 30 logins certos em voo no mesmo instante (~270 logins/s)
+# para repetir isso, e esse risco já é dominado pelo teto de falhas que aquele
+# IP compartilha — mas quem lê tem de saber que um pico de logins certos do
+# mesmo IP pode levar 429.
+def _identidade_da_tentativa(ip: str) -> identidade.Identidade:
+    """O balde de cota de um pedido de login: **o IP, e só ele.**
+
+    Antes de entrar não existe identidade nenhuma. Não há sessão, e o balde do
+    cookie de visitante seria decorativo: quem ataca não manda cookie, e um
+    balde que nasce vazio a cada pedido nunca enche. Sobra o IP, que é o único
+    recurso que o atacante gasta de verdade.
+
+    Folga 1, e não a folga de `identidade._folga()`: a folga existe para
+    afrouxar os baldes compartilhados que ficam **ao lado** do balde que
+    identifica o pedido — o IP de um escritório não pode ficar preso à cota de
+    um usuário só. Aqui o IP **é** o balde identificador e o teto já está
+    escrito por IP; multiplicá-lo por 4 seria configurar 30 e obter 120.
+
+    IP vazio (`request.client` ausente) continua virando balde — `ip:` —, e não
+    identidade sem balde nenhum: sem balde, `quotas` não tem o que contar e o
+    freio vira passe livre. Todo mundo sem IP conhecido divide um balde só, que
+    é o lado seguro de errar.
+    """
+    return identidade.Identidade(
+        tipo="visitante", usuario_id=None, confirmado=False,
+        baldes=(identidade.Balde(db.marca(f"ip:{ip}"), 1),),
+        cookie_novo=None)
+
+
+def _reservar_tentativa(quem: identidade.Identidade) -> str | None:
+    """Guarda a vaga desta tentativa e devolve a referência dela.
+
+    `None` quando o freio está desligado (`PDFTODXF_TENTATIVAS_POR_IP=0`): aí a
+    rota não grava nada. Reservar assim mesmo passaria sempre — nenhum balde tem
+    teto —, mas ao preço de um `INSERT` por pedido não autenticado, para nada.
+
+    Levanta `quotas.SemVaga`, que o chamador traduz em 429.
+
+    **A referência é sorteada a cada tentativa, e tem de ser.** A guarda de
+    idempotência de `quotas._consumir` pergunta se já existe linha com aquela
+    `(referencia, tipo)` no balde identificador — aqui, o do IP — e, se existe,
+    volta **sem cobrar**. Qualquer referência estável (o IP, o e-mail tentado, o
+    par dos dois) faria a primeira tentativa gravar a linha e todas as seguintes
+    saírem de graça: a contagem ficaria presa em 1 e o teto nunca chegaria. O
+    e-mail teria ainda um segundo defeito — a força bruta varia a senha e não o
+    endereço, que é justamente o eixo que a guarda apagaria.
+
+    De quebra, sortear é o que deixa `confirmar` e `soltar` mirarem **esta**
+    tentativa e nenhuma outra: os dois trabalham por referência, e um valor
+    compartilhado faria uma entrada certa soltar a reserva do atacante que está
+    no mesmo IP naquele instante.
+    """
+    if quotas.teto_de_tentativas() == 0:
+        return None
+    referencia = secrets.token_hex(16)
+    quotas.reservar(quem, "tentativa", referencia)
+    return referencia
+
+
+def _cobrar_tentativa(referencia: str | None) -> None:
+    """Confirma a reserva desta tentativa: ela falhou. Login certo não passa por aqui.
+
+    **Hoje isto é redundante, e de propósito.** `_contar`, `_libera_em` e a
+    guarda de idempotência de `quotas` filtram tudo por `estado <> 'solto'`, e
+    uma linha `'reservado'` ocupa vaga exatamente como uma `'confirmado'` —
+    confirmar aqui não fixa vaga nenhuma que a própria reserva já não
+    estivesse fixando. A única diferença observável seria um `soltar`
+    posterior sobre esta mesma referência, e as referências deste freio são
+    sorteadas e de uso único (`secrets.token_hex`), então isso nunca acontece.
+
+    Existe assim mesmo, como defesa em profundidade para o dia em que houver
+    uma varredura de reserva órfã: se algo um dia soltar `'reservado'` velho
+    de volta a `'solto'` por conta própria, esta chamada é o que impede essa
+    varredura de devolver a vaga de uma tentativa que já falhou.
+
+    Cobrar só a falha é o que impede o freio de trancar quem usa o serviço
+    normalmente: entrar e sair algumas vezes no dia esgotaria a conta do próprio
+    dono, e o teto viraria uma negação de serviço contra o usuário legítimo em
+    vez de contra o atacante.
+    """
+    if referencia is not None:
+        quotas.confirmar(referencia)
+
+
+def _soltar_tentativa(referencia: str | None) -> None:
+    """Devolve a vaga: a senha conferiu, e **login certo não consome** —
+    no estado assentado.
+
+    A linha fica no banco marcada `'solto'`, que não ocupa vaga na janela — o
+    rastro de que aquele IP passou por ali, sem custo de cota depois que esta
+    função roda.
+
+    **Enquanto ela não rodou, a reserva conta.** Entre `_reservar_tentativa` e
+    aqui há os ~110 ms do `scrypt` de `conferir_senha`, e nesse intervalo a
+    linha está `'reservado'` e ocupa vaga como qualquer outra — um pico de
+    logins **certos** do mesmo IP pode esbarrar nela mesma. Medido: teto 2 e
+    16 logins certos simultâneos do mesmo IP deram `{200: 10, 429: 6}`. Ver o
+    comentário acima de `entrar` para o tamanho do risco no teto padrão de 30.
+    """
+    if referencia is not None:
+        quotas.soltar(referencia)
+
+
 @app.post("/api/auth/entrar")
 def entrar(pedido: PedidoDeEntrada, request: Request,
            resposta: Response) -> dict:
@@ -524,7 +684,27 @@ def entrar(pedido: PedidoDeEntrada, request: Request,
 
     **A recusa é a mesma nos dois casos**, em texto e em tempo: e-mail que não
     existe e senha errada saem por aqui com o mesmo status e o mesmo corpo.
+
+    Antes de tudo isso vem o freio por IP, e a ordem é o desenho — ver o
+    comentário acima de `_identidade_da_tentativa`.
     """
+    quem = _identidade_da_tentativa(identidade.ip_do_pedido(request))
+
+    # **Primeira coisa da rota, e antes de qualquer `scrypt`.** Não olha o
+    # e-mail e não toca a tabela de usuários: o teto é por IP e é o mesmo para
+    # endereço que existe e endereço que não existe, então o 429 não conta nada
+    # a quem sonda — mesmo status, mesmo corpo, e zero hash nos dois casos.
+    #
+    # Reserva, e não pergunta: conferir aqui e cobrar lá embaixo deixava um vão
+    # de ~110 ms em que a rajada inteira lia o mesmo estado. Ver o comentário
+    # acima de `_identidade_da_tentativa`.
+    try:
+        tentativa = _reservar_tentativa(quem)
+    except quotas.SemVaga as sem:
+        raise Recusa(429, "Muitas tentativas de entrada deste endereço. "
+                          "Espere e tente de novo." + _quando_abre(sem.libera_em),
+                     "tentativas_demais", libera_em=sem.libera_em) from None
+
     linha = auth.por_email(pedido.email)
     if linha is None:
         # `scrypt` de mentira: sem ele, "não existe" responde em microssegundos
@@ -532,10 +712,17 @@ def entrar(pedido: PedidoDeEntrada, request: Request,
         # que a mensagem calou. **Aqui ele serve de verdade**, ao contrário do
         # cadastro, onde `criar_conta` já paga o hash nos dois caminhos.
         auth.queimar_tempo()
+        _cobrar_tentativa(tentativa)
         raise Recusa(401, "E-mail ou senha não conferem.", "credenciais")
 
     if not auth.conferir_senha(pedido.senha, linha["senha"]):
+        _cobrar_tentativa(tentativa)
         raise Recusa(401, "E-mail ou senha não conferem.", "credenciais")
+
+    # Daqui para baixo a senha conferiu, e **nada é cobrado**: a vaga volta
+    # agora, antes da reescrita do hash e da gravação da sessão, para que um
+    # erro em qualquer uma das duas não deixe a reserva ocupando a janela.
+    _soltar_tentativa(tentativa)
 
     if auth.precisa_reescrever(linha["senha"]):
         auth.reescrever_senha(linha["id"], pedido.senha)

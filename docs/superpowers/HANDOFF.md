@@ -80,10 +80,22 @@ merge**.
 > testes de frontend em 19 arquivos, build limpo, e2e 22/22 três vezes
 > seguidas.** O worktree está limpo.
 
+**O acabamento da tela veio depois, no mesmo dia**, no branch
+`etapa4-acabamento-conta` ([PR #11](https://github.com/leoleonel-jf/PdfToDxf/pull/11),
+empilhado sobre o #10): fecha as ressalvas **I2 a I5** da revisão da tarefa 11
+e a dívida do `lerCota`. Detalhe em "Pendências abertas", abaixo.
+
 ### O que fazer, nesta ordem
 
-1. **Mesclar o [PR #10](https://github.com/leoleonel-jf/PdfToDxf/pull/10)** e
-   conferir a bateria sobre a `main` mesclada.
+1. **Mesclar os dois PRs, nesta ordem** — o #11 tem o #10 como base e sozinho
+   não aplica:
+
+   | PR | Conteúdo | Branch |
+   |---|---|---|
+   | [#10](https://github.com/leoleonel-jf/PdfToDxf/pull/10) | Tarefa 12 (erros, impressão, privacidade) | `etapa4-erros-e-privacidade` |
+   | [#11](https://github.com/leoleonel-jf/PdfToDxf/pull/11) | Acabamento da tela (I2–I5 e `lerCota`) | `etapa4-acabamento-conta` |
+
+   Depois, conferir a bateria sobre a `main` mesclada.
 
 2. **Planejar a etapa 5 — deploy.** A etapa 4 acabou; é o item 9 de "O que
    falta".
@@ -111,37 +123,52 @@ antes e 10/10 depois. **Espere a condição, nunca um tempo de relógio.**
 
 ### Pendências abertas da etapa 4
 
-Nenhuma bloqueia o merge do PR #10. Todas vêm do ledger, menos a última seção.
+Nenhuma bloqueia o merge dos PRs #10 e #11. Todas vêm do ledger, menos a
+última seção.
 
-**Dívidas registradas na revisão final da tarefa 12 (2026-08-27):**
+**As ressalvas da tarefa 11 estão todas fechadas.** A `I1` saiu na tarefa 12
+(PR #10) e as `I2` a `I5` no acabamento (PR #11):
+
+- **I1.** `ErroDaApi.codigo` sem teste → coberto antes de a tarefa 12
+  construir em cima dele.
+- **I2.** Erro no submit apagava o e-mail junto com a senha → o e-mail é
+  preservado entre montagens; a senha continua limpando, que é o esperado.
+- **I3.** A caixa não era um diálogo → `role="dialog"` com `aria-modal` e
+  `aria-labelledby`, `Escape` fecha (ouvinte em `document`, removido a cada
+  remontagem — no `<form>` ele parava de funcionar assim que o foco saía do
+  painel), foco volta ao elemento de origem, e o `Tab` cicla dentro do painel
+  em vez de escapar para o canvas atrás do véu.
+- **I4.** `atualizarCota` sem guarda de "em voo" → `criarReleitura(ler,
+  aplicar)` em `conta.ts` fecha o contador de sequência; resposta velha é
+  descartada no sucesso e no erro. O visitante não volta mais a aparecer
+  depois do login.
+- **I5.** `horaDeLiberar` ignorava `agora` → hora no passado deixou de ser
+  prometida; a tela mostra "sem arquivos por enquanto", sem hora.
+
+**Dívidas ainda abertas (revisões das tarefas 12 e do acabamento):**
 
 - ~~**Prioritária:** mensagens de `cota_arquivos` e `tamanho` erradas para
-  usuário logado.~~ **Corrigida em 2026-08-27** (`31e6684`), a pedido do
-  usuário.
-- `lerCota` não manda `X-Impressao`, então o saldo do canto ignora o balde da
-  impressão: quando ele for o vinculante (cookie apagado, IP trocado), a tela
-  mostra vaga e o envio leva 429.
+  usuário logado.~~ **Corrigida** (`31e6684`), a pedido do usuário.
+- ~~`lerCota` não manda `X-Impressao`.~~ **Corrigida no PR #11**: o saldo do
+  canto passou a bater com a recusa quando o balde da impressão é o
+  vinculante.
 - O token de redefinição fica irrecuperável se o usuário fechar a caixa
   `nova-senha` (a URL já foi limpa); o fallback "Esqueci a senha" existe e
-  funciona.
+  funciona. Reabrir exige uma affordance nova de interface.
 - O token de senha viaja no path do `POST /api/auth/senha/{token}` e entra nos
   logs de acesso — desenho da rota (tarefa 9), não do frontend.
 - A asserção negativa do teste do I1 passaria se `erroDaRecusa` nunca tocasse
   `codigo`; o teste positivo irmão cobre.
-
-**Da tarefa 11 (tela)** — a revisão aprovou com ressalvas, tudo cobertura e UX:
-
-- ~~**I1.** `ErroDaApi.codigo` sem teste.~~ **Fechado na tarefa 12**
-  (`testes/api.test.ts`), antes de construir em cima, como pedido.
-- **I2.** Erro no submit apaga os dois campos: senha errada faz o e-mail sumir
-  junto.
-- **I3.** `Escape` não fecha a caixa; sem `role="dialog"`; o foco não volta ao
-  fechar.
-- **I4.** `atualizarCota` sem guarda de "em voo": resposta velha pode
-  sobrescrever a nova — o visitante aterrissando depois do login troca o e-mail
-  de volta por "Entrar".
-- **I5.** `horaDeLiberar` ignora `agora`: "libera às 14h20" continua na tela às
-  15h.
+- Depois de entrar, o foco devolvido pela caixa morre junto com o botão
+  "Entrar", que o topo remonta como "Sair" — o foco cai no `<body>`. A causa é
+  legítima (o elemento de origem deixa de existir), mas ninguém ocupa o lugar.
+- A armadilha de foco tem a decisão coberta (`proximoFocavel`, função pura),
+  mas as três linhas de cola (`querySelectorAll`, `activeElement`, `focus`)
+  não: ensinar seletores ao dublê de DOM seria escrever um motor dentro do
+  teste. Um e2e de `Tab` fecharia isso.
+- `focaveisDoPainel` não filtra controle `disabled`: hoje nenhum é
+  desabilitado, mas um botão de submit desabilitado durante o envio prenderia
+  o `Tab` na borda.
 
 **~~Para o usuário decidir~~ — decidido em 2026-08-26, e feito no PR #9:** não
 havia freio de tentativas em `POST /api/auth/entrar`, e cada tentativa custava

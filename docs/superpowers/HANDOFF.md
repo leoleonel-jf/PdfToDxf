@@ -9,12 +9,14 @@ Estado em 2026-08-27. Leia isto primeiro ao retomar em sessão nova.
 > mostra 606. Era o `DIMLFAC`. **O app está certo; não há nada a corrigir.**
 > Detalhe logo abaixo, em "A questão do ×100, encerrada".
 >
-> **A etapa 4 está completa.** As tarefas 1 a 12 estão feitas: os seis PRs
-> (#4 a #9) foram mesclados em 2026-08-26, e a tarefa 12 está no **PR #10**
-> (branch `etapa4-erros-e-privacidade`), revisado, com bateria verde e
-> aprovado para merge — falta só o usuário mesclar. **Leia "Onde a etapa 4
-> parou" logo abaixo** para o estado, a lista ordenada e as dívidas; depois
-> do PR #10, o próximo trabalho de sessão é planejar a etapa 5.
+> **A etapa 4 está completa e inteira na `main`.** As tarefas 1 a 12 estão
+> feitas, e os oito PRs (#4 a #11) foram mesclados — os seis primeiros em
+> 2026-08-26, e o #10 (tarefa 12) e o #11 (acabamento da tela) em 2026-08-27.
+> A bateria foi conferida **sobre o resultado da mescla**: 25/25 arquivos
+> Python, 2222 testes de frontend, build limpo, e2e 22/22. **Não há PR
+> aberto.** O próximo trabalho de sessão é **planejar a etapa 5 — deploy**;
+> as dívidas que sobraram estão em "Pendências abertas da etapa 4" e nenhuma
+> bloqueia.
 >
 > **Para subir a tela**, quando ele pedir ou quando você precisar conferir algo:
 > existe `.claude/launch.json` com dois alvos. Use a ferramenta de preview, não
@@ -85,20 +87,17 @@ merge**.
 empilhado sobre o #10): fecha as ressalvas **I2 a I5** da revisão da tarefa 11
 e a dívida do `lerCota`. Detalhe em "Pendências abertas", abaixo.
 
-### O que fazer, nesta ordem
+### O que fazer
 
-1. **Mesclar os dois PRs, nesta ordem** — o #11 tem o #10 como base e sozinho
-   não aplica:
+**Planejar a etapa 5 — deploy.** A etapa 4 acabou e está mesclada; é o item 9
+de "O que falta". Os dois últimos PRs entraram em 2026-08-27, com commits de
+mescla (`ac66bea` e `55d86c2`), e os branches foram preservados como os
+outros:
 
-   | PR | Conteúdo | Branch |
-   |---|---|---|
-   | [#10](https://github.com/leoleonel-jf/PdfToDxf/pull/10) | Tarefa 12 (erros, impressão, privacidade) | `etapa4-erros-e-privacidade` |
-   | [#11](https://github.com/leoleonel-jf/PdfToDxf/pull/11) | Acabamento da tela (I2–I5 e `lerCota`) | `etapa4-acabamento-conta` |
-
-   Depois, conferir a bateria sobre a `main` mesclada.
-
-2. **Planejar a etapa 5 — deploy.** A etapa 4 acabou; é o item 9 de "O que
-   falta".
+| PR | Conteúdo | Branch |
+|---|---|---|
+| [#10](https://github.com/leoleonel-jf/PdfToDxf/pull/10) | Tarefa 12 (erros, impressão, privacidade) | `etapa4-erros-e-privacidade` |
+| [#11](https://github.com/leoleonel-jf/PdfToDxf/pull/11) | Acabamento da tela (I2–I5 e `lerCota`) | `etapa4-acabamento-conta` |
 
 > A dívida prioritária da revisão final — mensagens de cota oferecendo conta
 > a quem já está logado — **foi corrigida em 2026-08-27** (`31e6684`), por
@@ -123,8 +122,8 @@ antes e 10/10 depois. **Espere a condição, nunca um tempo de relógio.**
 
 ### Pendências abertas da etapa 4
 
-Nenhuma bloqueia o merge dos PRs #10 e #11. Todas vêm do ledger, menos a
-última seção.
+Nenhuma bloqueia; a etapa está mesclada. Todas vêm do ledger, menos a última
+seção.
 
 **As ressalvas da tarefa 11 estão todas fechadas.** A `I1` saiu na tarefa 12
 (PR #10) e as `I2` a `I5` no acabamento (PR #11):
@@ -329,16 +328,20 @@ si: não é preciso resgatar a conversa que os originou.
 
 ## Onde o código está
 
-**Tudo está na `main` desde 2026-08-11**, quando o PR #3 foi mesclado com commit
-de mescla (`0040dfc`), levando as etapas 3, 3.5 e 3.6. Antes dele, as etapas 1,
-2 e 2.5 e a validação de entradas já tinham sido mescladas em cascata. A bateria
-foi conferida **sobre o resultado da mescla**: 15 arquivos de teste Python,
-2174 testes de frontend e build limpo. Os branches de etapa são **preservados**,
-a pedido do usuário:
+**Tudo está na `main`, até a etapa 4 inteira**, mesclada em cascata: as etapas
+1, 2, 2.5 e a validação de entradas primeiro; a etapa 3 (com 3.5 e 3.6) no PR
+#3, em 2026-08-11; e a etapa 4 nos oito PRs #4 a #11, em 2026-08-26 e
+2026-08-27. **A bateria foi conferida sobre o resultado de cada mescla** — a
+última, em 2026-08-27: 25 arquivos de teste Python, 2222 testes de frontend,
+build limpo e e2e 22/22. Os branches de etapa são **preservados**, a pedido do
+usuário:
 
 | Branch | Conteúdo | Situação |
 |---|---|---|
-| `main` | tudo, até a etapa 3.6 | **em dia** |
+| `main` | tudo, até a etapa 4 | **em dia** |
+| `etapa4-acabamento-conta` | acabamento da tela, I2–I5 (PR #11) | mesclada, branch guardado |
+| `etapa4-erros-e-privacidade` | tarefa 12 (PR #10) | mesclada, branch guardado |
+| `etapa4-freio-login` … `etapa4-registros` | etapa 4, tarefas 1–11 (PRs #4 a #9) | mescladas, branches guardados |
 | `frontend-canvas` | etapas 3, 3.5 e 3.6 (PR #3) | mesclada, branch guardado |
 | `nucleo-classify-select` | etapa 1 | mesclada, branch guardado |
 | `api-de-conversao` | etapa 2 | mesclada, branch guardado |

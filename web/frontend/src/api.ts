@@ -335,8 +335,19 @@ export type Cota = {
   teto_bytes: number;
 };
 
+/**
+ * A leitura da cota também manda `X-Impressao` (dívida da revisão da tarefa
+ * 11): o servidor só soma o balde da impressão ao saldo quando o cabeçalho
+ * chega (`web/api/identidade.py`), e sem ele o canto mostra vaga justo no
+ * caso em que a impressão importa — cookie apagado ou IP trocado, mesma
+ * máquina. Mesma forma de `exportar`: `coletar()` é cacheado, então isto não
+ * custa nada a partir da segunda chamada.
+ */
 export async function lerCota(sinal?: AbortSignal): Promise<Cota> {
-  const r = await pedir("/api/cota", { signal: sinal });
+  const impressao = await coletar();
+  const cabecalhos: Record<string, string> = {};
+  if (impressao) cabecalhos["X-Impressao"] = impressao;
+  const r = await pedir("/api/cota", { headers: cabecalhos, signal: sinal });
   return r.json();
 }
 

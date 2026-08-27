@@ -16,7 +16,7 @@ import {
   sair, type Cota, type Meta,
 } from "./api.js";
 import {
-  acaoDaUrl, montarCaixaDeConta, respostaAindaVale, type ModoDaCaixa,
+  acaoDaUrl, criarReleitura, montarCaixaDeConta, type ModoDaCaixa,
 } from "./conta.js";
 import { enquadrar, pontoDaTela, type Vista } from "./canvas.js";
 import { intercalar, lerGeometria, type Geometria } from "./formato.js";
@@ -622,10 +622,12 @@ let cota: Cota | null = null;
 let modoDaConta: ModoDaCaixa = null;
 let recadoDaConta = "";
 let erroDaConta = "";
-// O último e-mail submetido na caixa (I2), para sobreviver a uma remontagem
-// que só apagaria a senha — nunca este campo. `abrirConta` e `confirmarConta`
-// são os únicos dois lugares que escrevem aqui: a caixa continua sem estado
-// próprio, e `montarConta` só lê o valor para preencher o campo.
+// O último e-mail submetido ou digitado na caixa (I2), para sobreviver a uma
+// remontagem que só apagaria a senha — nunca este campo. Três lugares
+// escrevem aqui: `fecharCaixaDeConta` apaga, `confirmarConta` grava o que foi
+// submetido, e `abrirConta` grava o que estava digitado ao trocar de modo sem
+// submeter — a caixa continua sem estado próprio, e `montarConta` só lê o
+// valor para preencher o campo.
 let ultimoEmailDaConta = "";
 // O elemento que estava focado quando a caixa abriu (I3): é para ele que o
 // foco volta quando ela fecha. `HTMLElement.focus()` num elemento que já
@@ -638,46 +640,50 @@ let tokenDeSenha = "";
 // Uma vez por carga: repetir o aviso a cada leitura de cota cobriria a planta
 // a cada envio, e a conta não confirmada não é um erro novo a cada tique.
 let jaAvisouDaConfirmacao = false;
-// A guarda de "em voo" da releitura de cota (I4): cada chamada de
-// `atualizarCota` pega o próximo número aqui, antes do `await`. Duas em voo
-// e a mais velha pode aterrissar por último — sem a guarda, ela sobrescrevia
-// a mais nova, e o canto voltava a mostrar "Entrar" com a cota de visitante
-// depois de um login que já tinha acontecido.
-let sequenciaDaCota = 0;
-
 /**
- * Relê a cota e remonta o topo.
+ * A guarda de "em voo" da releitura de cota (I4), como a função de releitura
+ * em si.
  *
- * Falha aqui **não vira aviso na tela**: a cota é informação de canto, e um
- * erro de rede ao lê-la não pode cobrir a planta com um painel. O canto
- * simplesmente não mostra saldo até a próxima leitura dar certo.
+ * `criarReleitura` (`conta.ts`) fecha sobre o contador de sequência: cada
+ * chamada pega o próximo número antes do `await`, e uma resposta só é
+ * aplicada se esse número ainda for o último emitido quando ela voltar. Duas
+ * chamadas em voo e a mais velha pode aterrissar por último — sem a guarda,
+ * ela sobrescrevia a mais nova, e o canto voltava a mostrar "Entrar" com a
+ * cota de visitante depois de um login que já tinha acontecido.
  *
- * A checagem de `respostaAindaVale` vem antes de qualquer escrita — vale para
- * o caminho de sucesso e para o de erro igualmente, por isso o `try/catch` só
- * decide `nova` e a guarda entra depois dos dois.
+ * `ler` converte falha em `null` — a cota é informação de canto, e um erro de
+ * rede ao lê-la não pode cobrir a planta com um painel; o canto simplesmente
+ * não mostra saldo até a próxima leitura dar certo. A guarda vale igual para
+ * os dois caminhos, por isso a conversão mora dentro de `ler`, antes dela.
  */
+const releituraDaCota = criarReleitura<Cota | null>(
+  async () => {
+    try {
+      return await lerCota();
+    } catch {
+      return null;
+    }
+  },
+  (nova) => {
+    cota = nova;
+    // Aviso, e não erro: a conta funciona, só não destravou a cota maior. Uma
+    // vez por carga — repetir a cada leitura cobriria a planta a cada envio. E
+    // só quando a sobreposição está livre: se um aviso alheio já estiver na
+    // tela (por exemplo, de um envio que terminou entre o pedido e a resposta
+    // desta releitura), `jaAvisouDaConfirmacao` fica falso e este aviso espera
+    // a próxima leitura de cota em vez de atropelar o que já está visível.
+    if (cota && cota.tipo === "logado" && !cota.confirmado &&
+        !jaAvisouDaConfirmacao && !avisoCorrente) {
+      jaAvisouDaConfirmacao = true;
+      mostrarAviso(avisoDoErro(new ErroDaApi(403, "", "conta_nao_confirmada")));
+    }
+    montarTudo();
+  },
+);
+
+/** Relê a cota e remonta o topo — só a chamada; a guarda mora em `releituraDaCota`. */
 async function atualizarCota(): Promise<void> {
-  const minha = ++sequenciaDaCota;
-  let nova: Cota | null;
-  try {
-    nova = await lerCota();
-  } catch {
-    nova = null;
-  }
-  if (!respostaAindaVale(minha, sequenciaDaCota)) return;
-  cota = nova;
-  // Aviso, e não erro: a conta funciona, só não destravou a cota maior. Uma
-  // vez por carga — repetir a cada leitura cobriria a planta a cada envio. E
-  // só quando a sobreposição está livre: se um aviso alheio já estiver na
-  // tela (por exemplo, de um envio que terminou entre o pedido e a resposta
-  // desta releitura), `jaAvisouDaConfirmacao` fica falso e este aviso espera
-  // a próxima leitura de cota em vez de atropelar o que já está visível.
-  if (cota && cota.tipo === "logado" && !cota.confirmado &&
-      !jaAvisouDaConfirmacao && !avisoCorrente) {
-    jaAvisouDaConfirmacao = true;
-    mostrarAviso(avisoDoErro(new ErroDaApi(403, "", "conta_nao_confirmada")));
-  }
-  montarTudo();
+  await releituraDaCota();
 }
 
 /**
@@ -706,7 +712,16 @@ function fecharCaixaDeConta(): void {
   elementoAntesDaConta = null;
 }
 
-function abrirConta(modo: ModoDaCaixa): void {
+/**
+ * Abre a caixa, troca de modo, ou fecha (`modo === null`).
+ *
+ * `emailDigitado` é o valor do campo no momento da troca — passado por
+ * `aoTrocarModo` (ex.: "Esqueci a senha" sem ter submetido nada). Só grava
+ * quando a caixa está abrindo ou trocando de modo; `undefined` nas chamadas
+ * que não vêm de dentro da caixa (`aoEntrar`, `aoCadastrar`, o link de
+ * `nova-senha`) deixa `ultimoEmailDaConta` como estava.
+ */
+function abrirConta(modo: ModoDaCaixa, emailDigitado?: string): void {
   // Só guarda o foco de origem na borda fechado→aberto: uma troca de modo com
   // a caixa já aberta (ex.: "Esqueci a senha") aconteceria com o foco dentro
   // da própria caixa, e guardá-lo ali devolveria o foco para um campo dela
@@ -718,6 +733,7 @@ function abrirConta(modo: ModoDaCaixa): void {
   if (modo === null) {
     fecharCaixaDeConta();
   } else {
+    if (emailDigitado !== undefined) ultimoEmailDaConta = emailDigitado;
     modoDaConta = modo;
     recadoDaConta = "";
     erroDaConta = "";
@@ -730,7 +746,7 @@ function montarConta(): void {
     recado: recadoDaConta,
     erro: erroDaConta,
     email: ultimoEmailDaConta,
-    aoTrocarModo: (m) => abrirConta(m),
+    aoTrocarModo: (m, email) => abrirConta(m, email),
     aoFechar: () => abrirConta(null),
     aoConfirmar: (modo, email, senha) => void confirmarConta(modo, email, senha),
   });

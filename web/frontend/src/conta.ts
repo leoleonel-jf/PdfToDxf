@@ -59,6 +59,32 @@ export function respostaAindaVale(sequencia: number, ultimoEmitido: number): boo
   return sequencia === ultimoEmitido;
 }
 
+/**
+ * A fábrica da guarda de "em voo" (I4).
+ *
+ * `respostaAindaVale` sozinha só testa um operador — quem carrega a corrida de
+ * verdade é isto: pega a sequência antes do `await`, aguarda `ler()`, descarta
+ * se a sequência não for mais a última emitida, senão aplica. `main.ts` chama
+ * `criarReleitura(ler, aplicar)` uma vez, na carga do módulo, e o contador vive
+ * fechado dentro da função devolvida — é por isso que `atualizarCota` pode ser
+ * só uma chamada a ela, e o teste exercita este código, não uma cópia dele.
+ *
+ * `ler` já converte falha em valor (por exemplo `null`), porque a guarda vale
+ * igual para sucesso e para erro — não há um segundo caminho aqui.
+ */
+export function criarReleitura<T>(
+  ler: () => Promise<T>,
+  aplicar: (valor: T) => void,
+): () => Promise<void> {
+  let ultimoEmitido = 0;
+  return async function releitura(): Promise<void> {
+    const minha = ++ultimoEmitido;
+    const valor = await ler();
+    if (!respostaAindaVale(minha, ultimoEmitido)) return;
+    aplicar(valor);
+  };
+}
+
 export function cantoDaConta(c: Cota | null, acoes: AcoesDaConta): HTMLElement {
   const caixa = document.createElement("div");
   caixa.className = "canto-da-conta";
@@ -124,7 +150,12 @@ export function acaoDaUrl(busca: string): AcaoDaUrl {
 export type AcoesDaCaixa = {
   aoConfirmar: (modo: Exclude<ModoDaCaixa, null>,
                 email: string, senha: string) => void;
-  aoTrocarModo: (modo: Exclude<ModoDaCaixa, null>) => void;
+  /**
+   * Troca de modo (ex.: "Esqueci a senha"), levando o e-mail digitado até
+   * aqui — mesmo sem ter sido submetido. Sem isto, digitar o e-mail e trocar
+   * de modo sem confirmar perdia o que foi digitado; só o submit gravava.
+   */
+  aoTrocarModo: (modo: Exclude<ModoDaCaixa, null>, email: string) => void;
   aoFechar: () => void;
   recado: string;
   erro: string;
@@ -147,6 +178,40 @@ const TITULOS: Record<Exclude<ModoDaCaixa, null>, string> = {
 };
 
 /**
+ * A armadilha de foco do diálogo (I3, `aria-modal="true"`): decide se um
+ * `Tab` está na borda do painel e, se estiver, para onde o foco deve saltar —
+ * ou `null` quando o `Tab` deve seguir seu caminho normal (mover dentro do
+ * painel, sem interferência). Pura e testável sem DOM: `montarCaixaDeConta`
+ * só lhe passa a lista de focáveis, o elemento atual e a direção.
+ */
+export function proximoFocavel<T>(lista: readonly T[], atual: T,
+                                  paraTras: boolean): T | null {
+  if (lista.length === 0) return null;
+  const i = lista.indexOf(atual);
+  if (i === -1) return null;
+  const naBorda = paraTras ? i === 0 : i === lista.length - 1;
+  if (!naBorda) return null;
+  return paraTras ? lista[lista.length - 1]! : lista[0]!;
+}
+
+function focaveisDoPainel(painel: HTMLElement): HTMLElement[] {
+  return Array.from(painel.querySelectorAll<HTMLElement>("input, button"));
+}
+
+/**
+ * O ouvinte de teclado do diálogo aberto agora, ou `null` se nenhum está
+ * aberto (I3).
+ *
+ * Em `document`, e não no painel: um clique no véu (`.sobre-conta`, sem
+ * `tabindex`) tira o foco de dentro do formulário, e um ouvinte só no painel
+ * para de ouvir exatamente aí. Por morar em `document` precisa de remoção
+ * explícita — a caixa é remontada a cada mudança de estado, e um ouvinte por
+ * montagem vazaria; é isto que a variável de módulo e a remoção no topo de
+ * `montarCaixaDeConta` evitam.
+ */
+let ouvinteDoTecladoAtual: ((e: Event) => void) | null = null;
+
+/**
  * Monta a caixa dentro da sobreposição, ou a esconde com `modo === null`.
  *
  * O `hidden` não é enfeite: a sobreposição é `position: fixed; inset: 0` e
@@ -157,6 +222,14 @@ const TITULOS: Record<Exclude<ModoDaCaixa, null>, string> = {
  */
 export function montarCaixaDeConta(raiz: HTMLElement, modo: ModoDaCaixa,
                                    acoes: AcoesDaCaixa): void {
+  // Remove o ouvinte da montagem anterior antes de qualquer outra coisa: vale
+  // tanto para uma troca de modo (o painel antigo some, o novo precisa do
+  // seu) quanto para o fechamento (`modo === null`), que não registra outro
+  // no lugar — é assim que a caixa fechada fica mesmo sem ouvinte nenhum.
+  if (ouvinteDoTecladoAtual) {
+    document.removeEventListener("keydown", ouvinteDoTecladoAtual);
+    ouvinteDoTecladoAtual = null;
+  }
   raiz.replaceChildren();
   raiz.hidden = modo === null;
   if (modo === null) return;
@@ -245,7 +318,7 @@ export function montarCaixaDeConta(raiz: HTMLElement, modo: ModoDaCaixa,
     if (alvo === modo) continue;
     outros.append(criarBotao({
       rotulo, classe: "discreto", teste: `ir-para-${alvo}`,
-      aoClicar: () => acoes.aoTrocarModo(alvo),
+      aoClicar: () => acoes.aoTrocarModo(alvo, email.value.trim()),
     }));
   }
   painel.append(outros, criarBotao({
@@ -257,14 +330,20 @@ export function montarCaixaDeConta(raiz: HTMLElement, modo: ModoDaCaixa,
     e.preventDefault();
     acoes.aoConfirmar(modo, email.value.trim(), senha.value);
   });
-  // I3: Escape fecha a caixa, como o botão "Fechar". Registrado no próprio
-  // painel — o `keydown` de qualquer campo focado sobe até aqui —, e não em
-  // `document`: a caixa é remontada a cada mudança de estado, e um ouvinte em
-  // `document` teria de ser removido a mão para não vazar. Este morre sozinho
-  // com o `replaceChildren` que troca o painel antigo pelo novo.
-  painel.addEventListener("keydown", (e) => {
-    if ((e as KeyboardEvent).key === "Escape") acoes.aoFechar();
-  });
+  // I3: Escape fecha a caixa, como o botão "Fechar"; Tab e Shift+Tab presos
+  // na borda do painel saltam para o outro lado, para o `aria-modal="true"`
+  // valer de verdade. Em `document` — ver o comentário de
+  // `ouvinteDoTecladoAtual` — e removido explicitamente na próxima montagem.
+  ouvinteDoTecladoAtual = (e) => {
+    const tecla = e as KeyboardEvent;
+    if (tecla.key === "Escape") { acoes.aoFechar(); return; }
+    if (tecla.key !== "Tab") return;
+    const atual = document.activeElement;
+    if (!(atual instanceof HTMLElement)) return;
+    const alvo = proximoFocavel(focaveisDoPainel(painel), atual, tecla.shiftKey);
+    if (alvo) { tecla.preventDefault(); alvo.focus(); }
+  };
+  document.addEventListener("keydown", ouvinteDoTecladoAtual);
 
   raiz.append(painel);
   (modo === "nova-senha" ? senha : email).focus();

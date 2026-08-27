@@ -548,4 +548,7 @@ test("o canto da conta mostra a cota e a caixa de entrar abre", async ({ page })
   await expect(page.locator('[data-teste="caixa-cadastrar"]')).toBeVisible();
   await page.locator('[data-teste="fechar-conta"]').click();
   await expect(page.locator('[data-teste="caixa-cadastrar"]')).toBeHidden();
+  // I3.3: o foco volta para quem abriu a caixa — sem isto, quem navega por
+  // teclado fica largado no `<body>` depois de fechar o diálogo.
+  await expect(page.locator('[data-teste="entrar"]')).toBeFocused();
 });

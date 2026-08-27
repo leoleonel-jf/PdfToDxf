@@ -1,9 +1,15 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  acaoDaUrl, horaDeLiberar, montarCaixaDeConta, respostaAindaVale, textoDaCota,
-  type AcoesDaCaixa,
+  acaoDaUrl, criarReleitura, horaDeLiberar, montarCaixaDeConta, proximoFocavel,
+  textoDaCota, type AcoesDaCaixa,
 } from "../src/conta.js";
 import type { Cota } from "../src/api.js";
+
+// `instalarDocumentoFalso` (mais abaixo) faz `vi.stubGlobal("document", ...)`
+// sem `vi.restoreAllMocks` cobrir — é um stub, não um mock. Sem isto o
+// `document` de mentira vazava para os testes seguintes do arquivo, no molde
+// que `testes/api.test.ts` já segue para `fetch` e `XMLHttpRequest`.
+afterEach(() => vi.unstubAllGlobals());
 
 const AGORA = new Date("2026-08-21T12:00:00").getTime();
 
@@ -100,19 +106,92 @@ describe("acaoDaUrl", () => {
 /**
  * I4: a guarda de "em voo" da releitura de cota.
  *
- * `atualizarCota` mora em `main.ts`, que não é importável aqui — o topo do
- * arquivo faz `document.querySelector("#desenho")!` de verdade, e o ambiente
- * de teste roda sem DOM (`vite.config.ts`). A decisão em si, porém, é pura:
- * uma resposta só vale se o número de sequência que ela carrega ainda for o
- * último emitido. É essa função que o teste verifica.
+ * `main.ts` chama `criarReleitura` uma vez, na carga do módulo, e usa a
+ * função devolvida como `atualizarCota` — testar `criarReleitura` diretamente
+ * é testar o código de produção, não uma cópia dele.
+ *
+ * `respostaAindaVale(sequencia, ultimoEmitido)` sozinha (`sequencia ===
+ * ultimoEmitido`) não pega corrida nenhuma: qualquer implementação que
+ * comparasse dois números do jeito errado passaria por `(2,2) → true` e
+ * `(1,2) → false` igual. É por isso que os dois testes abaixo montam a
+ * corrida de verdade — com promessas resolvidas fora de ordem — e exigem que
+ * o `++` da sequência aconteça **antes** do `await`: movê-lo para depois faz
+ * os dois falharem.
  */
-describe("respostaAindaVale", () => {
-  it("a sequencia mais nova vale", () => {
-    expect(respostaAindaVale(2, 2)).toBe(true);
+describe("criarReleitura", () => {
+  it("duas chamadas concorrentes em que a primeira resolve por ultimo: o estado final e o da segunda", async () => {
+    const resolvedores: Array<(v: string) => void> = [];
+    const ler = () => new Promise<string>((r) => { resolvedores.push(r); });
+    const chamadas: string[] = [];
+    const releitura = criarReleitura(ler, (v) => chamadas.push(v));
+
+    // As duas chamadas começam sem esperar uma pela outra — é essa a corrida:
+    // a sequência de cada uma precisa estar travada antes de qualquer `await`
+    // resolver, e não no momento em que a resposta chega.
+    const p1 = releitura();
+    const p2 = releitura();
+
+    // A mais nova (segunda) resolve primeiro; a mais velha (primeira) chega
+    // por último — o cenário real do I4 (login aterrissando antes da leitura
+    // de visitante disparada no carregamento).
+    resolvedores[1]!("segunda");
+    await p2;
+    resolvedores[0]!("primeira");
+    await p1;
+
+    expect(chamadas).toEqual(["segunda"]);
   });
 
-  it("uma sequencia antiga nao vale mais depois de uma mais nova", () => {
-    expect(respostaAindaVale(1, 2)).toBe(false);
+  it("uma leitura antiga que falhou (convertida em null) nao apaga o estado novo", async () => {
+    const resolvedores: Array<(v: string | null) => void> = [];
+    const ler = () => new Promise<string | null>((r) => { resolvedores.push(r); });
+    const chamadas: Array<string | null> = [];
+    const releitura = criarReleitura(ler, (v) => chamadas.push(v));
+
+    const p1 = releitura();
+    const p2 = releitura();
+
+    resolvedores[1]!("logado");
+    await p2;
+    // A releitura velha (disparada antes do login) só chega depois, e o
+    // servidor caiu para ela — quem chama já converteu isso em `null`. Sem a
+    // guarda, este `null` sobrescreveria a conta que acabou de logar.
+    resolvedores[0]!(null);
+    await p1;
+
+    expect(chamadas).toEqual(["logado"]);
+  });
+});
+
+/**
+ * I3 (`aria-modal="true"`): a armadilha de foco. Pura — sem DOM, com listas
+ * de números — porque o único trabalho de `proximoFocavel` é decidir a borda
+ * e o alvo do salto; achar os elementos focáveis de verdade é trabalho do
+ * `querySelectorAll` dentro de `montarCaixaDeConta`, que só um navegador (ou
+ * o e2e) exercita.
+ */
+describe("proximoFocavel", () => {
+  const lista = [1, 2, 3];
+
+  it("Tab no ultimo elemento volta ao primeiro", () => {
+    expect(proximoFocavel(lista, 3, false)).toBe(1);
+  });
+
+  it("Shift+Tab no primeiro elemento vai ao ultimo", () => {
+    expect(proximoFocavel(lista, 1, true)).toBe(3);
+  });
+
+  it("Tab fora da borda nao interfere", () => {
+    expect(proximoFocavel(lista, 2, false)).toBeNull();
+    expect(proximoFocavel(lista, 2, true)).toBeNull();
+  });
+
+  it("lista vazia nao interfere", () => {
+    expect(proximoFocavel([], 1, false)).toBeNull();
+  });
+
+  it("elemento atual fora da lista nao interfere", () => {
+    expect(proximoFocavel(lista, 9, false)).toBeNull();
   });
 });
 
@@ -156,8 +235,20 @@ class ElementoFalso extends EventTarget {
   }
 }
 
-function instalarDocumentoFalso(): void {
-  vi.stubGlobal("document", { createElement: () => new ElementoFalso() });
+/**
+ * O `document` de mentira precisa ser um `EventTarget` de verdade — desde a
+ * correção do achado do Importante 1, o ouvinte de `Escape`/`Tab` mora em
+ * `document`, não mais no painel, para sobreviver a um clique no véu que tira
+ * o foco de dentro do formulário.
+ */
+class DocumentoFalso extends EventTarget {
+  createElement(): ElementoFalso { return new ElementoFalso(); }
+}
+
+function instalarDocumentoFalso(): DocumentoFalso {
+  const documento = new DocumentoFalso();
+  vi.stubGlobal("document", documento);
+  return documento;
 }
 
 function acoesFalsas(extra: Partial<AcoesDaCaixa> = {}): AcoesDaCaixa {
@@ -204,25 +295,95 @@ describe("montarCaixaDeConta", () => {
   });
 
   it("I3: Escape chama aoFechar", () => {
-    instalarDocumentoFalso();
+    const documento = instalarDocumentoFalso();
     const raiz = new ElementoFalso();
     const aoFechar = vi.fn();
     montarCaixaDeConta(raiz as unknown as HTMLElement, "entrar",
       acoesFalsas({ aoFechar }));
 
-    keydown(raiz.filhos[0]!, "Escape");
+    keydown(documento, "Escape");
     expect(aoFechar).toHaveBeenCalledTimes(1);
   });
 
   it("I3: uma tecla qualquer nao chama aoFechar", () => {
-    instalarDocumentoFalso();
+    const documento = instalarDocumentoFalso();
     const raiz = new ElementoFalso();
     const aoFechar = vi.fn();
     montarCaixaDeConta(raiz as unknown as HTMLElement, "entrar",
       acoesFalsas({ aoFechar }));
 
-    keydown(raiz.filhos[0]!, "a");
+    keydown(documento, "a");
     expect(aoFechar).not.toHaveBeenCalled();
+  });
+
+  // Importante 1: o ouvinte mora em `document`, não mais no painel — um
+  // clique no véu (`.sobre-conta`, sem `tabindex`) tira o foco de dentro do
+  // formulário, e um ouvinte só no painel para de ouvir exatamente aí.
+  it("I3/Importante 1: Escape fecha mesmo sem foco dentro do painel", () => {
+    const documento = instalarDocumentoFalso();
+    const raiz = new ElementoFalso();
+    const aoFechar = vi.fn();
+    montarCaixaDeConta(raiz as unknown as HTMLElement, "entrar",
+      acoesFalsas({ aoFechar }));
+
+    // Nada dentro do painel recebeu o evento — só `document`, como um clique
+    // no véu deixaria.
+    keydown(documento, "Escape");
+    expect(aoFechar).toHaveBeenCalledTimes(1);
+  });
+
+  it("Importante 1: remontar N vezes nao acumula ouvintes de Escape", () => {
+    const documento = instalarDocumentoFalso();
+    const raiz = new ElementoFalso();
+    const aoFechar = vi.fn();
+    for (let i = 0; i < 5; i++) {
+      montarCaixaDeConta(raiz as unknown as HTMLElement, "entrar",
+        acoesFalsas({ aoFechar }));
+    }
+
+    keydown(documento, "Escape");
+    expect(aoFechar).toHaveBeenCalledTimes(1);
+  });
+
+  it("Importante 1: Escape continua fechando depois de varias remontagens com modos diferentes", () => {
+    const documento = instalarDocumentoFalso();
+    const raiz = new ElementoFalso();
+    const aoFechar = vi.fn();
+    montarCaixaDeConta(raiz as unknown as HTMLElement, "entrar", acoesFalsas({ aoFechar }));
+    montarCaixaDeConta(raiz as unknown as HTMLElement, "cadastrar", acoesFalsas({ aoFechar }));
+    montarCaixaDeConta(raiz as unknown as HTMLElement, "senha", acoesFalsas({ aoFechar }));
+
+    keydown(documento, "Escape");
+    expect(aoFechar).toHaveBeenCalledTimes(1);
+  });
+
+  it("Importante 1: fechar a caixa (modo null) deixa sem ouvinte de Escape nenhum", () => {
+    const documento = instalarDocumentoFalso();
+    const raiz = new ElementoFalso();
+    const aoFechar = vi.fn();
+    montarCaixaDeConta(raiz as unknown as HTMLElement, "entrar", acoesFalsas({ aoFechar }));
+    montarCaixaDeConta(raiz as unknown as HTMLElement, null, acoesFalsas({ aoFechar }));
+
+    keydown(documento, "Escape");
+    expect(aoFechar).not.toHaveBeenCalled();
+  });
+
+  // Menor 6: quem digita o e-mail e troca de modo sem submeter não pode
+  // perder o que digitou — a mensagem "Esqueci a senha" preservando o e-mail
+  // é o cenário concreto do achado.
+  it("Menor 6: trocar de modo leva o e-mail digitado, nao so o submetido", () => {
+    instalarDocumentoFalso();
+    const raiz = new ElementoFalso();
+    const aoTrocarModo = vi.fn();
+    montarCaixaDeConta(raiz as unknown as HTMLElement, "entrar",
+      acoesFalsas({ aoTrocarModo }));
+
+    const campoEmail = raiz.buscar("campo-email")!;
+    campoEmail.value = "ana@exemplo.com";
+    const irParaSenha = raiz.buscar("ir-para-senha")!;
+    irParaSenha.dispatchEvent(new Event("click"));
+
+    expect(aoTrocarModo).toHaveBeenCalledWith("senha", "ana@exemplo.com");
   });
 
   it("nova-senha nao tem campo de e-mail, entao o e-mail inicial nao se aplica", () => {

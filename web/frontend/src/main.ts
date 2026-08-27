@@ -643,9 +643,13 @@ async function atualizarCota(): Promise<void> {
     cota = null;
   }
   // Aviso, e não erro: a conta funciona, só não destravou a cota maior. Uma
-  // vez por carga — repetir a cada leitura cobriria a planta a cada envio.
+  // vez por carga — repetir a cada leitura cobriria a planta a cada envio. E
+  // só quando a sobreposição está livre: se um aviso alheio já estiver na
+  // tela (por exemplo, de um envio que terminou entre o pedido e a resposta
+  // desta releitura), `jaAvisouDaConfirmacao` fica falso e este aviso espera
+  // a próxima leitura de cota em vez de atropelar o que já está visível.
   if (cota && cota.tipo === "logado" && !cota.confirmado &&
-      !jaAvisouDaConfirmacao) {
+      !jaAvisouDaConfirmacao && !avisoCorrente) {
     jaAvisouDaConfirmacao = true;
     mostrarAviso(avisoDoErro(new ErroDaApi(403, "", "conta_nao_confirmada")));
   }
@@ -1059,7 +1063,12 @@ void atualizarCota();
  */
 const acao = acaoDaUrl(window.location.search);
 if (acao) {
-  history.replaceState(null, "", window.location.pathname);
+  // Só os dois parâmetros lidos saem — `window.location.pathname` puro
+  // descartaria o resto da query e o hash, que não têm nada a ver com isto.
+  const url = new URL(window.location.href);
+  url.searchParams.delete("senha");
+  url.searchParams.delete("confirmado");
+  history.replaceState(null, "", url);
 }
 if (acao?.tipo === "nova-senha") {
   tokenDeSenha = acao.token;

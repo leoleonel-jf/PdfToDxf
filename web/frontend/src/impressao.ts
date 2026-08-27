@@ -12,6 +12,11 @@
  *
  * Falhar aqui **nunca bloqueia**: `coletar()` devolve `null` e o pedido segue
  * sem o cabeçalho. Quem escolhe se proteger fica com a cota anunciada.
+ *
+ * Contexto inseguro (HTTP puro, sem TLS) é uma dessas falhas por projeto:
+ * `crypto.subtle` não existe fora de um contexto seguro, então `coletar()`
+ * devolve `null` para a sessão inteira e o cabeçalho simplesmente não vai —
+ * sem exceção, sem retry, e sem cota reduzida por isso.
  */
 
 export type Sinais = {

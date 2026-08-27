@@ -5,7 +5,7 @@ import { coletar } from "../src/impressao.js";
 
 /**
  * `coletar()` de verdade lê `screen`, que não existe no Node — o ambiente do
- * vitest (`vitest.config.ts` tem `environment: "node"`). Sem este mock,
+ * vitest (`vite.config.ts` tem `environment: "node"`). Sem este mock,
  * `coletar()` sempre devolve `null` e os dois ramos que põem o cabeçalho
  * `X-Impressao` (aqui e em `exportar`) nunca executam em teste nenhum.
  */
@@ -175,6 +175,11 @@ describe("api.ts", () => {
 
     const controle = new AbortController();
     const promessa = enviarPdf(new File(["abc"], "planta.pdf"), controle.signal);
+    // Sem esperar `send()` acontecer, o abort cairia na janela entre `open()`
+    // e `send()` (o `.then()` da coleta é microtask) e este teste viraria
+    // duplicata do teste daquela janela, sem exercitar o evento "abort" de
+    // verdade que `x.disparar("abort")` só dispara com `enviado !== null`.
+    await vi.waitFor(() => { if (x.enviado === null) throw new Error("aguardando envio"); });
     x.progresso(10, 100);
     controle.abort();
 

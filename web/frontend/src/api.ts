@@ -171,9 +171,15 @@ export function enviarPdf(arquivo: File, sinal?: AbortSignal,
     // que o XHR está aberto mas não enviado: um `x.abort()` nesse estado não
     // dispara evento nenhum (é o que `desistir` faria via o `sinal`), então
     // sem reconferir `sinal?.aborted` aqui o envio subiria mesmo cancelado. E
-    // sem o `.catch()`, uma exceção de `setRequestHeader`/`send` sumiria no
-    // `void` e a promessa de `enviarPdf` nunca liquidaria.
-    void coletar().then((impressao) => {
+    // sem o `.catch()` externo, uma exceção de `setRequestHeader`/`send`
+    // sumiria no `void` e a promessa de `enviarPdf` nunca liquidaria.
+    //
+    // O `.catch(() => null)` logo após `coletar()` é outra coisa: sem ele, uma
+    // rejeição de `coletar()` cairia no `.catch()` externo e bloquearia o
+    // envio — contrariando o "falhar nunca bloqueia" documentado em
+    // `impressao.ts`. `coletar()` já não deveria rejeitar (ela própria tem
+    // `try/catch`), mas o contrato do envio não pode depender disso.
+    void coletar().catch(() => null).then((impressao) => {
       if (sinal?.aborted) {
         limpar();
         reject(new DOMException("Aborted", "AbortError"));

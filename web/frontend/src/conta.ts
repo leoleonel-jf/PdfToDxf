@@ -219,5 +219,5 @@ export function montarCaixaDeConta(raiz: HTMLElement, modo: ModoDaCaixa,
   });
 
   raiz.append(painel);
-  email.focus();
+  (modo === "nova-senha" ? senha : email).focus();
 }

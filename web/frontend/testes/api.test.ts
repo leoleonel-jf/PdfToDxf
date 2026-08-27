@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { enviarPdf, exportar, ErroDaApi, esperarPagina, lerEstado,
+import { enviarPdf, exportar, ErroDaApi, esperarPagina, lerCota, lerEstado,
         lerGeometriaBruta, type PedidoDeExportacao } from "../src/api.js";
 import { coletar } from "../src/impressao.js";
 
@@ -366,6 +366,46 @@ describe("api.ts", () => {
     }));
 
     await exportar("a".repeat(32), 1, PEDIDO_MINIMO);
+
+    expect(cabecalhosVistos).not.toHaveProperty("X-Impressao");
+  });
+
+  const COTA_MINIMA = {
+    tipo: "visitante", email: "", confirmado: false,
+    arquivos: { restam: null, de: null, libera_em: null },
+    downloads: { restam: null, de: null, libera_em: null },
+    teto_bytes: 10 * 1024 * 1024,
+  };
+
+  /**
+   * Dívida da revisão da tarefa 11: `lerCota` não mandava `X-Impressao`, e o
+   * servidor só soma o balde da impressão ao saldo quando o cabeçalho chega
+   * (`web/api/identidade.py`) — sem ele o canto mostrava vaga justo quando a
+   * impressão é o balde que vale (cookie apagado ou IP trocado). Mesmo molde
+   * dos testes de `enviarPdf` e `exportar` acima.
+   */
+  it("lerCota manda X-Impressao quando a coleta dá um hash", async () => {
+    coletarFalso.mockResolvedValueOnce("hash-cota");
+    let cabecalhosVistos: Record<string, string> | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      cabecalhosVistos = init?.headers as Record<string, string>;
+      return respostaDe(COTA_MINIMA);
+    }));
+
+    await lerCota();
+
+    expect(cabecalhosVistos?.["X-Impressao"]).toBe("hash-cota");
+  });
+
+  it("lerCota sem impressão coletada não manda o cabeçalho X-Impressao", async () => {
+    coletarFalso.mockResolvedValueOnce(null);
+    let cabecalhosVistos: Record<string, string> | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      cabecalhosVistos = init?.headers as Record<string, string>;
+      return respostaDe(COTA_MINIMA);
+    }));
+
+    await lerCota();
 
     expect(cabecalhosVistos).not.toHaveProperty("X-Impressao");
   });

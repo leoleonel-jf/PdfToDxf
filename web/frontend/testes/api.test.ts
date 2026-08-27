@@ -1,11 +1,28 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { enviarPdf, ErroDaApi, esperarPagina, lerEstado, lerGeometriaBruta } from "../src/api.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { enviarPdf, exportar, ErroDaApi, esperarPagina, lerEstado,
+        lerGeometriaBruta, type PedidoDeExportacao } from "../src/api.js";
+import { coletar } from "../src/impressao.js";
+
+/**
+ * `coletar()` de verdade lê `screen`, que não existe no Node — o ambiente do
+ * vitest (`vite.config.ts` tem `environment: "node"`). Sem este mock,
+ * `coletar()` sempre devolve `null` e os dois ramos que põem o cabeçalho
+ * `X-Impressao` (aqui e em `exportar`) nunca executam em teste nenhum.
+ */
+vi.mock("../src/impressao.js", () => ({ coletar: vi.fn() }));
+const coletarFalso = vi.mocked(coletar);
 
 function respostaDe(corpo: unknown, status = 200): Response {
   return new Response(JSON.stringify(corpo), {
     status, headers: { "content-type": "application/json" },
   });
 }
+
+const PEDIDO_MINIMO: PedidoDeExportacao = {
+  escala: 1, unidade: "mm",
+  opcoes: { excluded_layers: [], drop_fills: false, min_len_mm: 0,
+           dedup: false, join_polylines: false, round_coords: false },
+};
 
 /**
  * Um `XMLHttpRequest` de mentira, controlado pelo teste.
@@ -21,11 +38,21 @@ class XhrFalso {
   responseType = "";
   enviado: unknown = null;
   abortado = false;
+  cabecalhos: Record<string, string> = {};
   private ouvintes = new EventTarget();
 
   open(_metodo: string, _url: string): void {}
+  setRequestHeader(nome: string, valor: string): void { this.cabecalhos[nome] = valor; }
   send(corpo: unknown): void { this.enviado = corpo; }
-  abort(): void { this.abortado = true; this.disparar("abort"); }
+  // Um XHR de verdade só dispara o evento "abort" se `send()` já tiver
+  // acontecido (estado UNSENT não dispara nada) — é exatamente a janela do
+  // achado da revisão. Reproduzir isso aqui, em vez de sempre disparar, é o
+  // que torna o teste da janela um teste de verdade, e não um que passaria
+  // mesmo com o código antigo.
+  abort(): void {
+    this.abortado = true;
+    if (this.enviado !== null) this.disparar("abort");
+  }
   addEventListener(t: string, f: EventListener): void {
     this.ouvintes.addEventListener(t, f);
   }
@@ -40,6 +67,12 @@ class XhrFalso {
   }
 }
 
+// Padrão neutro: sem sinal coletado, os testes que não são sobre o cabeçalho
+// `X-Impressao` continuam do jeito que estavam antes deste dublê existir.
+beforeEach(() => {
+  coletarFalso.mockReset();
+  coletarFalso.mockResolvedValue(null);
+});
 afterEach(() => vi.unstubAllGlobals());
 
 describe("api.ts", () => {
@@ -142,12 +175,95 @@ describe("api.ts", () => {
 
     const controle = new AbortController();
     const promessa = enviarPdf(new File(["abc"], "planta.pdf"), controle.signal);
+    // Sem esperar `send()` acontecer, o abort cairia na janela entre `open()`
+    // e `send()` (o `.then()` da coleta é microtask) e este teste viraria
+    // duplicata do teste daquela janela, sem exercitar o evento "abort" de
+    // verdade que `x.disparar("abort")` só dispara com `enviado !== null`.
+    await vi.waitFor(() => { if (x.enviado === null) throw new Error("aguardando envio"); });
     x.progresso(10, 100);
     controle.abort();
 
     await expect(promessa).rejects.toSatisfy(
       (e: unknown) => e instanceof DOMException && e.name === "AbortError");
     expect(x.abortado).toBe(true);
+  });
+
+  /**
+   * O achado da revisão: entre `x.open()` e `x.send()` existe uma janela em
+   * que `send()` ainda não rodou — a tarefa 12 moveu `x.send()` para dentro
+   * de `coletar().then(...)`, que é assíncrono. Um `x.abort()` nessa janela
+   * não dispara evento nenhum (é o que o `XhrFalso.abort()` reproduz agora,
+   * fiel ao XHR de verdade), então sem reconferir `sinal?.aborted` dentro do
+   * `.then()` o PDF subiria mesmo cancelado — e sem isso, este teste trava
+   * esperando uma promessa que nunca liquida.
+   */
+  it("abortar na janela entre open() e send() rejeita sem enviar", async () => {
+    const x = new XhrFalso();
+    vi.stubGlobal("XMLHttpRequest", function () { return x; });
+
+    let resolverColeta!: (v: string | null) => void;
+    coletarFalso.mockReset();
+    coletarFalso.mockImplementationOnce(
+      () => new Promise((r) => { resolverColeta = r; }));
+
+    const controle = new AbortController();
+    const promessa = enviarPdf(new File(["abc"], "planta.pdf"), controle.signal);
+
+    // Ainda na janela: `coletar()` não resolveu, `send()` não rodou.
+    controle.abort();
+    expect(x.enviado).toBe(null);
+    expect(x.abortado).toBe(true);
+
+    // `coletar()` só resolve depois do abort — o cenário do achado.
+    resolverColeta(null);
+
+    await expect(promessa).rejects.toSatisfy(
+      (e: unknown) => e instanceof DOMException && e.name === "AbortError");
+    expect(x.enviado).toBe(null);
+  });
+
+  it("erro ao montar o cabeçalho não deixa a promessa presa", async () => {
+    const x = new XhrFalso();
+    vi.stubGlobal("XMLHttpRequest", function () { return x; });
+    coletarFalso.mockResolvedValueOnce("hash-qualquer");
+    x.setRequestHeader = () => { throw new Error("cabeçalho recusado"); };
+
+    await expect(enviarPdf(new File(["abc"], "planta.pdf")))
+      .rejects.toThrow("cabeçalho recusado");
+  });
+
+  it("o envio manda X-Impressao quando a coleta dá um hash", async () => {
+    const x = new XhrFalso();
+    vi.stubGlobal("XMLHttpRequest", function () { return x; });
+    coletarFalso.mockResolvedValueOnce("hash-de-teste");
+
+    const promessa = enviarPdf(new File(["abc"], "planta.pdf"));
+    await vi.waitFor(() => { if (x.enviado === null) throw new Error("aguardando envio"); });
+
+    expect(x.cabecalhos["X-Impressao"]).toBe("hash-de-teste");
+
+    x.status = 200;
+    x.responseText = JSON.stringify({ job_id: "a".repeat(32), nome: "planta.pdf",
+                                      n_paginas: 1 });
+    x.disparar("load");
+    await expect(promessa).resolves.toMatchObject({ n_paginas: 1 });
+  });
+
+  it("o envio sem impressão coletada não manda o cabeçalho X-Impressao", async () => {
+    const x = new XhrFalso();
+    vi.stubGlobal("XMLHttpRequest", function () { return x; });
+    coletarFalso.mockResolvedValueOnce(null);
+
+    const promessa = enviarPdf(new File(["abc"], "planta.pdf"));
+    await vi.waitFor(() => { if (x.enviado === null) throw new Error("aguardando envio"); });
+
+    expect(x.cabecalhos["X-Impressao"]).toBeUndefined();
+
+    x.status = 200;
+    x.responseText = JSON.stringify({ job_id: "a".repeat(32), nome: "planta.pdf",
+                                      n_paginas: 1 });
+    x.disparar("load");
+    await expect(promessa).resolves.toMatchObject({ n_paginas: 1 });
   });
 
   it("sinal já abortado nem chega a enviar", async () => {
@@ -205,5 +321,52 @@ describe("api.ts", () => {
                    { status: 409, headers: { "content-type": "application/json" } })));
     await expect(lerGeometriaBruta("a".repeat(32), 1, "esqueleto"))
       .rejects.toSatisfy((e: unknown) => e instanceof ErroDaApi && e.status === 409);
+  });
+
+  /**
+   * `ErroDaApi.codigo` chegou na tarefa 11 (`main.py:343` põe `codigo` ao
+   * lado de `detail` na mesma `Recusa`), mas foi para produção sem teste — é
+   * o item I1 da revisão. A tela inteira das cinco linhas de erro (tarefa 12)
+   * distingue "sem vaga por cota" de "arquivo grande" por este campo, e não
+   * por texto; um regressão aqui quebraria as cinco em silêncio.
+   */
+  it("preenche codigo a partir do corpo JSON de uma resposta de erro", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      respostaDe({ detail: "sem vaga", codigo: "cota_arquivos" }, 429)));
+    await expect(lerEstado("a".repeat(32), 1)).rejects.toSatisfy(
+      (e: unknown) => e instanceof ErroDaApi && e.codigo === "cota_arquivos");
+  });
+
+  it("resposta de erro sem codigo deixa o campo vazio", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      respostaDe({ detail: "não achei" }, 404)));
+    await expect(lerEstado("a".repeat(32), 1)).rejects.toSatisfy(
+      (e: unknown) => e instanceof ErroDaApi && e.codigo === "");
+  });
+
+  it("exportar manda X-Impressao quando a coleta dá um hash", async () => {
+    coletarFalso.mockResolvedValueOnce("hash-exportar");
+    let cabecalhosVistos: Record<string, string> | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      cabecalhosVistos = init?.headers as Record<string, string>;
+      return respostaDe({ chave: "k", url: "/u", cache: false, entidades: 1 });
+    }));
+
+    await exportar("a".repeat(32), 1, PEDIDO_MINIMO);
+
+    expect(cabecalhosVistos?.["X-Impressao"]).toBe("hash-exportar");
+  });
+
+  it("exportar sem impressão coletada não manda o cabeçalho X-Impressao", async () => {
+    coletarFalso.mockResolvedValueOnce(null);
+    let cabecalhosVistos: Record<string, string> | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      cabecalhosVistos = init?.headers as Record<string, string>;
+      return respostaDe({ chave: "k", url: "/u", cache: false, entidades: 1 });
+    }));
+
+    await exportar("a".repeat(32), 1, PEDIDO_MINIMO);
+
+    expect(cabecalhosVistos).not.toHaveProperty("X-Impressao");
   });
 });

@@ -49,4 +49,57 @@ describe("estados.ts", () => {
     expect(aviso.detalhe.length).toBeGreaterThan(0);
     expect(aviso.podeTentarDeNovo).toBe(true);
   });
+
+  it("as cinco linhas de erro da etapa 4 existem e são acionáveis", () => {
+    const cota = avisoDoErro(new ErroDaApi(429, "sem vaga", "cota_arquivos"));
+    expect(tudo(cota)).toMatch(/conta/i);   // oferece o cadastro ao visitante
+
+    const baixar = avisoDoErro(new ErroDaApi(429, "sem vaga", "cota_downloads"));
+    expect(tudo(baixar)).toMatch(/já gerou|de novo|liberado/i);
+
+    const tamanho = avisoDoErro(new ErroDaApi(413, "grande", "tamanho"));
+    expect(tudo(tamanho)).toMatch(/tamanho|MB/i);
+
+    const naoConfirmada = avisoDoErro(
+      new ErroDaApi(403, "confirme", "conta_nao_confirmada"));
+    expect(tudo(naoConfirmada)).toMatch(/confirm/i);
+
+    // A quinta é o trabalho expirado, que a etapa 3 já tinha.
+    expect(tudo(avisoDoErro(new ErroDaApi(404, "sumiu")))).toMatch(/expir/i);
+  });
+
+  it("cota esgotada não conta qual balde estourou", () => {
+    const a = avisoDoErro(new ErroDaApi(429, "sem vaga", "cota_arquivos"));
+    expect(tudo(a).toLowerCase()).not.toMatch(/cookie|endereço ip|impressão/);
+  });
+
+  it("cota e tamanho não oferecem conta a quem já está logado", () => {
+    // O conselho tem que ser possível de seguir: quem já tem conta não pode
+    // ouvir "crie uma conta".
+    const confirmado = { tipo: "logado" as const, confirmado: true };
+    const cota = avisoDoErro(
+      new ErroDaApi(429, "sem vaga", "cota_arquivos"), confirmado);
+    expect(tudo(cota).toLowerCase()).not.toMatch(/conta gratuita/);
+    expect(tudo(cota)).toMatch(/mais tarde|libera/i);
+
+    const tamanho = avisoDoErro(
+      new ErroDaApi(413, "grande", "tamanho"), confirmado);
+    expect(tudo(tamanho).toLowerCase()).not.toMatch(/conta gratuita/);
+    expect(tudo(tamanho)).toMatch(/menor|divida/i);
+
+    // Logado sem confirmar: o que destrava o limite é a confirmação.
+    const pendente = { tipo: "logado" as const, confirmado: false };
+    expect(tudo(avisoDoErro(
+      new ErroDaApi(429, "sem vaga", "cota_arquivos"), pendente)))
+      .toMatch(/confirm/i);
+    expect(tudo(avisoDoErro(
+      new ErroDaApi(413, "grande", "tamanho"), pendente)))
+      .toMatch(/confirm/i);
+
+    // Visitante explícito continua recebendo a oferta, como o padrão sem cota.
+    const visitante = { tipo: "visitante" as const, confirmado: false };
+    expect(tudo(avisoDoErro(
+      new ErroDaApi(429, "sem vaga", "cota_arquivos"), visitante)))
+      .toMatch(/conta/i);
+  });
 });

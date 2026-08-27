@@ -7,6 +7,8 @@
  * com rede lenta.
  */
 
+import { coletar } from "./impressao.js";
+
 export class ErroDaApi extends Error {
   constructor(public readonly status: number, mensagem: string,
               public readonly codigo = "") {
@@ -161,7 +163,34 @@ export function enviarPdf(arquivo: File, sinal?: AbortSignal,
       reject(erroDaRecusa(x.status, x.responseText));
     });
 
-    x.send(forma);
+    // `void` e não `await`: `enviarPdf` devolve `Promise` mas não é `async`, e
+    // a coleta é rápida. Se ela falhar, o envio segue sem o cabeçalho — a
+    // impressão nunca pode impedir alguém de converter uma planta.
+    //
+    // Entre `x.open()` (acima) e `x.send()` (aqui dentro) existe uma janela em
+    // que o XHR está aberto mas não enviado: um `x.abort()` nesse estado não
+    // dispara evento nenhum (é o que `desistir` faria via o `sinal`), então
+    // sem reconferir `sinal?.aborted` aqui o envio subiria mesmo cancelado. E
+    // sem o `.catch()` externo, uma exceção de `setRequestHeader`/`send`
+    // sumiria no `void` e a promessa de `enviarPdf` nunca liquidaria.
+    //
+    // O `.catch(() => null)` logo após `coletar()` é outra coisa: sem ele, uma
+    // rejeição de `coletar()` cairia no `.catch()` externo e bloquearia o
+    // envio — contrariando o "falhar nunca bloqueia" documentado em
+    // `impressao.ts`. `coletar()` já não deveria rejeitar (ela própria tem
+    // `try/catch`), mas o contrato do envio não pode depender disso.
+    void coletar().catch(() => null).then((impressao) => {
+      if (sinal?.aborted) {
+        limpar();
+        reject(new DOMException("Aborted", "AbortError"));
+        return;
+      }
+      if (impressao) x.setRequestHeader("X-Impressao", impressao);
+      x.send(forma);
+    }).catch((erro: unknown) => {
+      limpar();
+      reject(erro instanceof Error ? erro : new Error(String(erro)));
+    });
   });
 }
 
@@ -272,10 +301,13 @@ export async function lerGeometriaBruta(job: string, pagina: number,
 
 export async function exportar(job: string, pagina: number,
                                pedido: PedidoDeExportacao, sinal?: AbortSignal) {
+  const impressao = await coletar();
+  const cabecalhos: Record<string, string> = {
+    "content-type": "application/json",
+  };
+  if (impressao) cabecalhos["X-Impressao"] = impressao;
   const r = await pedir(`/api/jobs/${job}/pages/${pagina}/export`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(pedido),
+    method: "POST", headers: cabecalhos, body: JSON.stringify(pedido),
     signal: sinal,
   });
   return r.json() as Promise<{ chave: string; url: string; cache: boolean;
@@ -333,4 +365,10 @@ export async function registrar(email: string, senha: string) {
 export async function pedirSenha(email: string) {
   const r = await pedir("/api/auth/senha", corpoJson({ email }));
   return r.json() as Promise<{ mensagem: string }>;
+}
+
+export async function concluirSenha(token: string, senha: string) {
+  const r = await pedir(`/api/auth/senha/${encodeURIComponent(token)}`,
+                        corpoJson({ senha }));
+  return r.json() as Promise<{ ok: boolean }>;
 }

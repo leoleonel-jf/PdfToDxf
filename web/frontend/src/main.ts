@@ -11,17 +11,19 @@
  * `web/frontend/medicao/RESULTADO.md`.
  */
 import {
-  entrar, enviarPdf, esperarPagina, exportar, lerCota, lerGeometriaBruta,
-  lerMeta, pedirExtracao, pedirSenha, registrar, sair, type Cota, type Meta,
+  concluirSenha, entrar, enviarPdf, ErroDaApi, esperarPagina, exportar,
+  lerCota, lerGeometriaBruta, lerMeta, pedirExtracao, pedirSenha, registrar,
+  sair, type Cota, type Meta,
 } from "./api.js";
-import { montarCaixaDeConta, type ModoDaCaixa } from "./conta.js";
+import { acaoDaUrl, montarCaixaDeConta, type ModoDaCaixa } from "./conta.js";
 import { enquadrar, pontoDaTela, type Vista } from "./canvas.js";
 import { intercalar, lerGeometria, type Geometria } from "./formato.js";
 import {
   aplicarArrasto, aplicarZoom, centro, distancia, fatorDaRoda,
   PAUSA_DO_GESTO_MS,
 } from "./gestos.js";
-import { avisoDaSituacao, avisoDoErro, type Aviso } from "./estados.js";
+import { avisoDaSituacao, avisoDoErro, conselhoDeTamanho,
+         type Aviso } from "./estados.js";
 import {
   escalaPorDoisPontos, escalaValidaParaExportar, iniciarCalibragem,
   marcarPonto, medidaDigitada, posicaoDaLupa, type Calibragem,
@@ -439,6 +441,19 @@ function mostrarAviso(aviso: Aviso | null): void {
 }
 
 async function abrir(arquivo: File): Promise<void> {
+  // O teto do plano, conferido **antes** de subir um byte. A spec pede assim, e
+  // a razão é simples: subir 40 MB para receber 413 no fim é gastar o tempo do
+  // usuário para dizer o que já se sabia quando ele escolheu o arquivo.
+  if (cota && arquivo.size > cota.teto_bytes) {
+    const mb = Math.floor(cota.teto_bytes / (1024 * 1024));
+    mostrarAviso({
+      titulo: "O arquivo passa do tamanho permitido",
+      detalhe: `Este arquivo tem ${(arquivo.size / (1024 * 1024)).toFixed(1)} ` +
+               `MB e o limite é de ${mb} MB.` + conselhoDeTamanho(cota),
+      podeTentarDeNovo: false,
+    });
+    return;
+  }
   // Trocar de planta ou de página aborta o que estiver em voo: sem isso, o
   // detalhe da página anterior chega depois e contamina o canvas.
   controle.abort();
@@ -483,7 +498,7 @@ async function abrir(arquivo: File): Promise<void> {
       return;
     }
     esconderProgresso("aviso");
-    mostrarAviso(avisoDoErro(erro));
+    mostrarAviso(avisoDoErro(erro, cota));
     // Também na recusa: um 429 de cota é justamente o momento em que o saldo
     // do canto ficou desatualizado.
     void atualizarCota();
@@ -595,7 +610,7 @@ async function carregarPagina(): Promise<void> {
     if (sinal.aborted) return;
     esconderProgresso("aviso");
     esconderProgresso("faixa");
-    mostrarAviso(avisoDoErro(erro));
+    mostrarAviso(avisoDoErro(erro, cota));
   }
 }
 
@@ -605,6 +620,12 @@ let cota: Cota | null = null;
 let modoDaConta: ModoDaCaixa = null;
 let recadoDaConta = "";
 let erroDaConta = "";
+// O token do modo `nova-senha`, lido da URL e nunca digitado: é ele que
+// identifica a conta, e é por isso que a caixa daquele modo não pede e-mail.
+let tokenDeSenha = "";
+// Uma vez por carga: repetir o aviso a cada leitura de cota cobriria a planta
+// a cada envio, e a conta não confirmada não é um erro novo a cada tique.
+let jaAvisouDaConfirmacao = false;
 
 /**
  * Relê a cota e remonta o topo.
@@ -618,6 +639,17 @@ async function atualizarCota(): Promise<void> {
     cota = await lerCota();
   } catch {
     cota = null;
+  }
+  // Aviso, e não erro: a conta funciona, só não destravou a cota maior. Uma
+  // vez por carga — repetir a cada leitura cobriria a planta a cada envio. E
+  // só quando a sobreposição está livre: se um aviso alheio já estiver na
+  // tela (por exemplo, de um envio que terminou entre o pedido e a resposta
+  // desta releitura), `jaAvisouDaConfirmacao` fica falso e este aviso espera
+  // a próxima leitura de cota em vez de atropelar o que já está visível.
+  if (cota && cota.tipo === "logado" && !cota.confirmado &&
+      !jaAvisouDaConfirmacao && !avisoCorrente) {
+    jaAvisouDaConfirmacao = true;
+    mostrarAviso(avisoDoErro(new ErroDaApi(403, "", "conta_nao_confirmada")));
   }
   montarTudo();
 }
@@ -654,7 +686,7 @@ function montarConta(): void {
   });
 }
 
-async function confirmarConta(modo: "entrar" | "cadastrar" | "senha",
+async function confirmarConta(modo: Exclude<ModoDaCaixa, null>,
                               email: string, senha: string): Promise<void> {
   erroDaConta = "";
   recadoDaConta = "";
@@ -664,12 +696,27 @@ async function confirmarConta(modo: "entrar" | "cadastrar" | "senha",
       modoDaConta = null;
     } else if (modo === "cadastrar") {
       recadoDaConta = (await registrar(email, senha)).mensagem;
-    } else {
+    } else if (modo === "senha") {
       recadoDaConta = (await pedirSenha(email)).mensagem;
+    } else {
+      // `nova-senha`: o token veio da URL, não do formulário — a caixa
+      // daquele modo não tem campo de e-mail nem de token para digitar.
+      await concluirSenha(tokenDeSenha, senha);
+      modoDaConta = null;
+      // O recado vai para a tela, e não para a caixa: ela está fechando.
+      mostrarAviso({
+        titulo: "Senha alterada",
+        detalhe: "Sua senha foi trocada. Entre com a senha nova.",
+        podeTentarDeNovo: false,
+      });
     }
   } catch (erro) {
     // `avisoDoErro` e não o texto cru: é ele que garante a regra de "diga o que
-    // houve e o que fazer" — e é o mesmo vocabulário do resto da tela.
+    // houve e o que fazer" — e é o mesmo vocabulário do resto da tela. No modo
+    // `nova-senha`, um token vencido ou já usado vira `400 token_invalido`, e a
+    // mensagem do servidor ("Este link não vale mais. Peça outro.") já é a
+    // oferta de pedir outro link; a própria caixa continua com o botão
+    // "Esqueci a senha" entre as alternativas.
     erroDaConta = avisoDoErro(erro).detalhe;
   }
   montarConta();
@@ -821,7 +868,7 @@ async function baixar(): Promise<void> {
     link.remove();
   } catch (erro) {
     esconderProgresso("aviso");
-    mostrarAviso(avisoDoErro(erro));
+    mostrarAviso(avisoDoErro(erro, cota));
   } finally {
     // Nos dois desfechos: o DXF gerado consumiu uma vaga de download, e a
     // recusa por cota é a outra metade da mesma notícia. Fora do `try` de
@@ -1000,3 +1047,34 @@ montarTudo();
 // A cota chega depois, e o canto nasce sem saldo até ela voltar: mostrar um
 // número palpitado enquanto o servidor não respondeu seria inventar número.
 void atualizarCota();
+
+// --- os dois parâmetros de URL que os e-mails produzem ----------------------
+
+/**
+ * `?senha=<token>` (link de "esqueci a senha") e `?confirmado=1` (para onde
+ * `GET /api/auth/confirmar/{token}` redireciona desde a tarefa 7) só existem
+ * no primeiro carregamento: o parâmetro sai da URL assim que lido, com
+ * `history.replaceState`. Um token de senha que fica na barra de endereços
+ * entra no histórico do navegador, no título da aba e em qualquer captura de
+ * tela — e ele é utilizável até vencer. O `?confirmado=1` sai pelo mesmo
+ * motivo, mais simples: recarregar a página não pode repetir o aviso.
+ */
+const acao = acaoDaUrl(window.location.search);
+if (acao) {
+  // Só os dois parâmetros lidos saem — `window.location.pathname` puro
+  // descartaria o resto da query e o hash, que não têm nada a ver com isto.
+  const url = new URL(window.location.href);
+  url.searchParams.delete("senha");
+  url.searchParams.delete("confirmado");
+  history.replaceState(null, "", url);
+}
+if (acao?.tipo === "nova-senha") {
+  tokenDeSenha = acao.token;
+  abrirConta("nova-senha");
+} else if (acao?.tipo === "confirmado") {
+  mostrarAviso({
+    titulo: "E-mail confirmado",
+    detalhe: "Seu endereço foi confirmado e a cota maior já está valendo.",
+    podeTentarDeNovo: false,
+  });
+}

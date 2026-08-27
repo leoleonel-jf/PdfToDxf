@@ -85,15 +85,13 @@ merge**.
 1. **Mesclar o [PR #10](https://github.com/leoleonel-jf/PdfToDxf/pull/10)** e
    conferir a bateria sobre a `main` mesclada.
 
-2. **Decidir a dívida prioritária da revisão final:** as mensagens de
-   `cota_arquivos` e `tamanho` dizem "com uma conta gratuita o limite sobe…"
-   **também para quem já está logado** — conselho impossível de seguir. O
-   texto veio verbatim do plano (passo 4 da tarefa 12) e o teste o exige, então
-   mudar é decisão do usuário: exige passar o tipo da conta a `avisoDoErro` e
-   ajustar o contrato do teste. Ver "Pendências abertas" abaixo.
-
-3. **Planejar a etapa 5 — deploy.** A etapa 4 acabou; é o item 9 de "O que
+2. **Planejar a etapa 5 — deploy.** A etapa 4 acabou; é o item 9 de "O que
    falta".
+
+> A dívida prioritária da revisão final — mensagens de cota oferecendo conta
+> a quem já está logado — **foi corrigida em 2026-08-27** (`31e6684`), por
+> decisão do usuário ("Arrumar"): `avisoDoErro` ganhou um segundo parâmetro
+> com `tipo`/`confirmado`, e o conselho passou a depender de quem ouve.
 
 ### As três sessões de fundo, encerradas e absorvidas
 
@@ -117,8 +115,9 @@ Nenhuma bloqueia o merge do PR #10. Todas vêm do ledger, menos a última seçã
 
 **Dívidas registradas na revisão final da tarefa 12 (2026-08-27):**
 
-- **Prioritária, decisão do usuário:** mensagens de `cota_arquivos` e
-  `tamanho` erradas para usuário logado (item 2 de "O que fazer" acima).
+- ~~**Prioritária:** mensagens de `cota_arquivos` e `tamanho` erradas para
+  usuário logado.~~ **Corrigida em 2026-08-27** (`31e6684`), a pedido do
+  usuário.
 - `lerCota` não manda `X-Impressao`, então o saldo do canto ignora o balde da
   impressão: quando ele for o vinculante (cookie apagado, IP trocado), a tela
   mostra vaga e o envio leva 429.

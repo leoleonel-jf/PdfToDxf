@@ -80,6 +80,29 @@ def test_o_exemplo_nao_tem_valor_nenhum():
     print("OK: o exemplo não carrega valor nenhum")
 
 
+WORKFLOW = (RAIZ / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
+PUBLICAR = (RAIZ / "deploy" / "publicar.sh").read_text(encoding="utf-8")
+
+
+def test_o_deploy_nasce_desligado():
+    """Sem a guarda, o primeiro merge tenta publicar numa VPS que não existe."""
+    assert "DEPLOY_ATIVO" in WORKFLOW, WORKFLOW
+    print("OK: o deploy só roda com DEPLOY_ATIVO ligado")
+
+
+def test_o_deploy_so_roda_na_main():
+    assert "branches: [main]" in WORKFLOW, WORKFLOW
+    print("OK: o deploy só roda na main")
+
+
+def test_publicar_volta_atras_e_falha():
+    """Reverter em silêncio esconde a quebra: o job tem de ficar vermelho."""
+    assert "ANTERIOR" in PUBLICAR, PUBLICAR
+    assert "exit 1" in PUBLICAR, PUBLICAR
+    assert "set -euo pipefail" in PUBLICAR, PUBLICAR
+    print("OK: publicar.sh volta atrás e sai com erro")
+
+
 if __name__ == "__main__":
     test_o_app_nao_publica_porta()
     test_os_tres_volumes_de_dados_existem()
@@ -88,4 +111,7 @@ if __name__ == "__main__":
     test_o_dominio_nao_esta_embutido_no_caddyfile()
     test_o_caddy_limita_o_corpo()
     test_o_exemplo_nao_tem_valor_nenhum()
+    test_o_deploy_nasce_desligado()
+    test_o_deploy_so_roda_na_main()
+    test_publicar_volta_atras_e_falha()
     print("Todos os testes da configuração de deploy passaram.")

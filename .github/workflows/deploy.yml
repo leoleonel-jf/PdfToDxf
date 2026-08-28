@@ -1,0 +1,79 @@
+# Publicação automática: mesclar na `main` põe no ar.
+#
+# Nasce desligado. Só roda quando a variável de repositório DEPLOY_ATIVO valer
+# "1" — antes de a VPS existir, ele seria vermelho toda vez, e vermelho
+# esperado é como se ensina alguém a ignorar vermelho.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+# Nunca cancelar um deploy no meio: o anterior pode estar trocando a imagem
+# neste instante, e ficar sem nenhum dos dois é o pior desfecho.
+concurrency:
+  group: deploy-producao
+  cancel-in-progress: false
+
+jobs:
+  imagem:
+    name: Construir e publicar a imagem
+    if: vars.DEPLOY_ATIVO == '1'
+    runs-on: ubuntu-latest
+    outputs:
+      etiqueta: ${{ steps.nome.outputs.etiqueta }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # O commit no nome, nunca só `latest`: voltar atrás precisa de um alvo
+      # que se possa nomear.
+      - id: nome
+        run: |
+          repo="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          echo "etiqueta=ghcr.io/${repo}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # O Dockerfile roda `npm test` no primeiro estágio: uma imagem não nasce
+      # de código que desobedece ao contrato do select().
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: true
+          tags: ${{ steps.nome.outputs.etiqueta }}
+
+  publicar:
+    name: Trocar a imagem na VPS
+    needs: imagem
+    if: vars.DEPLOY_ATIVO == '1'
+    runs-on: ubuntu-latest
+    steps:
+      # ssh direto, sem ação de terceiro: uma ação que recebe a chave privada
+      # da VPS é uma dependência de cadeia de suprimentos que este projeto não
+      # precisa ter.
+      - name: Preparar a chave
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_CHAVE }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          echo "${{ secrets.VPS_HOSTKEY }}" > ~/.ssh/known_hosts
+
+      - name: Publicar
+        run: |
+          ssh -i ~/.ssh/id_deploy \
+              -o IdentitiesOnly=yes \
+              "${{ secrets.VPS_USUARIO }}@${{ secrets.VPS_HOST }}" \
+              "/opt/pdftodxf/publicar.sh '${{ needs.imagem.outputs.etiqueta }}'"
+
+      - name: Apagar a chave
+        if: always()
+        run: rm -f ~/.ssh/id_deploy

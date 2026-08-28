@@ -117,9 +117,14 @@ Sem ele configurado, o app vê o IP do contêiner do Caddy em toda requisição.
 Consequência: **todos os visitantes do mundo dividem o mesmo balde de cota** —
 o primeiro esgota, e ninguém mais consegue converter nada. O freio de login por
 IP vira um freio global. É a configuração cuja ausência transforma o serviço
-público num serviço quebrado, e por isso ganha teste próprio no plano: uma
-requisição com `X-Forwarded-For` forjado tem de ser atribuída ao IP certo, e o
-cabeçalho vindo de fora do proxy tem de ser ignorado.
+público num serviço quebrado.
+
+**O código já está certo e testado:** `identidade.ip_do_pedido` conta o
+`X-Forwarded-For` da direita para a esquerda e, com `PDFTODXF_PROXIES=0`
+(o padrão), ignora o cabeçalho — `tests/test_identidade.py` e
+`tests/test_auth_sessao.py` cobrem os dois lados. **O que falta é a
+configuração** (`PDFTODXF_PROXIES=1`, um proxy à frente) e a conferência de
+ponta a ponta depois de o serviço subir.
 
 ### Segredos
 
@@ -153,7 +158,13 @@ pública, e o que ela conta, conta para qualquer um.
 Ela existe para dois consumidores: o deploy contínuo, que espera por ela antes
 de considerar a subida boa, e a sonda externa. **Uma rota que só responde
 "200 ok" sem tocar em banco nem em disco não serviria** — ela ficaria verde com
-o volume desmontado, que é justamente a falha que se quer pegar.
+o disco cheio, que é justamente a falha que se quer pegar.
+
+**O que ela pega e o que não pega**, para ninguém esperar garantia que não
+existe: pega banco ilegível, disco cheio, sistema de arquivos só-leitura e
+permissão errada. **Não pega volume desmontado** — `storage.raiz()` cria a
+pasta quando falta, então o contêiner recriaria o caminho vazio no próprio
+sistema de arquivos e a escrita daria certo.
 
 ### Deploy contínuo, e a rede de segurança que ele exige
 
@@ -211,7 +222,7 @@ ar sem ninguém saber.
   o `PDFTODXF_PROXIES` está certo. Confere-se lendo o IP gravado no registro de
   uma conversão feita de fora da VPS (do celular na rede móvel, por exemplo) e
   comparando com o IP público de verdade daquele aparelho.
-- `/api/saude` responde 200, e responde erro com o volume de dados desmontado.
+- `/api/saude` responde 200 no ar, e 503 com o banco inacessível.
 - Mesclar na `main` publica sozinho; uma imagem que não sobe é revertida
   sozinha, e o job fica vermelho.
 - O backup roda, e uma restauração foi feita e conferida.

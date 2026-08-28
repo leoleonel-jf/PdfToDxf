@@ -78,9 +78,10 @@ Conferido no código. Não gaste tarefa com isto:
 
 - **`GET /api/saude`** — não existe nenhuma rota de saúde. Ela tem de conferir
   que o banco abre e que a pasta de dados aceita escrita. Uma rota que só
-  responde `200 ok` sem tocar em nada ficaria verde com o volume desmontado,
-  que é justamente a falha a pegar. Sem autenticação, e sem contar nada que não
-  se conte a um estranho.
+  responde `200 ok` sem tocar em nada ficaria verde com o disco cheio, que é
+  justamente a falha a pegar. Ela **não** pega volume desmontado, porque
+  `storage.raiz()` recria a pasta que falta — não prometa isso. Sem
+  autenticação, e sem contar nada que não se conte a um estranho.
 - **`deploy/docker-compose.yml` e `deploy/Caddyfile`** — a spec geral os
   nomeia; não existem.
 - **Workflow de deploy contínuo** — com verificação de saúde e volta automática
@@ -97,9 +98,10 @@ Caddy em toda requisição. Consequência: **todos os visitantes do mundo divide
 o mesmo balde de cota** — o primeiro esgota e ninguém mais converte nada, e o
 freio de login por IP vira um freio global.
 
-Trate como item de primeira classe, com teste: uma requisição com
-`X-Forwarded-For` tem de ser atribuída ao IP certo, e o cabeçalho vindo de fora
-do proxy tem de ser ignorado.
+**O código já está certo e testado** (`identidade.ip_do_pedido`, coberto em
+`tests/test_identidade.py` e `tests/test_auth_sessao.py`). O que falta é a
+**configuração** — `PDFTODXF_PROXIES=1`, um proxy à frente — e a conferência de
+ponta a ponta depois de o serviço subir. Não reescreva o que já existe.
 
 ## Ambiente e convenções do projeto
 
@@ -180,8 +182,7 @@ Confira item a item. Marcar sem rodar não prova nada.
 - **O IP que o app registra é o do visitante, não o do Caddy** — confere-se
   lendo o IP gravado no registro de uma conversão feita de fora da VPS (do
   celular na rede móvel, por exemplo).
-- `/api/saude` responde 200, e responde **erro** com o volume de dados
-  desmontado.
+- `/api/saude` responde 200 no ar, e **503** com o banco inacessível.
 - Mesclar na `main` publica sozinho; uma imagem que não sobe é revertida
   sozinha, e o job fica **vermelho**.
 - O backup roda, e **uma restauração foi feita e conferida**.

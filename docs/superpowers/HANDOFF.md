@@ -89,8 +89,8 @@ e a dívida do `lerCota`. Detalhe em "Pendências abertas", abaixo.
 
 ### O que fazer
 
-**Planejar a etapa 5 — deploy.** A etapa 4 acabou e está mesclada; é o item 9
-de "O que falta". Os dois últimos PRs entraram em 2026-08-27, com commits de
+**A etapa 5 já foi desenhada e o bloco 5a, planejado** — veja "Etapa 5" logo
+abaixo. Os dois últimos PRs da etapa 4 entraram em 2026-08-27, com commits de
 mescla (`ac66bea` e `55d86c2`), e os branches foram preservados como os
 outros:
 
@@ -103,6 +103,45 @@ outros:
 > a quem já está logado — **foi corrigida em 2026-08-27** (`31e6684`), por
 > decisão do usuário ("Arrumar"): `avisoDoErro` ganhou um segundo parâmetro
 > com `tipo`/`confirmado`, e o conselho passou a depender de quem ouve.
+
+## Etapa 5 — deploy (2026-08-28)
+
+**Desenhada e dividida em três blocos**, porque as dependências mandam a
+ordem. O desenho é
+`docs/superpowers/specs/2026-08-28-deploy-design.md`, e ele registra as dez
+decisões que o usuário tomou — VPS Ubuntu já contratada sem Docker, domínio já
+registrado, Brevo para e-mail, deploy contínuo, backup para fora, teto de
+entidades a subir com medição, exportação assíncrona nesta etapa, um processo
+uvicorn, sonda externa, e o Google dentro da etapa.
+
+| Bloco | O que entrega | Situação |
+|---|---|---|
+| **5a — No ar** | VPS, Compose, HTTPS, e-mail real, saúde, deploy contínuo, backup, sonda | **planejado; a parte sem VPS está feita** |
+| **5b — Aguenta o público** | exportação assíncrona e o teto medido | desenhado, sem plano |
+| **5c — Entrada pelo Google** | OAuth com vinculação por e-mail verificado | desenhado, sem plano |
+
+O plano do 5a é `docs/superpowers/plans/2026-08-28-deploy-5a.md`. Existe também
+`docs/superpowers/briefing-etapa5a.md`, escrito para outra assistente executar
+o bloco sem nenhum contexto desta conversa.
+
+**O que já está feito, no PR do branch `etapa5a-preparo`:** tudo o que não
+depende da VPS — a rota `GET /api/saude`, o `docker-compose.yml`, o
+`Caddyfile`, o `.env.exemplo`, o `deploy/publicar.sh`, o workflow de deploy
+(que **nasce desligado**, atrás de `DEPLOY_ATIVO`), o `deploy/backup.py` e o
+`deploy/OPERACAO.md`.
+
+> **Nada disso jamais rodou: não há Docker nesta máquina.** A revisão foi a
+> única barreira, e pegou **dois defeitos que matariam o primeiro deploy** —
+> `/registros` e `/banco` nasciam de root e o app não escreveria neles; e a
+> volta atrás do `publicar.sh` era código morto, porque o `docker compose up`
+> falhava na dependência do Caddy antes de a reversão ser alcançada. Mais sete
+> importantes, entre eles o pacote do ghcr nascendo privado, o `100MB` do Caddy
+> sendo **menor** que o teto real do serviço (SI contra binário), e o deploy
+> que não esperava a suíte Python. Todos corrigidos.
+
+**O que falta no 5a é o que exige o servidor**, e está no `OPERACAO.md`:
+preparar a VPS, apontar o DNS, primeiro deploy manual, Brevo, ligar o
+`DEPLOY_ATIVO`, cron do backup com restauração testada, e a sonda.
 
 ### As três sessões de fundo, encerradas e absorvidas
 

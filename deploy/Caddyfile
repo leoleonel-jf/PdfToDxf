@@ -1,0 +1,29 @@
+# O domínio vem do ambiente para este arquivo servir a qualquer instalação —
+# e para o nome não virar linha de commit quando mudar.
+{$DOMINIO} {
+	encode zstd gzip
+
+	# Em bytes, e igual ao teto do serviço (`TETO_PDF_BYTES`, em
+	# web/api/limits.py): 100 * 1024 * 1024 = 104857600.
+	#
+	# Escrever `100MB` seria 100.000.000 — o Caddy lê MB como SI, não como MiB.
+	# Os ~4,8 MiB de diferença viram um 413 cru do proxy em arquivos que o app
+	# aceitaria, sem a mensagem que explica o que houve. Este número existe só
+	# para o proxy recusar o que o app recusaria também; tudo o que passa daqui
+	# é o app quem responde, com mensagem.
+	request_body {
+		max_size 104857600
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# O `reverse_proxy` do Caddy já acrescenta X-Forwarded-For com o IP real do
+	# cliente. É o par do PDFTODXF_PROXIES=1 do outro lado.
+	reverse_proxy app:8000
+}

@@ -9,6 +9,7 @@ import secrets
 import shutil
 import time
 import traceback
+import uuid
 from pathlib import Path
 
 import math
@@ -868,6 +869,43 @@ def cota(request: Request, resposta: Response) -> dict:
         "downloads": _saldo(ident, "download", tetos["downloads"]),
         "teto_bytes": tetos["bytes"],
     }
+
+
+@app.get("/api/saude")
+def saude(resposta: Response) -> dict:
+    """Vivo **e** capaz de trabalhar.
+
+    Uma rota que devolvesse `{"ok": true}` sem tocar em nada ficaria verde com
+    o disco cheio — que é justamente a falha que o deploy automático e a sonda
+    existem para pegar. Então ela lê o banco e escreve um arquivo de verdade.
+
+    O que ela **não** pega: volume desmontado. `storage.raiz()` cria a pasta
+    quando falta, então o contêiner recriaria o caminho vazio no próprio
+    sistema de arquivos e a escrita daria certo.
+
+    É rota pública e sem autenticação: o corpo diz qual metade falhou, para o
+    diagnóstico não exigir SSH, e nada além disso.
+    """
+    falhas: list[str] = []
+    try:
+        db.conexao().execute("SELECT 1").fetchone()
+    except Exception:
+        falhas.append("banco")
+    try:
+        # Nome único por chamada. Três sondas batem aqui ao mesmo tempo — o
+        # healthcheck do Docker a cada 30 s, o laço do deploy e a sonda
+        # externa — e com um nome fixo uma delas apaga o arquivo entre o
+        # `write` e o `unlink` da outra: a perdedora leva `FileNotFoundError`
+        # e devolve um 503 falso, intermitente e impossível de reproduzir.
+        prova = storage.raiz() / f".saude-{uuid.uuid4().hex}"
+        prova.write_text("ok", encoding="utf-8")
+        prova.unlink(missing_ok=True)
+    except Exception:
+        falhas.append("dados")
+    if falhas:
+        resposta.status_code = 503
+        return {"ok": False, "falhas": falhas}
+    return {"ok": True}
 
 
 from fastapi.staticfiles import StaticFiles

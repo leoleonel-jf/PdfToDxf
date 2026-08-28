@@ -24,7 +24,13 @@ COPY web/api/ ./web/api/
 COPY --from=frontend /frontend/dist ./web/frontend/dist
 
 ENV PDFTODXF_DADOS=/dados
-RUN mkdir -p /dados && chown servico:servico /dados
+# Os **três** pontos de montagem, criados aqui e com dono. Ponto de montagem
+# que não existe na imagem o Docker cria como root ao subir o volume, e o app
+# roda como `servico`: sem isto o `sqlite3.connect("/banco/contas.db")` falha
+# na primeira subida, `/api/saude` devolve 503 para sempre, o Caddy (que
+# depende da saúde do app) nunca sobe, e nada vai ao ar.
+RUN mkdir -p /dados /registros /banco \
+    && chown servico:servico /dados /registros /banco
 USER servico
 EXPOSE 8000
 

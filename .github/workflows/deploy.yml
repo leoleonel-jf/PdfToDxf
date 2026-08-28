@@ -1,0 +1,121 @@
+# Publicação automática: mesclar na `main` põe no ar.
+#
+# Nasce desligado. Só roda quando a variável de repositório DEPLOY_ATIVO valer
+# "1" — antes de a VPS existir, ele seria vermelho toda vez, e vermelho
+# esperado é como se ensina alguém a ignorar vermelho.
+name: Deploy
+
+on:
+  # **Depois do CI, e só se ele passou.** O Dockerfile roda apenas `npm test`;
+  # a suíte Python inteira mora no workflow `CI`. Disparar no push à `main`,
+  # como era antes, deixava um commit com teste Python quebrado construir,
+  # publicar e ir ao ar enquanto o CI ficava vermelho em paralelo — o desenho
+  # exige o contrário: falhou, não constrói.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+  # Disparo manual. É assim que sai a **primeira** imagem: a VPS não compila
+  # nada por desenho, então o `.env` do primeiro deploy precisa de uma etiqueta
+  # que já exista no ghcr, e ela só pode vir daqui — antes de `DEPLOY_ATIVO`
+  # existir. Também serve para republicar sem commit novo.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+# Nunca cancelar um deploy no meio: o anterior pode estar trocando a imagem
+# neste instante, e ficar sem nenhum dos dois é o pior desfecho.
+concurrency:
+  group: deploy-producao
+  cancel-in-progress: false
+
+env:
+  # No evento `workflow_run`, `github.sha` é o topo da branch padrão, que pode
+  # já ter andado. O commit que o CI aprovou é o `head_sha` do run — é dele que
+  # a imagem tem de nascer, e é ele que vira etiqueta.
+  COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  imagem:
+    name: Construir e publicar a imagem
+    # O `imagem` roda **sem** DEPLOY_ATIVO quando disparado à mão: é o que
+    # produz a primeira etiqueta, antes de a VPS existir. Só o job `publicar`,
+    # que precisa dos segredos de ssh, exige a variável ligada.
+    if: >-
+      (github.event_name == 'workflow_dispatch'
+       || github.event.workflow_run.conclusion == 'success')
+      && (vars.DEPLOY_ATIVO == '1' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    outputs:
+      etiqueta: ${{ steps.nome.outputs.etiqueta }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.COMMIT }}
+
+      # O commit no nome, nunca só `latest`: voltar atrás precisa de um alvo
+      # que se possa nomear.
+      - id: nome
+        run: |
+          repo="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          echo "etiqueta=ghcr.io/${repo}:${COMMIT}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Cinto e suspensório: o gatilho já garante que o CI passou, e o
+      # Dockerfile roda `npm test` no primeiro estágio — uma imagem não nasce
+      # de código que desobedece ao contrato do select().
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: true
+          tags: ${{ steps.nome.outputs.etiqueta }}
+
+      # A etiqueta na tela do run: no primeiro deploy ela é copiada à mão para
+      # o `IMAGEM=` do `.env` da VPS, e caçá-la no log não é roteiro.
+      - name: Anotar a etiqueta no resumo
+        run: |
+          {
+            echo "### Imagem publicada"
+            echo
+            echo '```'
+            echo "IMAGEM=${{ steps.nome.outputs.etiqueta }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publicar:
+    name: Trocar a imagem na VPS
+    needs: imagem
+    # Sem DEPLOY_ATIVO não há VPS nem segredos de ssh: o disparo manual
+    # constrói a imagem e para aqui, que é o que o primeiro deploy precisa.
+    if: vars.DEPLOY_ATIVO == '1'
+    runs-on: ubuntu-latest
+    steps:
+      # ssh direto, sem ação de terceiro: uma ação que recebe a chave privada
+      # da VPS é uma dependência de cadeia de suprimentos que este projeto não
+      # precisa ter.
+      - name: Preparar a chave
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_CHAVE }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          echo "${{ secrets.VPS_HOSTKEY }}" > ~/.ssh/known_hosts
+
+      - name: Publicar
+        run: |
+          ssh -i ~/.ssh/id_deploy \
+              -o IdentitiesOnly=yes \
+              "${{ secrets.VPS_USUARIO }}@${{ secrets.VPS_HOST }}" \
+              "/opt/pdftodxf/publicar.sh '${{ needs.imagem.outputs.etiqueta }}'"
+
+      - name: Apagar a chave
+        if: always()
+        run: rm -f ~/.ssh/id_deploy

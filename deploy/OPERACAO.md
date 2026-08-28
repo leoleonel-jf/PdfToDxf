@@ -168,7 +168,7 @@ entende continuação com `\`, e quebrar a linha quebra a tarefa:
 
 ```cron
 PDFTODXF_BACKUP_DIAS=30
-PDFTODXF_BACKUP_COMANDO=rclone copy --config /etc/rclone.conf remoto:pdftodxf
+PDFTODXF_BACKUP_COMANDO=rclone copyto --config /etc/rclone.conf {arquivo} remoto:pdftodxf/contas.db
 15 3 * * * /usr/bin/python3 /opt/pdftodxf/backup.py /var/lib/docker/volumes/pdftodxf_banco/_data/contas.db /var/backups/pdftodxf >> /var/log/pdftodxf-backup.log 2>&1
 ```
 

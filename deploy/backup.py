@@ -57,6 +57,23 @@ def apagar_antigos(pasta: Path, dias: int,
     return apagados
 
 
+def montar_comando(comando: str, arquivo: Path) -> list[str]:
+    """O comando de envio, com o caminho no lugar em que ele cabe.
+
+    `{arquivo}` marca a posição. **Apendar no fim não serve para tudo**: em
+    `rclone copyto origem destino` o caminho é o *primeiro* argumento, e um
+    comando montado com ele no fim copiaria o remoto por cima do arquivo local
+    — ao contrário do que se quer, toda noite.
+
+    Sem o marcador, o caminho vai para o fim, que é o certo para `aws s3 cp`
+    com destino implícito e para um script próprio.
+    """
+    partes = shlex.split(comando)
+    if any("{arquivo}" in parte for parte in partes):
+        return [parte.replace("{arquivo}", str(arquivo)) for parte in partes]
+    return partes + [str(arquivo)]
+
+
 def enviar_para_fora(arquivo: Path) -> None:
     """Roda o comando de `PDFTODXF_BACKUP_COMANDO`, se houver.
 
@@ -69,7 +86,7 @@ def enviar_para_fora(arquivo: Path) -> None:
         print("AVISO: PDFTODXF_BACKUP_COMANDO vazio — a copia ficou so local, "
               "e copia local nao e backup.", file=sys.stderr)
         return
-    subprocess.run(shlex.split(comando) + [str(arquivo)], check=True)
+    subprocess.run(montar_comando(comando, arquivo), check=True)
 
 
 def dias_de_retencao() -> int:

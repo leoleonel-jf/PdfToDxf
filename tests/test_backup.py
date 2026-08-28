@@ -9,7 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from deploy.backup import apagar_antigos, copiar, dias_de_retencao
+from deploy.backup import (apagar_antigos, copiar, dias_de_retencao,
+                           montar_comando)
 
 
 def _banco_com_linhas(caminho: Path, quantas: int) -> None:
@@ -117,9 +118,33 @@ def test_a_retencao_tolera_a_chave_vazia():
     print("OK: a retenção tolera a chave vazia, ausente e absurda")
 
 
+def test_o_marcador_poe_o_arquivo_onde_ele_cabe():
+    """`rclone copyto` quer o caminho **primeiro**; apendar no fim inverteria
+    a cópia e traria o remoto por cima do arquivo local, toda noite."""
+    # `str(Path(...))` e não o literal: no Windows o separador é `\`, e comparar
+    # com "/b/c.db" faria o teste falhar por causa do sistema operacional, não
+    # do comportamento.
+    alvo = Path("/b/c.db")
+    partes = montar_comando(
+        "rclone copyto {arquivo} remoto:pdftodxf/contas.db", alvo)
+    assert partes == ["rclone", "copyto", str(alvo),
+                      "remoto:pdftodxf/contas.db"], partes
+    print("OK: o marcador põe o caminho na posição pedida")
+
+
+def test_sem_marcador_o_arquivo_vai_para_o_fim():
+    """Compatível com o contrato antigo, que serve a `aws s3 cp` e a script próprio."""
+    alvo = Path("/b/c.db")
+    assert montar_comando("guardar --forte", alvo) == \
+        ["guardar", "--forte", str(alvo)]
+    print("OK: sem marcador, o caminho vai para o fim")
+
+
 if __name__ == "__main__":
     test_a_copia_tem_todas_as_linhas()
     test_a_copia_sai_valida_com_escrita_em_curso()
     test_a_retencao_apaga_o_velho_e_mantem_o_novo()
     test_a_retencao_tolera_a_chave_vazia()
+    test_o_marcador_poe_o_arquivo_onde_ele_cabe()
+    test_sem_marcador_o_arquivo_vai_para_o_fim()
     print("Todos os testes do backup passaram.")

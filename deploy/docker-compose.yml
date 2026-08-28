@@ -51,8 +51,11 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    env_file:
-      - .env
+    # Sem `env_file` de propósito: o `.env` inteiro traz o segredo de sessão e
+    # a senha do SMTP, e o Caddy não usa nem um nem outro. Do arquivo ele
+    # precisa de uma variável só, e é só ela que entra.
+    environment:
+      DOMINIO: ${DOMINIO}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_dados:/data      # os certificados vivem aqui: perder isto é

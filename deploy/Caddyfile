@@ -3,10 +3,16 @@
 {$DOMINIO} {
 	encode zstd gzip
 
-	# O teto de arquivo do serviço é 100 MB (conta confirmada). Recusar aqui
-	# poupa o app de receber o que ele vai rejeitar de qualquer jeito.
+	# Em bytes, e igual ao teto do serviço (`TETO_PDF_BYTES`, em
+	# web/api/limits.py): 100 * 1024 * 1024 = 104857600.
+	#
+	# Escrever `100MB` seria 100.000.000 — o Caddy lê MB como SI, não como MiB.
+	# Os ~4,8 MiB de diferença viram um 413 cru do proxy em arquivos que o app
+	# aceitaria, sem a mensagem que explica o que houve. Este número existe só
+	# para o proxy recusar o que o app recusaria também; tudo o que passa daqui
+	# é o app quem responde, com mensagem.
 	request_body {
-		max_size 100MB
+		max_size 104857600
 	}
 
 	header {

@@ -1,0 +1,23 @@
+# O domínio vem do ambiente para este arquivo servir a qualquer instalação —
+# e para o nome não virar linha de commit quando mudar.
+{$DOMINIO} {
+	encode zstd gzip
+
+	# O teto de arquivo do serviço é 100 MB (conta confirmada). Recusar aqui
+	# poupa o app de receber o que ele vai rejeitar de qualquer jeito.
+	request_body {
+		max_size 100MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# O `reverse_proxy` do Caddy já acrescenta X-Forwarded-For com o IP real do
+	# cliente. É o par do PDFTODXF_PROXIES=1 do outro lado.
+	reverse_proxy app:8000
+}

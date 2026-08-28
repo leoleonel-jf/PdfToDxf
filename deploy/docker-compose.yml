@@ -1,0 +1,69 @@
+# Os dois contêineres do serviço.
+#
+# Rode a partir desta pasta, na VPS:  docker compose up -d
+# O `.env` ao lado traz os segredos e a variável IMAGEM, que o deploy troca.
+name: pdftodxf
+
+services:
+  app:
+    # Trocada a cada publicação por deploy/publicar.sh. Nunca `latest`: voltar
+    # atrás precisa de um alvo com nome.
+    image: ${IMAGEM}
+    restart: unless-stopped
+
+    # Sem publicar porta nenhuma, de propósito. O app só é alcançável pela rede
+    # interna, pelo Caddy — é isso que torna o PDFTODXF_PROXIES confiável,
+    # porque não existe caminho até aqui que não tenha passado pelo proxy.
+
+    env_file:
+      - .env
+
+    environment:
+      PDFTODXF_DADOS: /dados
+      PDFTODXF_REGISTROS: /registros
+      PDFTODXF_BANCO: /banco/contas.db
+      # Um proxy à frente: o Caddy. Sem isto o app enxerga o IP do contêiner
+      # dele em toda requisição, e todos os visitantes do mundo dividem o mesmo
+      # balde de cota — o primeiro esgota e ninguém mais converte nada.
+      PDFTODXF_PROXIES: "1"
+
+    volumes:
+      - dados:/dados            # temporários, 4 horas
+      - registros:/registros    # os .md das plantas, 1 ano
+      - banco:/banco            # contas e cotas, permanente
+
+    healthcheck:
+      # `urlopen` levanta em resposta que não seja 2xx, e o traceback já sai com
+      # código diferente de zero — que é o que o Docker lê.
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://localhost:8000/api/saude", timeout=5)
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file:
+      - .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_dados:/data      # os certificados vivem aqui: perder isto é
+      - caddy_config:/config   # pedir certificado de novo a cada subida
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  dados:
+  registros:
+  banco:
+  caddy_dados:
+  caddy_config:

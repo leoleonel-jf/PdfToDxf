@@ -9,6 +9,7 @@ import secrets
 import shutil
 import time
 import traceback
+import uuid
 from pathlib import Path
 
 import math
@@ -891,9 +892,14 @@ def saude(resposta: Response) -> dict:
     except Exception:
         falhas.append("banco")
     try:
-        prova = storage.raiz() / ".saude"
+        # Nome único por chamada. Três sondas batem aqui ao mesmo tempo — o
+        # healthcheck do Docker a cada 30 s, o laço do deploy e a sonda
+        # externa — e com um nome fixo uma delas apaga o arquivo entre o
+        # `write` e o `unlink` da outra: a perdedora leva `FileNotFoundError`
+        # e devolve um 503 falso, intermitente e impossível de reproduzir.
+        prova = storage.raiz() / f".saude-{uuid.uuid4().hex}"
         prova.write_text("ok", encoding="utf-8")
-        prova.unlink()
+        prova.unlink(missing_ok=True)
     except Exception:
         falhas.append("dados")
     if falhas:

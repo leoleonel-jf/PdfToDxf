@@ -72,6 +72,30 @@ def enviar_para_fora(arquivo: Path) -> None:
     subprocess.run(shlex.split(comando) + [str(arquivo)], check=True)
 
 
+def dias_de_retencao() -> int:
+    """Quantos dias guardar, tolerando a chave vazia e a chave ausente.
+
+    O `.env` copiado do `.env.exemplo` traz `PDFTODXF_BACKUP_DIAS=` — presente
+    e **vazia**. O padrão de `os.environ.get` não cobre esse caso, e `int("")`
+    levanta `ValueError`: a cópia sairia, a retenção nunca rodaria, e toda
+    noite terminaria em traceback no log sem ninguém apagar nada.
+    """
+    bruto = os.environ.get("PDFTODXF_BACKUP_DIAS", "").strip()
+    if not bruto:
+        return 30
+    try:
+        dias = int(bruto)
+    except ValueError:
+        print(f"AVISO: PDFTODXF_BACKUP_DIAS={bruto!r} nao e um numero inteiro."
+              " Usando 30 dias.", file=sys.stderr)
+        return 30
+    if dias <= 0:
+        print(f"AVISO: PDFTODXF_BACKUP_DIAS={dias} apagaria a copia recem-feita."
+              " Usando 30 dias.", file=sys.stderr)
+        return 30
+    return dias
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 3:
         print(__doc__, file=sys.stderr)
@@ -84,8 +108,7 @@ def main(argv: list[str]) -> int:
     destino = copiar(origem, pasta / nome_do_dia())
     print(f"Copia feita: {destino} ({destino.stat().st_size} bytes)")
     enviar_para_fora(destino)
-    dias = int(os.environ.get("PDFTODXF_BACKUP_DIAS", "30"))
-    for velho in apagar_antigos(pasta, dias):
+    for velho in apagar_antigos(pasta, dias_de_retencao()):
         print(f"Apagada por prazo: {velho}")
     return 0
 

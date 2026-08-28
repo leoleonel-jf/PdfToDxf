@@ -870,6 +870,38 @@ def cota(request: Request, resposta: Response) -> dict:
     }
 
 
+@app.get("/api/saude")
+def saude(resposta: Response) -> dict:
+    """Vivo **e** capaz de trabalhar.
+
+    Uma rota que devolvesse `{"ok": true}` sem tocar em nada ficaria verde com
+    o disco cheio — que é justamente a falha que o deploy automático e a sonda
+    existem para pegar. Então ela lê o banco e escreve um arquivo de verdade.
+
+    O que ela **não** pega: volume desmontado. `storage.raiz()` cria a pasta
+    quando falta, então o contêiner recriaria o caminho vazio no próprio
+    sistema de arquivos e a escrita daria certo.
+
+    É rota pública e sem autenticação: o corpo diz qual metade falhou, para o
+    diagnóstico não exigir SSH, e nada além disso.
+    """
+    falhas: list[str] = []
+    try:
+        db.conexao().execute("SELECT 1").fetchone()
+    except Exception:
+        falhas.append("banco")
+    try:
+        prova = storage.raiz() / ".saude"
+        prova.write_text("ok", encoding="utf-8")
+        prova.unlink()
+    except Exception:
+        falhas.append("dados")
+    if falhas:
+        resposta.status_code = 503
+        return {"ok": False, "falhas": falhas}
+    return {"ok": True}
+
+
 from fastapi.staticfiles import StaticFiles
 
 PASTA_ESTATICOS = Path(__file__).resolve().parents[1] / "frontend" / "dist"

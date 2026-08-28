@@ -84,10 +84,39 @@ def test_a_rota_nao_conta_mais_do_que_precisa():
 
 
 def test_o_arquivo_de_prova_nao_fica_para_tras():
-    """A limpeza periódica varre a raiz; lixo nosso não pode se acumular lá."""
-    cliente.get("/api/saude")
-    assert not (Path(os.environ["PDFTODXF_DADOS"]) / ".saude").exists()
+    """A limpeza periódica varre a raiz; lixo nosso não pode se acumular lá.
+
+    O nome é único por chamada (para sondas concorrentes não brigarem pelo
+    mesmo arquivo), então o que se confere é o padrão, não um nome só.
+    """
+    for _ in range(5):
+        cliente.get("/api/saude")
+    restos = list(Path(os.environ["PDFTODXF_DADOS"]).glob(".saude*"))
+    assert restos == [], restos
     print("OK: a prova de escrita não deixa arquivo para trás")
+
+
+def test_sondas_concorrentes_nao_derrubam_umas_as_outras():
+    """Docker, sonda externa e o laço do deploy batem juntos. Com nome fixo, a
+    perdedora da corrida levava FileNotFoundError e devolvia um 503 falso."""
+    import threading
+
+    codigos: list[int] = []
+    trava = threading.Lock()
+
+    def bater():
+        r = cliente.get("/api/saude")
+        with trava:
+            codigos.append(r.status_code)
+
+    fios = [threading.Thread(target=bater) for _ in range(12)]
+    for fio in fios:
+        fio.start()
+    for fio in fios:
+        fio.join()
+
+    assert codigos and set(codigos) == {200}, codigos
+    print("OK: sondas concorrentes não derrubam umas às outras")
 
 
 if __name__ == "__main__":
@@ -96,4 +125,5 @@ if __name__ == "__main__":
     test_banco_inutilizavel_responde_503()
     test_a_rota_nao_conta_mais_do_que_precisa()
     test_o_arquivo_de_prova_nao_fica_para_tras()
+    test_sondas_concorrentes_nao_derrubam_umas_as_outras()
     print("Todos os testes da rota de saúde passaram.")

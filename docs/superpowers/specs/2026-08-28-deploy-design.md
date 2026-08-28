@@ -55,12 +55,15 @@ que está pronto:
   sem `node_modules`, usuário sem privilégio, `PDFTODXF_DADOS=/dados`. **A
   imagem nunca foi construída**, porque não há `docker` nesta máquina: o
   primeiro `docker build` da vida do projeto acontece no 5a, e é razoável que
-  ele falhe algumas vezes.
+  ele falhe algumas vezes. Um ajuste é obrigatório: ele criava e dava dono só a
+  `/dados`, e **os três** pontos de montagem precisam existir na imagem —
+  o que não existe o Docker cria como root ao montar o volume, e o app roda
+  sem privilégio.
+- **`.github/workflows/ci.yml`** — três jobs verdes (Python, frontend, e2e). O
+  deploy contínuo se apoia neles em vez de repetir testes.
 - **`web/api/enviador.py`** — **o caminho SMTP já está escrito**. Sem
   `PDFTODXF_SMTP_SERVIDOR` o e-mail vira arquivo em `dados/emails/`; com ele,
   vai por SMTP de verdade. O Brevo é **configuração, não código**.
-- **`.github/workflows/ci.yml`** — três jobs verdes (Python, frontend, e2e). O
-  deploy contínuo se apoia neles em vez de repetir testes.
 - **`PDFTODXF_PROXIES`** — o serviço já sabe ler o IP real de trás de um proxy.
   Falta configurar.
 
@@ -101,8 +104,11 @@ Um `Caddyfile` curto: o domínio, e o Caddy resolve certificado e renovação
 sozinho pelo Let's Encrypt. Além disso:
 
 - **compressão** das respostas (a spec já contava com ela);
-- **corpo limitado a 100 MB**, que é o teto de arquivo para conta confirmada —
-  recusar no proxy poupa o app de receber o que ele vai rejeitar;
+- **corpo limitado ao teto exato do serviço, em bytes** (104857600 =
+  `limits.TETO_PDF_BYTES`), e não `100MB`: o Caddy lê MB como SI, e o valor
+  menor recusaria com um 413 cru arquivos que o app aceitaria — trocando a
+  mensagem que explica o que houve por uma que não explica nada. O proxy só
+  recusa o que o app recusaria também;
 - **cabeçalhos de segurança** usuais, incluindo HSTS;
 - **`X-Forwarded-For`** para o app, casado com `PDFTODXF_PROXIES`.
 
@@ -171,20 +177,37 @@ sistema de arquivos e a escrita daria certo.
 Mesclar na `main` sobe sozinho. Sem passo humano entre mesclar e ir ao ar, a
 segurança tem de estar no automatismo:
 
-1. O workflow existente roda a suíte inteira. **Falhou, não constrói.**
+1. O workflow existente roda a suíte inteira. **Falhou, não constrói.** Isso
+   exige amarração explícita: o workflow de deploy **espera o `CI`** (gatilho
+   `workflow_run` sobre ele, com guarda de `conclusion == 'success'`), e não
+   dispara no push. Sem a amarração, os dois correm em paralelo e um commit
+   com teste Python quebrado vai ao ar enquanto o CI fica vermelho ao lado — o
+   Dockerfile roda só `npm test`, e não substitui a suíte.
 2. Constrói a imagem e publica no registry, com a tag do commit — nunca só
-   `latest`, porque voltar atrás precisa de um alvo nomeável.
-3. Conecta na VPS por SSH, puxa a imagem e recria os contêineres.
-4. **Espera a rota de saúde responder.** Se não responder no prazo, volta para
-   a tag anterior, sobe de novo, e **falha o job** — falhar em silêncio depois
-   de reverter esconderia a quebra.
+   `latest`, porque voltar atrás precisa de um alvo nomeável. No evento
+   `workflow_run` a tag é o `head_sha` do run aprovado, não o topo da branch:
+   a imagem nasce do commit que ficou verde.
+3. Conecta na VPS por SSH, puxa a imagem e recria **só o app**. O proxy depende
+   da saúde dele, e subir os dois de uma vez faz o próprio comando falhar
+   quando a imagem nova está doente — matando o script antes da volta atrás.
+4. **Espera a rota de saúde responder**, e depois **confere pelo domínio**, de
+   fora. Saúde de contêiner é saúde por dentro: com o proxy morto o app segue
+   saudável e o site está fora, e o job ficaria verde com o serviço
+   inacessível. Se qualquer das duas não fechar no prazo, volta para a tag
+   anterior, sobe de novo, e **falha o job** — falhar em silêncio depois de
+   reverter esconderia a quebra.
 
 A VPS não compila nada: a imagem chega pronta. O `npm ci` e o `pip install`
 ficam no runner, e não concorrem com o serviço.
 
 **O primeiro deploy é manual**, por natureza — não há como instalar Docker e
 criar o `.env` por workflow. O automatismo entra depois de o serviço estar de
-pé pela primeira vez.
+pé pela primeira vez. Consequência que o desenho assume: a **primeira imagem**
+também precisa sair antes do automatismo, então o workflow aceita disparo
+manual (`workflow_dispatch`) construindo sem exigir `DEPLOY_ATIVO`. E o pacote
+no ghcr, que nasce privado mesmo em repositório público, é **tornado público** —
+a imagem não carrega segredo, e um token de leitura na VPS seria mais um
+segredo para guardar.
 
 ### Backup
 
